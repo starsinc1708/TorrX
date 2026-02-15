@@ -62,7 +62,7 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
   const [deleteFiles, setDeleteFiles] = useState(false);
   const [tagsInput, setTagsInput] = useState((torrent.tags ?? []).join(', '));
   const [tagsSaving, setTagsSaving] = useState(false);
-  const progress = sessionState?.progress ?? normalizeProgress(torrent);
+  const progress = Math.max(sessionState?.progress ?? 0, normalizeProgress(torrent));
 
   const files = useMemo(() => sessionState?.files ?? torrent.files ?? [], [sessionState?.files, torrent.files]);
   const tagsDisplay = (torrent.tags ?? []).filter((tag) => tag.trim().length > 0);

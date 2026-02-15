@@ -170,10 +170,11 @@ const TorrentList: React.FC<TorrentListProps> = ({
   const renderTile = (torrent: TorrentRecord, options?: { currentPriority?: boolean }) => {
     const isCurrentPriority = options?.currentPriority ?? false;
     const state = activeStateMap.get(torrent.id);
-    const progress = state?.progress ?? normalizeProgress(torrent);
+    const dbProgress = normalizeProgress(torrent);
+    const progress = Math.max(state?.progress ?? 0, dbProgress);
     const doneBytes =
       state && torrent.totalBytes
-        ? Math.round((state.progress ?? 0) * torrent.totalBytes)
+        ? Math.max(Math.round((state.progress ?? 0) * torrent.totalBytes), torrent.doneBytes ?? 0)
         : torrent.doneBytes;
     const status = state?.status ?? torrent.status;
 

@@ -98,7 +98,7 @@ func (s SyncState) sync(ctx context.Context) {
 			changed = true
 		} else if len(state.Files) > 0 {
 			for i, sf := range state.Files {
-				if i < len(record.Files) && record.Files[i].BytesCompleted != sf.BytesCompleted {
+				if i < len(record.Files) && sf.BytesCompleted > record.Files[i].BytesCompleted {
 					record.Files[i].BytesCompleted = sf.BytesCompleted
 					changed = true
 				}

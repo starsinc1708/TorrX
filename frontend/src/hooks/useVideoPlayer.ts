@@ -145,8 +145,10 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
       resumePos: number | null,
       fileComplete: boolean,
     ): Promise<{ success: boolean; mode: 'direct' | 'hls'; seekOffset?: number }> => {
-      // For complete files, always try direct first — it's faster than HLS transcoding.
-      if (fileComplete || mode === 'direct') {
+      // For complete files with browser-playable format, try direct first — it's faster than HLS.
+      // Skip direct probe for non-playable formats (e.g. MKV HEVC) to avoid
+      // a wasted direct→HLS fallback cycle that loses the resume position.
+      if ((fileComplete && directPlayable) || mode === 'direct') {
         const ok = await probeDirectStream(torrentId, fileIndex, signal);
         if (signal.aborted) return { success: false, mode };
         if (ok) return { success: true, mode: 'direct' };
@@ -193,7 +195,7 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
       }
       return { success: false, mode: 'hls' };
     },
-    [audioTrack, subtitleTrack, mediaInfo],
+    [audioTrack, subtitleTrack, mediaInfo, directPlayable],
   );
 
   // Launch probe whenever file selection, retry token, or mode changes.
@@ -272,6 +274,14 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
     setPrebufferPhase('probing');
     setVideoError(null);
 
+    // Preserve resume position so HLS starts from the right offset.
+    // Use the video's current playback position if no explicit resume was set.
+    const video = videoRef.current;
+    const currentPos = video && Number.isFinite(video.currentTime) && video.currentTime > 0
+      ? video.currentTime
+      : null;
+    const resumePos = resumePositionRef.current ?? currentPos;
+
     void (async () => {
       const result = await runProbe(
         'hls',
@@ -279,7 +289,7 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
         selectedFileIndex,
         hlsStreamUrl,
         controller.signal,
-        null,
+        resumePos,
         false,
       );
       if (controller.signal.aborted) return;

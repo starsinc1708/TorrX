@@ -73,7 +73,7 @@ export default function PlayerFilesPanel({
           <div className="flex flex-col gap-2">
             {files.map((file, i) => {
               const live = liveFileMap.get(file.index);
-              const completed = live?.bytesCompleted ?? file.bytesCompleted ?? 0;
+              const completed = Math.max(live?.bytesCompleted ?? 0, file.bytesCompleted ?? 0);
               const total = file.length ?? 0;
               const fileProg = total > 0 ? completed / total : 0;
               const active = selectedFileIndex === file.index;

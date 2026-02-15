@@ -41,6 +41,7 @@ type Engine struct {
 	speeds         map[domain.TorrentID]speedSample
 	focusedPieces  map[domain.TorrentID]focusedPieceRange
 	focusedID      domain.TorrentID // cached; always consistent with modes
+	peakCompleted  map[domain.TorrentID]int64 // high-water mark for BytesCompleted per torrent
 	storageMode    string
 	memoryProvider *memory.Provider
 }
@@ -79,6 +80,7 @@ func New(cfg Config) (*Engine, error) {
 		sessions:       make(map[domain.TorrentID]*torrent.Torrent),
 		modes:          make(map[domain.TorrentID]domain.SessionMode),
 		speeds:         make(map[domain.TorrentID]speedSample),
+		peakCompleted:  make(map[domain.TorrentID]int64),
 		storageMode:    mode,
 		memoryProvider: provider,
 	}, nil
@@ -86,11 +88,12 @@ func New(cfg Config) (*Engine, error) {
 
 func NewWithClient(client *torrent.Client) *Engine {
 	return &Engine{
-		client:      client,
-		sessions:    make(map[domain.TorrentID]*torrent.Torrent),
-		modes:       make(map[domain.TorrentID]domain.SessionMode),
-		speeds:      make(map[domain.TorrentID]speedSample),
-		storageMode: "disk",
+		client:        client,
+		sessions:      make(map[domain.TorrentID]*torrent.Torrent),
+		modes:         make(map[domain.TorrentID]domain.SessionMode),
+		speeds:        make(map[domain.TorrentID]speedSample),
+		peakCompleted: make(map[domain.TorrentID]int64),
+		storageMode:   "disk",
 	}
 }
 
@@ -356,6 +359,17 @@ func (e *Engine) GetSessionState(ctx context.Context, id domain.TorrentID) (doma
 
 	length := t.Length()
 	completed := t.BytesCompleted()
+
+	// Maintain high-water mark: after restart anacrolix re-verifies pieces
+	// from disk and BytesCompleted() can temporarily be lower than peak.
+	e.mu.Lock()
+	if completed > e.peakCompleted[id] {
+		e.peakCompleted[id] = completed
+	} else {
+		completed = e.peakCompleted[id]
+	}
+	e.mu.Unlock()
+
 	progress := float64(0)
 	if length > 0 {
 		progress = float64(completed) / float64(length)
@@ -616,6 +630,7 @@ func (e *Engine) dropTorrent(id domain.TorrentID, t *torrent.Torrent) error {
 	e.mu.Lock()
 	delete(e.sessions, id)
 	delete(e.modes, id)
+	delete(e.peakCompleted, id)
 	if e.focusedID == id {
 		e.focusedID = ""
 	}
