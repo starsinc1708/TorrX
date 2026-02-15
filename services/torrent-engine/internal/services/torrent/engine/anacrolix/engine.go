@@ -199,7 +199,10 @@ func (e *Engine) resumeTorrentForStreaming(t *torrent.Torrent) {
 // addMagnetTimeout caps the time we wait for the anacrolix client to accept
 // a magnet link. AddMagnet can block on an internal client mutex when the
 // client is busy (e.g. resolving metadata for another torrent).
-const addMagnetTimeout = 10 * time.Second
+const (
+	addMagnetTimeout     = 10 * time.Second
+	metadataWaitTimeout  = 10 * time.Minute // Max time to wait for torrent metadata (zero-peer torrents timeout after this)
+)
 
 func (e *Engine) Open(ctx context.Context, src domain.TorrentSource) (ports.Session, error) {
 	if e.client == nil {
@@ -271,10 +274,24 @@ func (e *Engine) Open(ctx context.Context, src domain.TorrentSource) (ports.Sess
 	}
 }
 
-// waitForInfo blocks until torrent metadata is available, then transitions
+// waitForInfo blocks until torrent metadata is available (with timeout), then transitions
 // the session to the appropriate mode based on current engine state.
+// If metadata is not received within metadataWaitTimeout, the torrent is removed to prevent goroutine leaks.
 func (e *Engine) waitForInfo(t *torrent.Torrent, id domain.TorrentID) {
-	<-t.GotInfo()
+	select {
+	case <-t.GotInfo():
+		// Metadata received, proceed with transition
+	case <-time.After(metadataWaitTimeout):
+		// Timeout: metadata not available after long wait (likely zero-peer torrent)
+		e.mu.Lock()
+		if _, ok := e.sessions[id]; ok {
+			t.Drop() // Release torrent resources
+			delete(e.sessions, id)
+			delete(e.modes, id)
+		}
+		e.mu.Unlock()
+		return
+	}
 
 	e.mu.Lock()
 	defer e.mu.Unlock()

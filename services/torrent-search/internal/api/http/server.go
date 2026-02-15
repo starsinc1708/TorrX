@@ -274,12 +274,14 @@ func (s *Server) handleSearchStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	writeSSEEvent(w, flusher, "phase", map[string]any{
+	if err := writeSSEEvent(w, flusher, "phase", map[string]any{
 		"phase":  "bootstrap",
 		"final":  false,
 		"query":  query,
 		"status": "started",
-	})
+	}); err != nil {
+		return // Client disconnected
+	}
 
 	selectedProviders := append([]string(nil), providers...)
 	if len(selectedProviders) == 0 {
@@ -297,29 +299,47 @@ func (s *Server) handleSearchStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(fastProviders) > 0 {
+		// Check if client is still connected
+		select {
+		case <-r.Context().Done():
+			return // Client disconnected
+		default:
+		}
+
 		fastCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		quick, quickErr := s.search.Search(fastCtx, request, fastProviders)
 		cancel()
 		if quickErr == nil {
 			quick.Phase = "fast"
 			quick.Final = len(slowProviders) == 0
-			writeSSEEvent(w, flusher, "phase", quick)
+			if err := writeSSEEvent(w, flusher, "phase", quick); err != nil {
+				return // Client disconnected
+			}
 			if len(slowProviders) == 0 {
-				writeSSEEvent(w, flusher, "done", map[string]any{"phase": "fast", "final": true})
+				_ = writeSSEEvent(w, flusher, "done", map[string]any{"phase": "fast", "final": true})
 				return
 			}
 		} else {
-			writeSSEEvent(w, flusher, "phase", map[string]any{
+			if err := writeSSEEvent(w, flusher, "phase", map[string]any{
 				"phase": "fast",
 				"final": false,
 				"error": quickErr.Error(),
-			})
+			}); err != nil {
+				return // Client disconnected
+			}
 		}
+	}
+
+	// Check if client is still connected before full search
+	select {
+	case <-r.Context().Done():
+		return // Client disconnected
+	default:
 	}
 
 	finalResponse, finalErr := s.search.Search(r.Context(), request, selectedProviders)
 	if finalErr != nil {
-		writeSSEEvent(w, flusher, "error", map[string]any{
+		_ = writeSSEEvent(w, flusher, "error", map[string]any{
 			"code":    "search_failed",
 			"message": finalErr.Error(),
 		})
@@ -327,8 +347,10 @@ func (s *Server) handleSearchStream(w http.ResponseWriter, r *http.Request) {
 	}
 	finalResponse.Phase = "full"
 	finalResponse.Final = true
-	writeSSEEvent(w, flusher, "phase", finalResponse)
-	writeSSEEvent(w, flusher, "done", map[string]any{"phase": "full", "final": true})
+	if err := writeSSEEvent(w, flusher, "phase", finalResponse); err != nil {
+		return // Client disconnected
+	}
+	_ = writeSSEEvent(w, flusher, "done", map[string]any{"phase": "full", "final": true})
 }
 
 func (s *Server) handleSearchSuggest(w http.ResponseWriter, r *http.Request) {
@@ -958,14 +980,19 @@ func splitProvidersForPhasedSearch(selected []string) ([]string, []string) {
 	return fast, slow
 }
 
-func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, event string, payload any) {
+func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, event string, payload any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return
+		return err
 	}
 	if event != "" {
-		_, _ = fmt.Fprintf(w, "event: %s\n", event)
+		if _, err := fmt.Fprintf(w, "event: %s\n", event); err != nil {
+			return err // Client disconnected
+		}
 	}
-	_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+		return err // Client disconnected
+	}
 	flusher.Flush()
+	return nil
 }

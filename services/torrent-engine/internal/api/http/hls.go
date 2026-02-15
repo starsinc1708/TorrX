@@ -55,6 +55,11 @@ type hlsJob struct {
 	restartCount int
 }
 
+type codecCacheEntry struct {
+	isH264 bool
+	isAAC  bool
+}
+
 type hlsManager struct {
 	stream                StreamTorrentUseCase
 	ffmpegPath            string
@@ -68,6 +73,8 @@ type hlsManager struct {
 	mu                    sync.Mutex
 	jobs                  map[hlsKey]*hlsJob
 	cache                 *hlsCache
+	codecCacheMu          sync.RWMutex
+	codecCache            map[string]*codecCacheEntry // filePath → codec detection results
 	logger                *slog.Logger
 	totalJobStarts        uint64
 	totalJobFailures      uint64
@@ -168,6 +175,7 @@ func newHLSManager(stream StreamTorrentUseCase, cfg HLSConfig, logger *slog.Logg
 		audioBitrate: audioBitrate,
 		jobs:         make(map[hlsKey]*hlsJob),
 		cache:        cache,
+		codecCache:   make(map[string]*codecCacheEntry),
 		logger:       logger,
 	}
 }
@@ -451,13 +459,13 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	streamCopy := false
 	if !useReader && key.subtitleTrack < 0 &&
 		!strings.HasPrefix(input, "http://") && !strings.HasPrefix(input, "https://") &&
-		isH264FileWithRetry(m.ffprobePath, input, m.logger) {
+		m.isH264FileWithCache(input) {
 		streamCopy = true
 	}
 
 	if streamCopy {
 		args = append(args, "-c:v", "copy")
-		if isAACAudioWithRetry(m.ffprobePath, input, m.logger) {
+		if m.isAACAudioWithCache(input) {
 			args = append(args, "-c:a", "copy")
 		} else {
 			args = append(args, "-c:a", "aac", "-b:a", encAudioBitrate, "-ac", "2")
@@ -1056,6 +1064,56 @@ const (
 	ffprobeRetryAttempts = 3
 	ffprobeRetryDelay    = 2 * time.Second
 )
+
+// isH264FileWithCache checks if a file is H.264 encoded, using cache to avoid
+// repeated ffprobe calls that can block HLS startup for up to 6 seconds.
+func (m *hlsManager) isH264FileWithCache(filePath string) bool {
+	// Check cache first
+	m.codecCacheMu.RLock()
+	if entry, ok := m.codecCache[filePath]; ok {
+		m.codecCacheMu.RUnlock()
+		return entry.isH264
+	}
+	m.codecCacheMu.RUnlock()
+
+	// Not in cache, perform detection with retry
+	result := isH264FileWithRetry(m.ffprobePath, filePath, m.logger)
+
+	// Store in cache
+	m.codecCacheMu.Lock()
+	if m.codecCache[filePath] == nil {
+		m.codecCache[filePath] = &codecCacheEntry{}
+	}
+	m.codecCache[filePath].isH264 = result
+	m.codecCacheMu.Unlock()
+
+	return result
+}
+
+// isAACAudioWithCache checks if a file has AAC audio, using cache to avoid
+// repeated ffprobe calls.
+func (m *hlsManager) isAACAudioWithCache(filePath string) bool {
+	// Check cache first
+	m.codecCacheMu.RLock()
+	if entry, ok := m.codecCache[filePath]; ok {
+		m.codecCacheMu.RUnlock()
+		return entry.isAAC
+	}
+	m.codecCacheMu.RUnlock()
+
+	// Not in cache, perform detection with retry
+	result := isAACAudioWithRetry(m.ffprobePath, filePath, m.logger)
+
+	// Store in cache
+	m.codecCacheMu.Lock()
+	if m.codecCache[filePath] == nil {
+		m.codecCache[filePath] = &codecCacheEntry{}
+	}
+	m.codecCache[filePath].isAAC = result
+	m.codecCacheMu.Unlock()
+
+	return result
+}
 
 func isH264FileWithRetry(ffprobePath, filePath string, logger *slog.Logger) bool {
 	for i := 0; i < ffprobeRetryAttempts; i++ {
