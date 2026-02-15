@@ -4,7 +4,9 @@ import { upsertTorrentWatchState } from '../watchState';
 
 interface UseWatchPositionSaveOptions {
   torrentId: string | null;
-  selectedFile: { path: string } | null;
+  fileIndex: number | null;
+  torrentName?: string;
+  filePath?: string;
   enabled: boolean;
   saveIntervalMs?: number;
 }
@@ -15,24 +17,32 @@ interface UseWatchPositionSaveOptions {
  */
 export function useWatchPositionSave(
   getCurrentTime: () => number,
+  getDuration: () => number,
   options: UseWatchPositionSaveOptions,
 ) {
-  const { torrentId, selectedFile, enabled, saveIntervalMs = 5000 } = options;
+  const { torrentId, fileIndex, torrentName, filePath, enabled, saveIntervalMs = 5000 } = options;
   const lastSaveTimeRef = useRef(0);
   const saveIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const savePosition = useCallback(
-    async (time: number) => {
-      if (!torrentId || !selectedFile) return;
+    async (position: number, duration: number) => {
+      if (!torrentId || fileIndex === null) return;
 
       try {
-        await saveWatchPosition(torrentId, selectedFile.path, time);
-        upsertTorrentWatchState(torrentId, selectedFile.path, time, Date.now());
+        await saveWatchPosition(torrentId, fileIndex, position, duration, torrentName, filePath);
+        upsertTorrentWatchState({
+          torrentId,
+          fileIndex,
+          position,
+          duration,
+          torrentName,
+          filePath,
+        });
       } catch {
         // Ignore save errors
       }
     },
-    [torrentId, selectedFile],
+    [torrentId, fileIndex, torrentName, filePath],
   );
 
   const trySave = useCallback(() => {
@@ -41,12 +51,13 @@ export function useWatchPositionSave(
     const now = Date.now();
     if (now - lastSaveTimeRef.current >= saveIntervalMs) {
       lastSaveTimeRef.current = now;
-      const time = getCurrentTime();
-      if (time > 0) {
-        void savePosition(time);
+      const position = getCurrentTime();
+      const duration = getDuration();
+      if (position > 0 && duration > 0) {
+        void savePosition(position, duration);
       }
     }
-  }, [enabled, saveIntervalMs, getCurrentTime, savePosition]);
+  }, [enabled, saveIntervalMs, getCurrentTime, getDuration, savePosition]);
 
   // Autosave while playing
   useEffect(() => {
@@ -71,14 +82,15 @@ export function useWatchPositionSave(
   // Save on unmount
   useEffect(() => {
     return () => {
-      if (torrentId && selectedFile) {
-        const time = getCurrentTime();
-        if (time > 0) {
-          void savePosition(time);
+      if (torrentId && fileIndex !== null) {
+        const position = getCurrentTime();
+        const duration = getDuration();
+        if (position > 0 && duration > 0) {
+          void savePosition(position, duration);
         }
       }
     };
-  }, [torrentId, selectedFile, getCurrentTime, savePosition]);
+  }, [torrentId, fileIndex, getCurrentTime, getDuration, savePosition]);
 
   return { savePosition };
 }

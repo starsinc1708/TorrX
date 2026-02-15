@@ -167,9 +167,9 @@ func (s *Service) collectWarmSpecs(now time.Time) []warmSpec {
 			continue
 		}
 		pop.lastWarm = now
-		cacheEntry := s.cache[key]
-		cacheEntry.refreshing = true
-		s.cache[key] = cacheEntry
+		if cacheEntry := s.cache[key]; cacheEntry != nil {
+			cacheEntry.refreshing = true
+		}
 		specs = append(specs, warmSpec{
 			key:       key,
 			request:   pop.request,
@@ -216,9 +216,6 @@ func (s *Service) cacheLookup(key string, now time.Time) (domain.SearchResponse,
 			needsRefresh = true
 			entry.refreshing = true
 		})
-		if needsRefresh {
-			s.cache[key] = entry
-		}
 		return cloneSearchResponse(entry.response), true, needsRefresh
 	}
 
@@ -247,7 +244,7 @@ func (s *Service) cacheStore(key string, response domain.SearchResponse, now tim
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 
-	s.cache[key] = cachedSearchResponse{
+	s.cache[key] = &cachedSearchResponse{
 		response:   cloneSearchResponse(response),
 		updatedAt:  now,
 		expiresAt:  now.Add(cacheTTL),
@@ -261,12 +258,9 @@ func (s *Service) cacheStore(key string, response domain.SearchResponse, now tim
 func (s *Service) cacheClearRefreshing(key string) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
-	entry, ok := s.cache[key]
-	if !ok {
-		return
+	if entry := s.cache[key]; entry != nil {
+		entry.refreshing = false
 	}
-	entry.refreshing = false
-	s.cache[key] = entry
 }
 
 func (s *Service) markPopular(key string, request domain.SearchRequest, providers []string, now time.Time) {
@@ -367,7 +361,7 @@ func (s *Service) trimCacheLocked(now time.Time) {
 
 	type pair struct {
 		key   string
-		entry cachedSearchResponse
+		entry *cachedSearchResponse
 	}
 	items := make([]pair, 0, len(s.cache))
 	for key, entry := range s.cache {
@@ -491,7 +485,7 @@ func (s *Service) cacheStoreMemoryOnly(key string, response domain.SearchRespons
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 
-	s.cache[key] = cachedSearchResponse{
+	s.cache[key] = &cachedSearchResponse{
 		response:   cloneSearchResponse(response),
 		updatedAt:  now,
 		expiresAt:  now.Add(cacheTTL),

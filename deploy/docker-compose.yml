@@ -21,7 +21,7 @@ services:
       - "--tracing.otlp.http.endpoint=${TRAEFIK_OTLP_HTTP_ENDPOINT:-http://jaeger:4318/v1/traces}"
     depends_on:
       jaeger:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "80:80"
       - "443:443"
@@ -189,7 +189,7 @@ services:
       redis:
         condition: service_healthy
       jaeger:
-        condition: service_started
+        condition: service_healthy
     networks:
       - edge
       - core
@@ -222,9 +222,9 @@ services:
       - anacrolix_cache:/root/.cache/anacrolix
     depends_on:
       mongo:
-        condition: service_started
+        condition: service_healthy
       jaeger:
-        condition: service_started
+        condition: service_healthy
     networks:
       - edge
       - core

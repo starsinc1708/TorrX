@@ -55,7 +55,7 @@ type Service struct {
 	timeout       time.Duration
 	cacheDisabled bool
 	cacheMu       sync.RWMutex
-	cache         map[string]cachedSearchResponse
+	cache         map[string]*cachedSearchResponse
 	popular       map[string]*popularQuery
 	warmerCfg     searchWarmerConfig
 	warmerRun     atomic.Bool
@@ -119,7 +119,7 @@ func NewService(providers []Provider, timeout time.Duration, opts ...ServiceOpti
 	svc := &Service{
 		providers: registry,
 		timeout:   timeout,
-		cache:     make(map[string]cachedSearchResponse),
+		cache:     make(map[string]*cachedSearchResponse),
 		popular:   make(map[string]*popularQuery),
 		warmerCfg: defaultSearchWarmerConfig(),
 		health:    make(map[string]*providerHealth),
