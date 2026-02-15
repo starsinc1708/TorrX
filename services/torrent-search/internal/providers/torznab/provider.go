@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/semaphore"
 	"torrentstream/searchservice/internal/domain"
 	"torrentstream/searchservice/internal/providers/common"
 )
@@ -194,10 +195,14 @@ func (p *Provider) Search(ctx context.Context, request domain.SearchRequest) ([]
 		limit = 50
 	}
 
+	// Pre-fetch infohashes from torrent files in parallel to avoid serial 4s delays.
+	// This is critical for providers like RuTracker via Jackett that only return download URLs.
+	infoHashCache := p.prefetchMissingInfoHashes(ctx, items)
+
 	results := make([]domain.SearchResult, 0, limit)
 	seen := make(map[string]struct{}, len(items))
 	for _, item := range items {
-		result, ok := p.itemToResult(ctx, item, uri.Host)
+		result, ok := p.itemToResult(ctx, item, uri.Host, infoHashCache)
 		if !ok {
 			continue
 		}
@@ -221,7 +226,7 @@ func (p *Provider) Search(ctx context.Context, request domain.SearchRequest) ([]
 	return results, nil
 }
 
-func (p *Provider) itemToResult(ctx context.Context, item torznabItem, endpointHost string) (domain.SearchResult, bool) {
+func (p *Provider) itemToResult(ctx context.Context, item torznabItem, endpointHost string, infoHashCache map[string]string) (domain.SearchResult, bool) {
 	name := strings.TrimSpace(item.Title)
 	if name == "" {
 		return domain.SearchResult{}, false
@@ -249,18 +254,15 @@ func (p *Provider) itemToResult(ctx context.Context, item torznabItem, endpointH
 	}
 
 	// Many Torznab sources (notably RuTracker via Jackett/Prowlarr) return only a torrent
-	// download URL. In that case, download the torrent and compute the infohash.
-	if infoHash == "" && magnet == "" {
+	// download URL. Use the pre-fetched infohash cache to avoid serial 4s delays.
+	if infoHash == "" && magnet == "" && infoHashCache != nil {
 		downloadURL := strings.TrimSpace(item.Enclosure.URL)
 		if downloadURL == "" {
 			downloadURL = strings.TrimSpace(item.Link)
 		}
 		if downloadURL != "" {
-			downloadCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
-			hash, err := p.fetchInfoHashFromTorrentURL(downloadCtx, downloadURL)
-			cancel()
-			if err == nil && hash != "" {
-				infoHash = common.NormalizeInfoHash(hash)
+			if cachedHash, ok := infoHashCache[downloadURL]; ok {
+				infoHash = cachedHash
 			}
 		}
 	}
@@ -384,6 +386,87 @@ func normalizeHost(raw string) string {
 		return ""
 	}
 	return strings.TrimPrefix(host, "www.")
+}
+
+// prefetchMissingInfoHashes downloads torrent files in parallel for items that lack
+// infohash/magnet attributes. Returns a map of download URL -> infohash.
+// Uses bounded concurrency (5 workers) to prevent overwhelming the remote server.
+func (p *Provider) prefetchMissingInfoHashes(ctx context.Context, items []torznabItem) map[string]string {
+	// Identify items that need torrent file downloads
+	type downloadTask struct {
+		url   string
+		index int
+	}
+	var tasks []downloadTask
+	urlToIndices := make(map[string][]int)
+
+	for i, item := range items {
+		// Skip if item already has magnet or infohash
+		magnet := firstMagnet(item.Guid, item.Link, item.Enclosure.URL)
+		var infoHash string
+		for _, attr := range item.Attrs {
+			if strings.ToLower(strings.TrimSpace(attr.Name)) == "infohash" {
+				infoHash = common.NormalizeInfoHash(strings.TrimSpace(attr.Value))
+				break
+			}
+		}
+		if infoHash == "" && magnet != "" {
+			infoHash = common.NormalizeInfoHash(extractInfoHashFromMagnet(magnet))
+		}
+		if magnet != "" || infoHash != "" {
+			continue
+		}
+
+		// Item needs torrent file download
+		downloadURL := strings.TrimSpace(item.Enclosure.URL)
+		if downloadURL == "" {
+			downloadURL = strings.TrimSpace(item.Link)
+		}
+		if downloadURL == "" {
+			continue
+		}
+
+		if _, exists := urlToIndices[downloadURL]; !exists {
+			tasks = append(tasks, downloadTask{url: downloadURL, index: len(tasks)})
+		}
+		urlToIndices[downloadURL] = append(urlToIndices[downloadURL], i)
+	}
+
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	// Download torrent files in parallel with bounded concurrency
+	const maxConcurrentDownloads = 5
+	sem := semaphore.NewWeighted(maxConcurrentDownloads)
+	results := make(map[string]string, len(tasks))
+	var mu sync.Mutex
+
+	var wg sync.WaitGroup
+	for _, task := range tasks {
+		wg.Add(1)
+		go func(url string) {
+			defer wg.Done()
+
+			if err := sem.Acquire(ctx, 1); err != nil {
+				return // Context cancelled
+			}
+			defer sem.Release(1)
+
+			downloadCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+			defer cancel()
+
+			hash, err := p.fetchInfoHashFromTorrentURL(downloadCtx, url)
+			if err == nil && hash != "" {
+				mu.Lock()
+				results[url] = common.NormalizeInfoHash(hash)
+				mu.Unlock()
+			}
+		}(task.url)
+	}
+	wg.Wait()
+
+	return results
 }
 
 func (p *Provider) fetchInfoHashFromTorrentURL(ctx context.Context, rawURL string) (string, error) {

@@ -9,8 +9,14 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/semaphore"
 	"torrentstream/searchservice/internal/domain"
 )
+
+// maxConcurrentProviders limits the number of provider queries that can run simultaneously.
+// This prevents overwhelming the system or remote servers when many providers are configured
+// (e.g., Jackett with 20+ indexers).
+const maxConcurrentProviders = 10
 
 type preparedSearch struct {
 	query         string
@@ -170,12 +176,29 @@ func (s *Service) executePreparedSearch(ctx context.Context, prepared preparedSe
 
 	var mu sync.Mutex
 	runPass := func(indices []int, queryFor func(Provider) string) {
+		// Limit concurrent provider queries to prevent overwhelming the system
+		sem := semaphore.NewWeighted(maxConcurrentProviders)
 		var wg sync.WaitGroup
 		for _, i := range indices {
 			provider := prepared.selected[i]
 			wg.Add(1)
 			go func(index int, current Provider) {
 				defer wg.Done()
+
+				// Acquire semaphore before querying provider
+				if err := sem.Acquire(runCtx, 1); err != nil {
+					// Context cancelled or deadline exceeded
+					mu.Lock()
+					statuses[index] = domain.ProviderStatus{
+						Name:  strings.ToLower(strings.TrimSpace(current.Info().Name)),
+						OK:    false,
+						Error: "context cancelled",
+						Count: 0,
+					}
+					mu.Unlock()
+					return
+				}
+				defer sem.Release(1)
 
 				providerKey := strings.ToLower(strings.TrimSpace(current.Name()))
 				statusName := strings.ToLower(strings.TrimSpace(current.Info().Name))

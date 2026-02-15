@@ -68,7 +68,7 @@ func TestItemToResultBuildsCoreFields(t *testing.T) {
 		APIKey: "dummy",
 	})
 
-	result, ok := provider.itemToResult(context.Background(), items[0], "jackett.local")
+	result, ok := provider.itemToResult(context.Background(), items[0], "jackett.local", nil)
 	if !ok {
 		t.Fatalf("expected ok=true")
 	}
@@ -116,7 +116,7 @@ func TestItemToResultBuildsMagnetWhenOnlyInfoHashPresent(t *testing.T) {
 		Trackers: []string{"udp://tracker.opentrackr.org:1337/announce"},
 	})
 
-	result, ok := provider.itemToResult(context.Background(), item, "jackett.local")
+	result, ok := provider.itemToResult(context.Background(), item, "jackett.local", nil)
 	if !ok {
 		t.Fatalf("expected ok=true")
 	}
@@ -144,7 +144,7 @@ func TestItemToResultUsesOriginalCommentsURLForPageURL(t *testing.T) {
 		APIKey: "dummy",
 	})
 
-	result, ok := provider.itemToResult(context.Background(), item, "jackett.local")
+	result, ok := provider.itemToResult(context.Background(), item, "jackett.local", nil)
 	if !ok {
 		t.Fatalf("expected ok=true")
 	}
@@ -169,7 +169,7 @@ func TestItemToResultSkipsAggregatorPageURL(t *testing.T) {
 		APIKey: "dummy",
 	})
 
-	result, ok := provider.itemToResult(context.Background(), item, "jackett.local")
+	result, ok := provider.itemToResult(context.Background(), item, "jackett.local", nil)
 	if !ok {
 		t.Fatalf("expected ok=true")
 	}

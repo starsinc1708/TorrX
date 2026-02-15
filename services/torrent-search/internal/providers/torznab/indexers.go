@@ -293,10 +293,13 @@ func (p *Provider) searchSingleEndpoint(ctx context.Context, request domain.Sear
 		limit = 50
 	}
 
+	// Pre-fetch infohashes from torrent files in parallel to avoid serial 4s delays.
+	infoHashCache := p.prefetchMissingInfoHashes(ctx, items)
+
 	results := make([]domain.SearchResult, 0, limit)
 	seen := make(map[string]struct{}, len(items))
 	for _, item := range items {
-		result, ok := p.itemToResult(ctx, item, uri.Host)
+		result, ok := p.itemToResult(ctx, item, uri.Host, infoHashCache)
 		if !ok {
 			continue
 		}

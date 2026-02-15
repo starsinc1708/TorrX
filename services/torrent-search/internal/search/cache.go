@@ -4,8 +4,10 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"golang.org/x/sync/semaphore"
 	"torrentstream/searchservice/internal/domain"
 	"torrentstream/searchservice/internal/metrics"
 )
@@ -17,6 +19,7 @@ const (
 	defaultWarmTopQueries    = 12
 	defaultCacheMaxEntries   = 400
 	defaultPopularMaxEntries = 200
+	maxConcurrentWarmRefreshes = 3 // Limit parallel cache warm refreshes to avoid overwhelming providers
 )
 
 type searchWarmerConfig struct {
@@ -29,11 +32,12 @@ type searchWarmerConfig struct {
 }
 
 type cachedSearchResponse struct {
-	response   domain.SearchResponse
-	updatedAt  time.Time
-	expiresAt  time.Time
-	staleUntil time.Time
-	refreshing bool
+	response    domain.SearchResponse
+	updatedAt   time.Time
+	expiresAt   time.Time
+	staleUntil  time.Time
+	refreshing  bool
+	refreshOnce sync.Once // Ensures only one refresh per stale period
 }
 
 type popularQuery struct {
@@ -78,15 +82,46 @@ func (s *Service) runWarmer(ctx context.Context) {
 func (s *Service) runWarmCycle(ctx context.Context) {
 	now := time.Now()
 	specs := s.collectWarmSpecs(now)
-	for _, spec := range specs {
-		refreshCtx, cancel := context.WithTimeout(ctx, s.timeout+2*time.Second)
-		_, err := s.searchNoCache(refreshCtx, spec.request, spec.providers)
-		cancel()
-		if err != nil {
-			s.cacheClearRefreshing(spec.key)
-			continue
-		}
+	if len(specs) == 0 {
+		return
 	}
+
+	// Parallelize warm refreshes with bounded concurrency to avoid overwhelming providers.
+	// With 12 queries x 15s each, sequential execution takes 180s on a 5min interval.
+	// Parallelizing to 3 concurrent refreshes reduces this to ~60s.
+	sem := semaphore.NewWeighted(maxConcurrentWarmRefreshes)
+	var wg sync.WaitGroup
+
+	for _, spec := range specs {
+		// Check context cancellation between queries
+		select {
+		case <-ctx.Done():
+			wg.Wait()
+			return
+		default:
+		}
+
+		wg.Add(1)
+		go func(spec warmSpec) {
+			defer wg.Done()
+
+			if err := sem.Acquire(ctx, 1); err != nil {
+				s.cacheClearRefreshing(spec.key)
+				return
+			}
+			defer sem.Release(1)
+
+			refreshCtx, cancel := context.WithTimeout(ctx, s.timeout+2*time.Second)
+			defer cancel()
+
+			_, err := s.searchNoCache(refreshCtx, spec.request, spec.providers)
+			if err != nil {
+				s.cacheClearRefreshing(spec.key)
+			}
+		}(spec)
+	}
+
+	wg.Wait()
 }
 
 func (s *Service) collectWarmSpecs(now time.Time) []warmSpec {
@@ -173,9 +208,15 @@ func (s *Service) cacheLookup(key string, now time.Time) (domain.SearchResponse,
 
 	if now.Before(entry.staleUntil) {
 		metrics.CacheHitsTotal.Inc()
-		needsRefresh := !entry.refreshing
-		if needsRefresh {
+		// Use sync.Once to ensure only one refresh happens per stale period.
+		// This prevents duplicate refreshes even if multiple requests arrive
+		// during the stale window or if a previous refresh failed quickly.
+		needsRefresh := false
+		entry.refreshOnce.Do(func() {
+			needsRefresh = true
 			entry.refreshing = true
+		})
+		if needsRefresh {
 			s.cache[key] = entry
 		}
 		return cloneSearchResponse(entry.response), true, needsRefresh
