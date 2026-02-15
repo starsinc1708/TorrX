@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SessionState } from '../types';
+import type { PlayerHealth, PlayerSettings, SessionState, TorrentSummary } from '../types';
 import { buildUrl } from '../api';
 
 type WSStatus = 'connecting' | 'connected' | 'disconnected';
@@ -12,6 +12,9 @@ interface WSMessage {
 export function useWebSocket(enabled: boolean) {
   const [status, setStatus] = useState<WSStatus>('disconnected');
   const [states, setStates] = useState<SessionState[] | null>(null);
+  const [torrents, setTorrents] = useState<TorrentSummary[] | null>(null);
+  const [playerSettings, setPlayerSettings] = useState<PlayerSettings | null>(null);
+  const [health, setHealth] = useState<PlayerHealth | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -35,8 +38,19 @@ export function useWebSocket(enabled: boolean) {
     ws.onmessage = (event) => {
       try {
         const msg: WSMessage = JSON.parse(event.data as string);
-        if (msg.type === 'states') {
-          setStates(msg.data as SessionState[]);
+        switch (msg.type) {
+          case 'states':
+            setStates(msg.data as SessionState[]);
+            break;
+          case 'torrents':
+            setTorrents(msg.data as TorrentSummary[]);
+            break;
+          case 'player_settings':
+            setPlayerSettings(msg.data as PlayerSettings);
+            break;
+          case 'health':
+            setHealth(msg.data as PlayerHealth);
+            break;
         }
       } catch {
         // Ignore malformed messages.
@@ -83,5 +97,5 @@ export function useWebSocket(enabled: boolean) {
     };
   }, [enabled, connect]);
 
-  return { status, states };
+  return { status, states, torrents, playerSettings, health };
 }

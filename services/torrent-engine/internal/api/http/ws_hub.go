@@ -86,6 +86,23 @@ func (h *wsHub) BroadcastStates(states []domain.SessionState) {
 	}
 }
 
+// Broadcast sends a typed JSON message to all connected WebSocket clients.
+func (h *wsHub) Broadcast(msgType string, data interface{}) {
+	if len(h.clients) == 0 {
+		return
+	}
+	msg := wsMessage{Type: msgType, Data: data}
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		h.logger.Error("ws marshal failed", slog.String("error", err.Error()))
+		return
+	}
+	select {
+	case h.broadcast <- payload:
+	default:
+	}
+}
+
 var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,

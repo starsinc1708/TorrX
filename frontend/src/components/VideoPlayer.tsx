@@ -194,6 +194,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     frame: null,
     loading: false,
   });
+  const playingRef = useRef(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const progressRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1094,6 +1095,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const onStalled = () => {
       if (!streamUrl) return;
       if (seekStatus !== 'idle') return;
+      if (video.paused && !pendingPlayRef.current) return;
       setRuntimeStatus('buffering');
       setRuntimeStatusText('Waiting for next fragments...');
     };
@@ -1612,6 +1614,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setTimeout(() => setScreenshotFlash(false), 400);
   }, [videoRef]);
 
+  // Keep playingRef in sync so timeouts read current value.
+  useEffect(() => { playingRef.current = playing; }, [playing]);
+
   // Auto-hide controls.
   const resetHideTimer = useCallback(() => {
     setShowControls(true);
@@ -1619,15 +1624,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     if (settingsOpen || speedMenuOpen) return;
     hideTimerRef.current = setTimeout(() => {
-      if (playing) {
+      if (playingRef.current) {
         setShowControls(false);
         setCursorHidden(true);
       }
     }, 3000);
-  }, [playing, settingsOpen, speedMenuOpen]);
+  }, [settingsOpen, speedMenuOpen]);
 
   useEffect(() => {
     if (!playing) {
+      setShowControls(true);
       setCursorHidden(false);
       if (hideTimerRef.current) {
         clearTimeout(hideTimerRef.current);
@@ -1674,6 +1680,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      let handled = true;
       switch (e.key) {
         case ' ':
         case 'k':
@@ -1701,11 +1708,14 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
           e.preventDefault();
           takeScreenshot();
           break;
+        default:
+          handled = false;
       }
+      if (handled) resetHideTimer();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [togglePlay, skip, toggleMute, toggleFullscreen, takeScreenshot]);
+  }, [togglePlay, skip, toggleMute, toggleFullscreen, takeScreenshot, resetHideTimer]);
 
   // When HLS seek is active, adjust displayed time and duration.
   const displayCurrentTime = useHls && seekOffset > 0 ? seekOffset + currentTime : currentTime;

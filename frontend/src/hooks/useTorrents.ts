@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useWebSocket } from './useWebSocket';
+import { useWS } from '../app/providers/WebSocketProvider';
 import {
   bulkDeleteTorrents,
   bulkStartTorrents,
@@ -69,7 +69,7 @@ export function useTorrents() {
   const refreshWatchHistoryRef = useRef<() => Promise<void>>();
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
-  const { status: wsStatus, states: wsStates } = useWebSocket(true);
+  const { status: wsStatus, states: wsStates, torrents: wsTorrents, playerSettings: wsPlayerSettings } = useWS();
   const parsedTags = useMemo(() => parseTagsInput(tagsQuery), [tagsQuery]);
 
   const activeStateMap = useMemo(() => {
@@ -206,8 +206,8 @@ export function useTorrents() {
     const handleRefresh = () => { refreshTorrents(); };
     window.addEventListener('torrents:refresh', handleRefresh);
 
-    // If WebSocket is connected, reduce polling to 30s (just for torrent list, not state).
-    const interval = wsStatus === 'connected' ? 30000 : 5000;
+    // If WebSocket is connected, reduce polling to 60s since WS pushes updates.
+    const interval = wsStatus === 'connected' ? 60000 : 5000;
     const timer = window.setInterval(refreshTorrents, interval);
     return () => {
       window.clearInterval(timer);
@@ -220,6 +220,23 @@ export function useTorrents() {
       setActiveStates(wsStates);
     }
   }, [wsStates]);
+
+  // When WS pushes torrent summaries, trigger a full REST refresh if the set of IDs has changed.
+  useEffect(() => {
+    if (!wsTorrents) return;
+    const currentIds = new Set(torrents.map((t) => t.id));
+    const wsIds = new Set(wsTorrents.map((t) => t.id));
+    const changed = currentIds.size !== wsIds.size || [...wsIds].some((id) => !currentIds.has(id));
+    if (changed) {
+      void refreshTorrents();
+    }
+  }, [wsTorrents]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When WS pushes player settings, update currentTorrentId.
+  useEffect(() => {
+    if (!wsPlayerSettings) return;
+    setCurrentTorrentId(wsPlayerSettings.currentTorrentId ?? null);
+  }, [wsPlayerSettings]);
 
   const handleCreate = useCallback(
     async (mode: 'magnet' | 'file', magnet: string, file: File | null, name: string) => {

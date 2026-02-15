@@ -199,7 +199,7 @@ func main() {
 	}
 
 	// Periodically update Prometheus gauges from engine state.
-	go updateEngineMetrics(rootCtx, engine, handler.HLSCacheTotalSize, handler.BroadcastStates)
+	go updateEngineMetrics(rootCtx, engine, handler.HLSCacheTotalSize, handler)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -243,14 +243,19 @@ func main() {
 	logger.Info("server stopped")
 }
 
-func updateEngineMetrics(ctx context.Context, engine *anacrolix.Engine, cacheSize func() int64, broadcast func([]domain.SessionState)) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+func updateEngineMetrics(ctx context.Context, engine *anacrolix.Engine, cacheSize func() int64, handler *apihttp.Server) {
+	stateTicker := time.NewTicker(5 * time.Second)
+	torrentTicker := time.NewTicker(15 * time.Second)
+	healthTicker := time.NewTicker(30 * time.Second)
+	defer stateTicker.Stop()
+	defer torrentTicker.Stop()
+	defer healthTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-stateTicker.C:
 			ids, err := engine.ListActiveSessions(ctx)
 			if err != nil {
 				continue
@@ -275,9 +280,11 @@ func updateEngineMetrics(ctx context.Context, engine *anacrolix.Engine, cacheSiz
 			if cacheSize != nil {
 				metrics.HLSCacheSizeBytes.Set(float64(cacheSize()))
 			}
-			if broadcast != nil {
-				broadcast(states)
-			}
+			handler.BroadcastStates(states)
+		case <-torrentTicker.C:
+			handler.BroadcastTorrents()
+		case <-healthTicker.C:
+			handler.BroadcastHealth(ctx)
 		}
 	}
 }

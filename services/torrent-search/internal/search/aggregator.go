@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"log/slog"
+
 	"golang.org/x/sync/semaphore"
 	"torrentstream/searchservice/internal/domain"
 )
@@ -660,7 +662,7 @@ func sourceRefFromResult(item domain.SearchResult) domain.SourceRef {
 }
 
 func (s *Service) SearchStream(ctx context.Context, request domain.SearchRequest, providerNames []string) <-chan domain.SearchResponse {
-	ch := make(chan domain.SearchResponse, 1)
+	ch := make(chan domain.SearchResponse, 8)
 
 	prepared, err := s.prepareSearch(request, providerNames)
 	if err != nil {
@@ -703,6 +705,16 @@ func (s *Service) executeStreamSearch(ctx context.Context, prepared preparedSear
 	statuses := make([]domain.ProviderStatus, len(prepared.selected))
 	resultsByKey := make(map[string]domain.SearchResult)
 
+	providerNames := make([]string, len(prepared.selected))
+	for i, p := range prepared.selected {
+		providerNames[i] = strings.ToLower(strings.TrimSpace(p.Name()))
+	}
+	slog.Info("stream search started",
+		slog.String("query", prepared.query),
+		slog.Any("providers", providerNames),
+		slog.Int("limit", prepared.limit),
+	)
+
 	var mu sync.Mutex
 	sem := semaphore.NewWeighted(maxConcurrentProviders)
 	var wg sync.WaitGroup
@@ -732,6 +744,11 @@ func (s *Service) executeStreamSearch(ctx context.Context, prepared preparedSear
 
 			now := time.Now()
 			if blocked, until, lastErr := s.isProviderBlocked(providerKey, now); blocked {
+				slog.Warn("stream search: provider blocked",
+					slog.String("provider", providerKey),
+					slog.String("until", until.UTC().Format(time.RFC3339)),
+					slog.String("lastError", lastErr),
+				)
 				mu.Lock()
 				statuses[index] = domain.ProviderStatus{
 					Name:  statusName,
@@ -764,7 +781,24 @@ func (s *Service) executeStreamSearch(ctx context.Context, prepared preparedSear
 				SortOrder: prepared.sortOrder,
 				Profile:   prepared.profile,
 			})
-			s.recordProviderResult(providerKey, prepared.query, searchErr, time.Since(providerStartedAt), time.Now())
+			elapsed := time.Since(providerStartedAt)
+			s.recordProviderResult(providerKey, prepared.query, searchErr, elapsed, time.Now())
+
+			if searchErr != nil {
+				slog.Warn("stream search: provider failed",
+					slog.String("provider", providerKey),
+					slog.String("query", prepared.query),
+					slog.Int64("elapsedMs", elapsed.Milliseconds()),
+					slog.String("error", searchErr.Error()),
+				)
+			} else {
+				slog.Info("stream search: provider completed",
+					slog.String("provider", providerKey),
+					slog.String("query", prepared.query),
+					slog.Int("results", len(items)),
+					slog.Int64("elapsedMs", elapsed.Milliseconds()),
+				)
+			}
 
 			status := domain.ProviderStatus{
 				Name: statusName,
@@ -916,6 +950,20 @@ func (s *Service) executeStreamSearch(ctx context.Context, prepared preparedSear
 	cacheKey := buildSearchCacheKey(prepared.cacheRequest(), prepared.providerNames)
 	s.cacheStore(cacheKey, final, time.Now())
 	s.markPopular(cacheKey, prepared.cacheRequest(), prepared.providerNames, time.Now())
+
+	failed := 0
+	for _, st := range statuses {
+		if !st.OK {
+			failed++
+		}
+	}
+	slog.Info("stream search completed",
+		slog.String("query", prepared.query),
+		slog.Int("totalResults", final.TotalItems),
+		slog.Int("providers", len(statuses)),
+		slog.Int("failed", failed),
+		slog.Int64("elapsedMs", time.Since(startedAt).Milliseconds()),
+	)
 
 	select {
 	case ch <- final:

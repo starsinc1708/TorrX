@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { useLocation } from 'react-router-dom';
 
 import { listTorrents } from '../../api';
+import { useWS } from './WebSocketProvider';
 import type { TorrentSummary } from '../../types';
 
 type CatalogCounts = {
@@ -50,6 +51,7 @@ export function CatalogMetaProvider({ children }: { children: React.ReactNode })
   const inFlightRef = useRef(false);
   const location = useLocation();
   const isPlayerRoute = location.pathname.startsWith('/watch');
+  const { status: wsStatus, torrents: wsTorrents } = useWS();
 
   const refresh = useCallback(() => {
     if (inFlightRef.current) return;
@@ -89,18 +91,27 @@ export function CatalogMetaProvider({ children }: { children: React.ReactNode })
       });
   }, []);
 
+  // Use WS torrent summaries when available.
+  useEffect(() => {
+    if (!wsTorrents) return;
+    setItems(wsTorrents);
+    setIsLoading(false);
+  }, [wsTorrents]);
+
   useEffect(() => {
     // Pause polling during video playback to free browser connections for HLS.
     if (isPlayerRoute) return;
     refresh();
     const onRefresh = () => refresh();
-    const timer = window.setInterval(refresh, 15000);
+    // When WS connected, reduce polling from 15s to 60s since WS pushes updates.
+    const interval = wsStatus === 'connected' ? 60000 : 15000;
+    const timer = window.setInterval(refresh, interval);
     window.addEventListener('torrents:refresh', onRefresh);
     return () => {
       window.removeEventListener('torrents:refresh', onRefresh);
       window.clearInterval(timer);
     };
-  }, [refresh, isPlayerRoute]);
+  }, [refresh, isPlayerRoute, wsStatus]);
 
   const value = useMemo<CatalogMetaValue>(() => {
     const tags = computeTags(items);

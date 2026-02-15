@@ -8,7 +8,7 @@ import { Button } from '../components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { focusTorrent, getPlayerHealth, getTorrent, getWatchHistory, isApiError, startTorrent } from '../api';
 import { useSessionState } from '../hooks/useSessionState';
-import { useWebSocket } from '../hooks/useWebSocket';
+import { useWS } from '../app/providers/WebSocketProvider';
 import { useVideoPlayer } from '../hooks/useVideoPlayer';
 import { getTorrentPlayerPreferences, patchTorrentPlayerPreferences } from '../playerPreferences';
 import type { PlayerHealth, TorrentRecord, WatchPosition } from '../types';
@@ -90,7 +90,7 @@ const PlayerPage: React.FC = () => {
     };
   }, [torrentId]);
 
-  const { states: wsStates } = useWebSocket(true);
+  const { states: wsStates, health: wsHealth } = useWS();
   const { sessionState, setAutoRefreshState } = useSessionState(torrentId ?? null, wsStates);
   useEffect(() => {
     if (torrentId) setAutoRefreshState(true);
@@ -336,7 +336,15 @@ const PlayerPage: React.FC = () => {
     window.dispatchEvent(new Event('player:last-watch'));
   }, [torrentId, selectedFileIndex, fileIndex, lastWatchKey]);
 
+  // Use WS health data when available, fall back to REST polling.
   useEffect(() => {
+    if (wsHealth) setPlayerHealth(wsHealth);
+  }, [wsHealth]);
+
+  useEffect(() => {
+    // Skip REST polling when WS is providing health data.
+    if (wsHealth) return;
+
     let cancelled = false;
     let timer: number | null = null;
 
@@ -359,7 +367,7 @@ const PlayerPage: React.FC = () => {
       cancelled = true;
       if (timer !== null) window.clearInterval(timer);
     };
-  }, []);
+  }, [wsHealth]);
 
   const isResumeHintVisible = useMemo(() => {
     if (resumeHintDismissed) return false;

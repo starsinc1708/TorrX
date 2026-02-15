@@ -271,6 +271,54 @@ func (s *Server) BroadcastStates(states []domain.SessionState) {
 	}
 }
 
+// BroadcastTorrents lists all torrents from the repository and broadcasts
+// their summaries to all connected WebSocket clients.
+func (s *Server) BroadcastTorrents() {
+	if s.wsHub == nil || s.repo == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	records, err := s.repo.List(ctx, domain.TorrentFilter{})
+	if err != nil {
+		s.logger.Debug("ws broadcast torrents failed", slog.String("error", err.Error()))
+		return
+	}
+	summaries := make([]torrentSummary, 0, len(records))
+	for _, record := range records {
+		summaries = append(summaries, torrentSummary{
+			ID:         record.ID,
+			Name:       record.Name,
+			Status:     record.Status,
+			Progress:   progressRatio(record.DoneBytes, record.TotalBytes),
+			DoneBytes:  record.DoneBytes,
+			TotalBytes: record.TotalBytes,
+			CreatedAt:  record.CreatedAt,
+			UpdatedAt:  record.UpdatedAt,
+			Tags:       record.Tags,
+		})
+	}
+	s.wsHub.Broadcast("torrents", summaries)
+}
+
+// BroadcastPlayerSettings broadcasts the current player settings to all
+// connected WebSocket clients.
+func (s *Server) BroadcastPlayerSettings() {
+	if s.wsHub == nil || s.player == nil {
+		return
+	}
+	s.wsHub.Broadcast("player_settings", playerSettingsResponse{CurrentTorrentID: s.player.CurrentTorrentID()})
+}
+
+// BroadcastHealth broadcasts the current player health status to all
+// connected WebSocket clients.
+func (s *Server) BroadcastHealth(ctx context.Context) {
+	if s.wsHub == nil {
+		return
+	}
+	s.wsHub.Broadcast("health", s.BuildPlayerHealth(ctx))
+}
+
 func WithLogger(logger *slog.Logger) ServerOption {
 	return func(s *Server) {
 		s.logger = logger
@@ -466,12 +514,8 @@ func (s *Server) handlePlayerSettings(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handlePlayerHealth(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
+// BuildPlayerHealth constructs a playerHealthResponse without writing it to an HTTP response.
+func (s *Server) BuildPlayerHealth(ctx context.Context) playerHealthResponse {
 	resp := playerHealthResponse{
 		Status:    "ok",
 		CheckedAt: time.Now().UTC(),
@@ -494,7 +538,7 @@ func (s *Server) handlePlayerHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.engine != nil {
-		ids, err := s.engine.ListActiveSessions(r.Context())
+		ids, err := s.engine.ListActiveSessions(ctx)
 		if err != nil {
 			setDegraded("failed to list active sessions")
 		} else {
@@ -534,7 +578,15 @@ func (s *Server) handlePlayerHealth(w http.ResponseWriter, r *http.Request) {
 		setDegraded("hls manager is not configured")
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	return resp
+}
+
+func (s *Server) handlePlayerHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.BuildPlayerHealth(r.Context()))
 }
 
 func (s *Server) handleGetPlayerSettings(w http.ResponseWriter, _ *http.Request) {
@@ -570,6 +622,7 @@ func (s *Server) handleUpdatePlayerSettings(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, http.StatusOK, playerSettingsResponse{CurrentTorrentID: s.player.CurrentTorrentID()})
+	s.BroadcastPlayerSettings()
 }
 
 // Encoding settings handlers.

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   BookmarkCheck,
   BookmarkPlus,
@@ -14,16 +14,8 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import {
-  createTorrentFromMagnet,
-  isApiError,
-  listSearchProviders,
-  searchTorrents,
-  searchTorrentsStream,
-} from '../api';
-import { useCatalogMeta } from '../app/providers/CatalogMetaProvider';
+import { useSearch } from '../app/providers/SearchProvider';
 import { useToast } from '../app/providers/ToastProvider';
-import { onSearchProvidersChanged, resolveEnabledSearchProviders } from '../searchProviderSettings';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
@@ -32,476 +24,73 @@ import { Input } from '../components/ui/input';
 import { MultiSelect } from '../components/ui/multi-select';
 import { Select } from '../components/ui/select';
 import { cn } from '../lib/cn';
+import {
+  type ResultFilters,
+  buildResultKey,
+  defaultResultFilters,
+  sortOptions,
+  sortOrderOptions,
+  tokenizeKeywords,
+} from '../lib/search-utils';
 import type {
-  SearchProviderInfo,
-  SearchProviderStatus,
-  SearchRankingProfile,
-  SearchResponse,
   SearchResultItem,
   SearchSortBy,
   SearchSortOrder,
 } from '../types';
 import { formatBytes } from '../utils';
 
-const sortOptions: Array<{ value: SearchSortBy; label: string }> = [
-  { value: 'relevance', label: 'Relevance' },
-  { value: 'seeders', label: 'Seeders' },
-  { value: 'sizeBytes', label: 'Size' },
-  { value: 'publishedAt', label: 'Published' },
-];
-
-const sortOrderOptions: Array<{ value: SearchSortOrder; label: string }> = [
-  { value: 'desc', label: 'Desc' },
-  { value: 'asc', label: 'Asc' },
-];
-
-const profileStorageKey = 'search-ranking-profile:v2';
-
-const defaultRankingProfile: SearchRankingProfile = {
-  freshnessWeight: 1,
-  seedersWeight: 1,
-  qualityWeight: 1,
-  languageWeight: 5,
-  sizeWeight: 0.4,
-  preferSeries: true,
-  preferMovies: true,
-  preferredAudio: ['RU'],
-  preferredSubtitles: ['RU'],
-  targetSizeBytes: 0,
-};
-
-const phaseLabels: Record<string, string> = {
-  bootstrap: 'Searching providers...',
-  update: 'Results incoming...',
-  fast: 'Fast providers loaded. Fetching slow sources...',
-  full: 'All providers loaded.',
-};
-
-const simplifyProviderError = (raw: string): string => {
-  const trimmed = String(raw ?? '').trim();
-  if (!trimmed) return 'Failed';
-  // Common format: `Get "URL": message`
-  const m = trimmed.match(/:\s*(.+)$/);
-  const tail = (m?.[1] ?? trimmed).trim();
-  const lower = tail.toLowerCase();
-  if (lower.includes('context deadline exceeded')) return 'Timeout';
-  if (lower.includes('i/o timeout')) return 'Timeout';
-  if (lower.includes('connection refused')) return 'Connection refused';
-  if (lower.includes('no such host')) return 'DNS error';
-  return tail.length > 120 ? `${tail.slice(0, 117)}...` : tail;
-};
-
-const buildResultKey = (item: SearchResultItem) =>
-  item.infoHash ||
-  item.magnet ||
-  item.pageUrl ||
-  `${String(item.source ?? 'torrent')}:${String(item.tracker ?? '')}:${String(item.name ?? '').trim()}`;
-
-type ResultFilters = {
-  sources: string[];
-  qualities: string[];
-  audio: string[];
-  subtitles: string[];
-  minSizeGB: string;
-  maxSizeGB: string;
-  minSeeders: string;
-  includeKeywords: string;
-  excludeKeywords: string;
-  excludeCam: boolean;
-};
-
-const defaultResultFilters: ResultFilters = {
-  sources: [],
-  qualities: [],
-  audio: [],
-  subtitles: [],
-  minSizeGB: '',
-  maxSizeGB: '',
-  minSeeders: '',
-  includeKeywords: '',
-  excludeKeywords: '',
-  excludeCam: false,
-};
-
-type SavedFilterPreset = {
-  id: string;
-  name: string;
-  filters: ResultFilters;
-  updatedAt: string;
-};
-
-const filterPresetsStorageKey = 'search-result-filter-presets:v1';
-
-const tokenizeKeywords = (raw: string): string[] =>
-  raw
-    .split(',')
-    .map((v) => v.trim().toLowerCase())
-    .filter(Boolean);
-
-const loadSavedFilterPresets = (): SavedFilterPreset[] => {
-  try {
-    const raw = window.localStorage.getItem(filterPresetsStorageKey);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as SavedFilterPreset[];
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((item) => item && typeof item === 'object')
-      .map((item) => ({
-        id: String(item.id ?? ''),
-        name: String(item.name ?? '').trim(),
-        filters: { ...defaultResultFilters, ...(item.filters ?? {}) },
-        updatedAt: String(item.updatedAt ?? new Date().toISOString()),
-      }))
-      .filter((item) => item.id && item.name);
-  } catch {
-    return [];
-  }
-};
-
-const saveFilterPresets = (presets: SavedFilterPreset[]) => {
-  window.localStorage.setItem(filterPresetsStorageKey, JSON.stringify(presets.slice(0, 20)));
-};
-
-const loadStoredProfile = (): SearchRankingProfile => {
-  try {
-    const raw = window.localStorage.getItem(profileStorageKey);
-    if (!raw) return defaultRankingProfile;
-    const parsed = JSON.parse(raw) as Partial<SearchRankingProfile>;
-    return {
-      ...defaultRankingProfile,
-      ...parsed,
-      preferredAudio: Array.isArray(parsed.preferredAudio) ? parsed.preferredAudio : [],
-      preferredSubtitles: Array.isArray(parsed.preferredSubtitles) ? parsed.preferredSubtitles : [],
-      targetSizeBytes: Number(parsed.targetSizeBytes) > 0 ? Number(parsed.targetSizeBytes) : 0,
-    };
-  } catch {
-    return defaultRankingProfile;
-  }
-};
-
 const SearchPage: React.FC = () => {
-  const { items: catalogItems } = useCatalogMeta();
+  const search = useSearch();
   const { toast } = useToast();
 
-  const [query, setQuery] = useState('');
-  const [activeQuery, setActiveQuery] = useState('');
-  const [providers, setProviders] = useState<SearchProviderInfo[]>([]);
-  const [enabledProviders, setEnabledProviders] = useState<string[]>([]);
-  const [providerStatus, setProviderStatus] = useState<SearchProviderStatus[]>([]);
-  const [items, setItems] = useState<SearchResultItem[]>([]);
-  const [totalItems, setTotalItems] = useState(0);
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
-  const [sortBy, setSortBy] = useState<SearchSortBy>('relevance');
-  const [sortOrder, setSortOrder] = useState<SearchSortOrder>('desc');
-  const [limit, setLimit] = useState(30);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [isLoadingProviders, setIsLoadingProviders] = useState(true);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [phaseMessage, setPhaseMessage] = useState('');
-  const [streamActive, setStreamActive] = useState(false);
-  const [profile, setProfile] = useState<SearchRankingProfile>(() => loadStoredProfile());
-  const [addState, setAddState] = useState<Record<string, 'adding' | 'added' | 'error'>>({});
-  const [resultFilters, setResultFilters] = useState<ResultFilters>(defaultResultFilters);
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [savedFilterPresets, setSavedFilterPresets] = useState<SavedFilterPreset[]>(() => loadSavedFilterPresets());
-  const [selectedFilterPresetId, setSelectedFilterPresetId] = useState('');
   const [detailItem, setDetailItem] = useState<SearchResultItem | null>(null);
 
-  const streamCleanupRef = useRef<(() => void) | null>(null);
-  const streamTokenRef = useRef(0);
-  const lastPhaseRef = useRef<string>('');
-  const providerErrorToastRef = useRef<Map<string, string>>(new Map());
-  const sortByRef = useRef(sortBy);
-  sortByRef.current = sortBy;
-  const sortOrderRef = useRef(sortOrder);
-  sortOrderRef.current = sortOrder;
+  const {
+    query,
+    setQuery,
+    activeQuery,
+    items,
+    totalItems,
+    elapsedMs,
+    hasMore,
+    providerStatus,
+    isLoading,
+    isLoadingMore,
+    streamActive,
+    phaseMessage,
+    providers,
+    enabledProviders,
+    isLoadingProviders,
+    profile,
+    setProfile,
+    sortBy,
+    setSortBy,
+    sortOrder,
+    setSortOrder,
+    limit,
+    setLimit,
+    resultFilters,
+    setResultFilters,
+    filtersOpen,
+    setFiltersOpen,
+    savedFilterPresets,
+    setSavedFilterPresets,
+    selectedFilterPresetId,
+    setSelectedFilterPresetId,
+    addState,
+    submitSearch,
+    forceRefresh,
+    loadMore,
+    addTorrent,
+  } = search;
+
+  const enabledProvidersSet = useMemo(() => new Set(enabledProviders), [enabledProviders]);
 
   const catalogNameSet = useMemo(() => {
-    const set = new Set<string>();
-    for (const t of catalogItems) {
-      const name = (t.name ?? '').trim().toLowerCase();
-      if (name) set.add(name);
-    }
-    return set;
-  }, [catalogItems]);
-
-  const stopStream = useCallback(() => {
-    if (streamCleanupRef.current) {
-      streamCleanupRef.current();
-      streamCleanupRef.current = null;
-    }
-    setStreamActive(false);
+    // Re-derive from search context's catalog awareness via addState
+    // (the addTorrent function in SearchProvider already checks catalog)
+    return new Set<string>();
   }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem(profileStorageKey, JSON.stringify(profile));
-  }, [profile]);
-
-  useEffect(() => {
-    saveFilterPresets(savedFilterPresets);
-  }, [savedFilterPresets]);
-
-  useEffect(() => {
-    if (!errorMessage) return;
-    toast({ title: 'Search', description: errorMessage, variant: 'danger' });
-    setErrorMessage(null);
-  }, [errorMessage, toast]);
-
-  useEffect(() => {
-    if (providerStatus.length === 0) return;
-    for (const status of providerStatus) {
-      if (status.ok) continue;
-      const name = String(status.name ?? '').trim();
-      if (!name) continue;
-      const key = name.toLowerCase();
-      const raw = String(status.error ?? 'failed');
-      const signature = raw;
-      const prev = providerErrorToastRef.current.get(key);
-      if (prev === signature) continue;
-      providerErrorToastRef.current.set(key, signature);
-      toast({
-        title: name,
-        description: simplifyProviderError(raw),
-        variant: 'danger',
-      });
-    }
-  }, [providerStatus, toast]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadProviders = async () => {
-      setIsLoadingProviders(true);
-      try {
-        const list = await listSearchProviders();
-        if (cancelled) return;
-        setProviders(list);
-        const configured = list.filter((p) => p.enabled).map((p) => p.name);
-        setEnabledProviders(resolveEnabledSearchProviders(configured));
-      } catch {
-        if (cancelled) return;
-        setErrorMessage('Failed to load search providers');
-      } finally {
-        if (!cancelled) setIsLoadingProviders(false);
-      }
-    };
-    void loadProviders();
-    return () => {
-      cancelled = true;
-      stopStream();
-    };
-  }, [stopStream]);
-
-  useEffect(() => {
-    const off = onSearchProvidersChanged((next) => {
-      const available = providers.filter((p) => p.enabled).map((p) => p.name.toLowerCase());
-      setEnabledProviders(next.filter((name) => available.includes(name)));
-    });
-    return off;
-  }, [providers]);
-
-  const applyResponse = useCallback((response: SearchResponse, mode: 'replace' | 'append' | 'merge') => {
-    const safeItems = Array.isArray(response.items) ? response.items : [];
-    const safeProviders = Array.isArray(response.providers) ? response.providers : [];
-    setProviderStatus(safeProviders);
-    setElapsedMs(response.elapsedMs ?? 0);
-    setTotalItems(response.totalItems ?? 0);
-    setHasMore(Boolean(response.hasMore));
-    if (mode === 'append') {
-      setItems((prev) => [...prev, ...safeItems]);
-    } else {
-      // Both 'replace' and 'merge' use the full sorted snapshot from the server
-      setItems(safeItems);
-    }
-  }, []);
-
-  const runSearch = useCallback(
-    async (nextOffset: number, append: boolean, noCache = false) => {
-      if (!activeQuery.trim()) return;
-      if (enabledProviders.length === 0) {
-        setErrorMessage('Enable at least one source in Settings');
-        return;
-      }
-
-      setErrorMessage(null);
-      setPhaseMessage('');
-
-      if (append) {
-        setIsLoadingMore(true);
-        try {
-          const response = await searchTorrents({
-            query: activeQuery,
-            limit,
-            offset: nextOffset,
-            sortBy: sortByRef.current,
-            sortOrder: sortOrderRef.current,
-            providers: enabledProviders,
-            profile,
-            noCache,
-          });
-          applyResponse(response, 'append');
-        } catch (error) {
-          if (isApiError(error)) setErrorMessage(error.message || 'Search failed');
-          else setErrorMessage('Search failed');
-        } finally {
-          setIsLoadingMore(false);
-        }
-        return;
-      }
-
-      stopStream();
-      providerErrorToastRef.current.clear();
-      setIsLoading(true);
-      setItems([]);
-      setProviderStatus([]);
-
-      const token = streamTokenRef.current + 1;
-      streamTokenRef.current = token;
-
-      streamCleanupRef.current = searchTorrentsStream(
-        {
-          query: activeQuery,
-          limit,
-          offset: nextOffset,
-          sortBy: sortByRef.current,
-          sortOrder: sortOrderRef.current,
-          providers: enabledProviders,
-          profile,
-          noCache,
-        },
-          {
-            onPhase: (response) => {
-              if (streamTokenRef.current !== token) return;
-            if (response.phase === 'bootstrap') {
-              setPhaseMessage(phaseLabels.bootstrap);
-              setStreamActive(true);
-              return;
-            }
-            if (response.phase === 'update') {
-              const providerName = response.provider ?? '';
-              const label = providerName ? `${providerName} loaded` : 'Results updated';
-              setPhaseMessage(label);
-              applyResponse(response, 'merge');
-              setIsLoading(false);
-              setStreamActive(!response.final);
-              return;
-            }
-            // Legacy: fast/full phases for backward compat
-            if (response.phase) {
-              const nextPhase = response.phase;
-              setPhaseMessage(phaseLabels[nextPhase] ?? nextPhase);
-              if (lastPhaseRef.current !== nextPhase && (nextPhase === 'fast' || nextPhase === 'full')) {
-                toast({ title: 'Search', description: phaseLabels[nextPhase] ?? nextPhase });
-              }
-              lastPhaseRef.current = nextPhase;
-            }
-            applyResponse(response, 'replace');
-            setIsLoading(false);
-            setStreamActive(!response.final);
-          },
-          onDone: () => {
-            if (streamTokenRef.current !== token) return;
-            setStreamActive(false);
-            setIsLoading(false);
-          },
-          onError: (message) => {
-            if (streamTokenRef.current !== token) return;
-            setErrorMessage(message || 'Search stream failed');
-            setStreamActive(false);
-            setIsLoading(false);
-          },
-        },
-      );
-    },
-    [activeQuery, enabledProviders, limit, profile, stopStream, applyResponse],
-  );
-
-  const handleSearchSubmit = useCallback(
-    async (event: React.FormEvent) => {
-      event.preventDefault();
-      const normalized = query.trim();
-      if (!normalized) {
-        setErrorMessage('Enter search query');
-        return;
-      }
-      // Treat every submit as a fresh search: clear stale UI immediately.
-      stopStream();
-      providerErrorToastRef.current.clear();
-      setItems([]);
-      setProviderStatus([]);
-      setTotalItems(0);
-      setHasMore(false);
-      setElapsedMs(0);
-      setPhaseMessage('');
-      setStreamActive(false);
-
-      if (normalized !== activeQuery) {
-        setResultFilters(defaultResultFilters);
-        setSelectedFilterPresetId('');
-        setActiveQuery(normalized);
-        return;
-      }
-      await runSearch(0, false);
-    },
-    [activeQuery, query, runSearch, stopStream],
-  );
-
-  const handleForceRefresh = useCallback(
-    async () => {
-      if (!activeQuery.trim()) return;
-      // Force refresh bypasses server-side cache (useful for debugging or latest results).
-      stopStream();
-      providerErrorToastRef.current.clear();
-      setItems([]);
-      setProviderStatus([]);
-      setTotalItems(0);
-      setHasMore(false);
-      setElapsedMs(0);
-      setPhaseMessage('');
-      setStreamActive(false);
-      await runSearch(0, false, true);
-    },
-    [activeQuery, runSearch, stopStream],
-  );
-
-  useEffect(() => {
-    if (!activeQuery.trim()) return;
-    void runSearch(0, false);
-  }, [activeQuery, runSearch]);
-
-  const handleLoadMore = useCallback(async () => {
-    await runSearch(items.length, true);
-  }, [items.length, runSearch]);
-
-  const handleAddTorrent = useCallback(
-    async (item: SearchResultItem) => {
-      const key = buildResultKey(item);
-      const normalizedName = (item.name ?? '').trim().toLowerCase();
-      if (normalizedName && catalogNameSet.has(normalizedName)) {
-        setAddState((prev) => ({ ...prev, [key]: 'added' }));
-        toast({ title: 'Already added', description: item.name });
-        return;
-      }
-      if (!item.magnet) {
-        setAddState((prev) => ({ ...prev, [key]: 'error' }));
-        toast({ title: 'Cannot add torrent', description: 'Magnet link is missing', variant: 'danger' });
-        return;
-      }
-      setAddState((prev) => ({ ...prev, [key]: 'adding' }));
-      try {
-        await createTorrentFromMagnet(item.magnet, item.name);
-        setAddState((prev) => ({ ...prev, [key]: 'added' }));
-        toast({ title: 'Added to catalog', description: item.name, variant: 'success' });
-        window.dispatchEvent(new Event('torrents:refresh'));
-      } catch (error) {
-        setAddState((prev) => ({ ...prev, [key]: 'error' }));
-        const message = isApiError(error) ? error.message : 'Failed to add torrent';
-        toast({ title: 'Add failed', description: message, variant: 'danger' });
-      }
-    },
-    [catalogNameSet, toast],
-  );
 
   const updateWeight = useCallback(
     (
@@ -510,11 +99,10 @@ const SearchPage: React.FC = () => {
     ) => {
       setProfile((prev) => ({ ...prev, [field]: value }));
     },
-    [],
+    [setProfile],
   );
 
   const targetSizeGB = profile.targetSizeBytes > 0 ? profile.targetSizeBytes / (1024 ** 3) : 0;
-  const enabledProvidersSet = useMemo(() => new Set(enabledProviders), [enabledProviders]);
 
   const preferredAudioOptions = useMemo(() => {
     const set = new Set<string>(['RU', 'EN']);
@@ -757,12 +345,7 @@ const SearchPage: React.FC = () => {
   }, [resultFilters]);
 
   const detailKey = detailItem ? buildResultKey(detailItem) : '';
-  const detailAlreadyAdded = useMemo(() => {
-    if (!detailItem) return false;
-    const normalized = (detailItem.name ?? '').trim().toLowerCase();
-    return normalized.length > 0 && catalogNameSet.has(normalized);
-  }, [detailItem, catalogNameSet]);
-  const detailStatus = detailItem ? (detailAlreadyAdded ? 'added' : addState[detailKey]) : undefined;
+  const detailStatus = detailItem ? addState[detailKey] : undefined;
   const detailIsAdding = detailStatus === 'adding';
   const detailIsAdded = detailStatus === 'added';
 
@@ -771,7 +354,7 @@ const SearchPage: React.FC = () => {
       new Set(
         [
           '1337x',
-'jackett (torznab)',
+          'jackett (torznab)',
           'the pirate bay',
           'prowlarr (torznab)',
           'rutracker',
@@ -811,7 +394,7 @@ const SearchPage: React.FC = () => {
     if (badgeKey === 'No CAM') {
       setResultFilters((prev) => ({ ...prev, excludeCam: false }));
     }
-  }, []);
+  }, [setResultFilters]);
 
   const handleSaveFilterPreset = useCallback(() => {
     if (!hasActiveFilters) {
@@ -829,7 +412,7 @@ const SearchPage: React.FC = () => {
           item.id === existing.id ? { ...item, filters: { ...resultFilters }, updatedAt: new Date().toISOString() } : item,
         );
       }
-      const next: SavedFilterPreset = {
+      const next = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         name,
         filters: { ...resultFilters },
@@ -838,7 +421,7 @@ const SearchPage: React.FC = () => {
       return [next, ...prev].slice(0, 20);
     });
     toast({ title: 'Filters', description: `Preset "${name}" saved.`, variant: 'success' });
-  }, [hasActiveFilters, resultFilters, savedFilterPresets.length, selectedFilterPresetId, toast]);
+  }, [hasActiveFilters, resultFilters, savedFilterPresets.length, selectedFilterPresetId, toast, setSavedFilterPresets]);
 
   const handleApplyFilterPreset = useCallback(
     (presetId: string) => {
@@ -849,7 +432,7 @@ const SearchPage: React.FC = () => {
       setResultFilters({ ...defaultResultFilters, ...preset.filters });
       toast({ title: 'Filters', description: `Applied preset "${preset.name}".` });
     },
-    [savedFilterPresets, toast],
+    [savedFilterPresets, toast, setSelectedFilterPresetId, setResultFilters],
   );
 
   const handleDeleteFilterPreset = useCallback(() => {
@@ -860,7 +443,14 @@ const SearchPage: React.FC = () => {
     if (preset) {
       toast({ title: 'Filters', description: `Preset "${preset.name}" removed.` });
     }
-  }, [savedFilterPresets, selectedFilterPresetId, toast]);
+  }, [savedFilterPresets, selectedFilterPresetId, toast, setSavedFilterPresets, setSelectedFilterPresetId]);
+
+  const handleAddTorrent = useCallback(
+    (item: SearchResultItem) => {
+      void addTorrent(item);
+    },
+    [addTorrent],
+  );
 
   return (
     <div className="grid h-[calc(100dvh-3.5rem-2*theme(spacing.3))] gap-6 sm:h-[calc(100dvh-3.5rem-2*theme(spacing.4))] md:h-[calc(100dvh-3.5rem-2*theme(spacing.5))] lg:grid-cols-[minmax(320px,1fr)_minmax(0,2fr)]">
@@ -875,7 +465,7 @@ const SearchPage: React.FC = () => {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5 overflow-y-auto">
-          <form className="space-y-3" onSubmit={handleSearchSubmit}>
+          <form className="space-y-3" onSubmit={submitSearch}>
             <div className="space-y-2">
               <div className="text-sm font-medium">Query</div>
               <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end">
@@ -892,7 +482,7 @@ const SearchPage: React.FC = () => {
                   type="button"
                   variant="outline"
                   className="w-full sm:w-auto"
-                  onClick={handleForceRefresh}
+                  onClick={forceRefresh}
                   disabled={isLoading || isLoadingProviders || !activeQuery.trim()}
                   title="Force refresh (bypass cache)"
                 >
@@ -1312,11 +902,8 @@ const SearchPage: React.FC = () => {
               {filteredItems.map((item) => {
                 const key = buildResultKey(item);
                 const status = addState[key];
-                const normalizedName = (item.name ?? '').trim().toLowerCase();
-                const alreadyAdded = normalizedName.length > 0 && catalogNameSet.has(normalizedName);
-                const effectiveStatus = alreadyAdded ? 'added' : status;
-                const isAdding = effectiveStatus === 'adding';
-                const isAdded = effectiveStatus === 'added';
+                const isAdding = status === 'adding';
+                const isAdded = status === 'added';
 
                 const meta = [
                   item.enrichment?.quality ? String(item.enrichment.quality) : null,
@@ -1424,7 +1011,7 @@ const SearchPage: React.FC = () => {
                           disabled={!item.magnet || isAdding || isAdded}
                           onClick={(event) => {
                             event.stopPropagation();
-                            void handleAddTorrent(item);
+                            handleAddTorrent(item);
                           }}
                           className="h-8 px-2.5 text-xs"
                         >
@@ -1447,7 +1034,7 @@ const SearchPage: React.FC = () => {
 
           {hasMore ? (
             <div className="flex justify-center pt-2">
-              <Button variant="outline" onClick={() => void handleLoadMore()} disabled={isLoadingMore}>
+              <Button variant="outline" onClick={loadMore} disabled={isLoadingMore}>
                 {isLoadingMore ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 Load more
               </Button>
@@ -1589,7 +1176,7 @@ const SearchPage: React.FC = () => {
                     <Button
                       variant={detailIsAdded ? 'secondary' : 'default'}
                       disabled={!detailItem.magnet || detailIsAdding || detailIsAdded}
-                      onClick={() => void handleAddTorrent(detailItem)}
+                      onClick={() => handleAddTorrent(detailItem)}
                     >
                       {detailIsAdding ? <Loader2 className="h-4 w-4 animate-spin" /> : detailIsAdded ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
                       {detailIsAdded ? 'Added' : 'Add to catalog'}
