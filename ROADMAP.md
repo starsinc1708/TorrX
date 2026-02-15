@@ -34,20 +34,28 @@ All P0 bugs have been fixed as of 2026-02-15:
 
 ## P1 — High: Reliability & Performance
 
-### Goroutine leak in anacrolix waitForInfo
+**Top-3 priority bugs fixed** (commit `73644ac`, 2026-02-15):
+
+### ✅ Goroutine leak in anacrolix waitForInfo — FIXED
 - **File**: `services/torrent-engine/internal/services/torrent/engine/anacrolix/engine.go`
-- `waitForInfo` (line 262) blocks on `<-t.GotInfo()` forever with no timeout. Zero-peer torrents leak goroutines.
-- **Fix**: Add `context.WithTimeout` or a configurable deadline. Clean up torrent on timeout.
+- **Solution**: Added `metadataWaitTimeout` (10 min). Changed `waitForInfo` to use `select` with `time.After`. Zero-peer torrents now timeout and cleanup automatically.
+
+### ✅ ffprobe retry blocks HLS startup — FIXED
+- **File**: `services/torrent-engine/internal/api/http/hls.go`
+- **Solution**: Added `codecCache` map with RWMutex. Created `isH264FileWithCache()` and `isAACAudioWithCache()` methods. Cache eliminates repeated 6s ffprobe calls.
+
+### ✅ SSE ignores client disconnect — FIXED
+- **File**: `services/torrent-search/internal/api/http/server.go`
+- **Solution**: Changed `writeSSEEvent` to return error. Added error checking on all calls + `r.Context().Done()` checks between phases. Search terminates on disconnect.
+
+---
+
+**Remaining P1 bugs (lower priority):**
 
 ### Abandoned AddMagnet after timeout
 - **File**: `services/torrent-engine/internal/services/torrent/engine/anacrolix/engine.go`
 - `Open()` (line 190) returns timeout error, but background goroutine may still complete `AddMagnet`. Torrent added to engine without caller knowing.
 - **Fix**: Track pending operations; remove torrent if caller timed out.
-
-### ffprobe retry blocks HLS startup
-- **File**: `services/torrent-engine/internal/api/http/hls.go`
-- `isH264FileWithRetry` (line 453) runs synchronously: 3 attempts x 2s = up to 6s delay before FFmpeg starts.
-- **Fix**: Cache codec detection results per file, or run async and start encoding while waiting.
 
 ### Torznab serial torrent-file downloads
 - **File**: `services/torrent-search/internal/providers/torznab/provider.go`
@@ -58,11 +66,6 @@ All P0 bugs have been fixed as of 2026-02-15:
 - **File**: `services/torrent-search/internal/search/aggregator.go`
 - Fan-out (line 172) spawns unlimited goroutines. Jackett with 20 indexers = 20 simultaneous requests.
 - **Fix**: Use `golang.org/x/sync/semaphore` or a worker pool with configurable max concurrency.
-
-### SSE ignores client disconnect
-- **File**: `services/torrent-search/internal/api/http/server.go`
-- `writeSSEEvent` (line 961) discards write errors (`_, _ =`). Search continues after client closes tab.
-- **Fix**: Check write errors; return on broken pipe. Use `r.Context().Done()` between phases.
 
 ### Cache warmer runs sequentially
 - **File**: `services/torrent-search/internal/search/cache.go`
