@@ -5,6 +5,22 @@
 - Backend is a reusable platform for web UI and custom clients.
 - Next major feature: torrent catalog fed by search service + torrent engine.
 
+---
+
+## ✅ Critical Bug Fixes (Completed 2026-02-15)
+
+**All P0 critical bugs from ROADMAP.md have been fixed** (commit `bb55b61`):
+
+1. ✅ HLS reader double-close panic → Fixed with explicit Close() on each exit path
+2. ✅ CreateTorrent race on duplicate magnets → Fixed with ErrAlreadyExists handling
+3. ✅ StreamTorrent session leak on Start failure → Fixed with session.Stop() cleanup
+4. ✅ DeleteTorrent data loss risk → Fixed by swapping operation order (DB first, files second)
+5. ✅ MongoDB Update silent no-op → Fixed with MatchedCount check
+
+**Impact:** Platform stability is now sufficient for feature development. No known critical data integrity or resource leak issues remain.
+
+---
+
 ### Phase 0: Baseline and project hygiene
 Goal: make implementation predictable and measurable.
 
@@ -128,12 +144,13 @@ Dependencies:
 - Phase 2 and Phase 4.
 
 ## Task Execution Order
-1. Phase 0
+0. ✅ **Critical Bug Fixes (COMPLETED 2026-02-15)** — prerequisite for all phases
+1. Phase 0 — Baseline and project hygiene
 2. Phase 1 and Phase 2 (can run partially in parallel)
-3. Phase 3
-4. Phase 4
-5. Phase 5
-6. Phase 6
+3. Phase 3 — SSRF-safe outbound network layer
+4. Phase 4 — Catalog domain foundation
+5. Phase 5 — Ingestion pipeline
+6. Phase 6 — Client enablement and developer experience
 
 ## Suggested PR Granularity
 - One PR per task for `P0.x-P3.x`.
