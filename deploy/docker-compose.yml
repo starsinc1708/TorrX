@@ -179,6 +179,8 @@ services:
       SEARCH_PROVIDER_PIRATEBAY_ENDPOINT: "https://apibay.org/q.php"
       SEARCH_PROVIDER_1337X_ENDPOINT: "https://x1337x.ws,https://1337x.to,https://1377x.to"
       SEARCH_PROVIDER_RUTRACKER_ENDPOINT: "https://rutracker.org/forum/tracker.php"
+      SEARCH_PROVIDER_RUTRACKER_COOKIE: "${SEARCH_PROVIDER_RUTRACKER_COOKIE:-}"
+      SEARCH_PROVIDER_RUTRACKER_PROXY: "${SEARCH_PROVIDER_RUTRACKER_PROXY:-}"
       FLARESOLVERR_URL: "http://flaresolverr:8191/"
       REDIS_URL: "redis://redis:6379/0"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
