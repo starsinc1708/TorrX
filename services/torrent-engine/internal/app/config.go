@@ -7,25 +7,27 @@ import (
 )
 
 type Config struct {
-	HTTPAddr          string
-	MongoURI          string
-	MongoDatabase     string
-	MongoCollection   string
-	LogLevel          string
-	LogFormat         string
-	TorrentDataDir    string
-	OpenAPIPath       string
-	StorageMode       string
-	MemoryLimitBytes  int64
-	MemorySpillDir    string
-	FFMPEGPath        string
-	FFProbePath       string
-	HLSDir            string
-	HLSPreset         string
-	HLSCRF            int
-	HLSAudioBitrate   string
-	HLSCacheSizeBytes int64
-	HLSCacheMaxAgeH   int64
+	HTTPAddr           string
+	MongoURI           string
+	MongoDatabase      string
+	MongoCollection    string
+	LogLevel           string
+	LogFormat          string
+	TorrentDataDir     string
+	OpenAPIPath        string
+	StorageMode        string
+	MemoryLimitBytes   int64
+	MemorySpillDir     string
+	MaxSessions        int   // 0 = unlimited
+	MinDiskSpaceBytes  int64 // minimum free disk space; 0 = disabled (default 1 GB)
+	FFMPEGPath         string
+	FFProbePath        string
+	HLSDir             string
+	HLSPreset          string
+	HLSCRF             int
+	HLSAudioBitrate    string
+	HLSCacheSizeBytes  int64
+	HLSCacheMaxAgeH    int64
 }
 
 func LoadConfig() Config {
@@ -39,8 +41,10 @@ func LoadConfig() Config {
 		TorrentDataDir:    getEnv("TORRENT_DATA_DIR", "data"),
 		OpenAPIPath:       getEnv("OPENAPI_PATH", ""),
 		StorageMode:       strings.ToLower(getEnv("TORRENT_STORAGE_MODE", "disk")),
-		MemoryLimitBytes:  getEnvInt64("TORRENT_MEMORY_LIMIT_BYTES", 0),
-		MemorySpillDir:    getEnv("TORRENT_MEMORY_SPILL_DIR", ""),
+		MemoryLimitBytes:   getEnvInt64("TORRENT_MEMORY_LIMIT_BYTES", 0),
+		MemorySpillDir:     getEnv("TORRENT_MEMORY_SPILL_DIR", ""),
+		MaxSessions:        int(getEnvInt64("TORRENT_MAX_SESSIONS", 0)),
+		MinDiskSpaceBytes:  getEnvInt64("TORRENT_MIN_DISK_SPACE_BYTES", 0),
 		FFMPEGPath:        getEnv("FFMPEG_PATH", "ffmpeg"),
 		FFProbePath:       getEnv("FFPROBE_PATH", "ffprobe"),
 		HLSDir:            getEnv("HLS_DIR", ""),

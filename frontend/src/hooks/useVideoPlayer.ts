@@ -62,6 +62,12 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
   const trackSwitchTokenRef = useRef(0);
   /** Populated by VideoPlayer — synchronously destroys the active HLS.js instance. */
   const hlsDestroyRef = useRef<(() => void) | null>(null);
+  /** Debounce timer for rapid HLS seeks (e.g. timeline scrubbing). */
+  const seekDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** AbortController for the currently in-flight debounced HLS seek request. */
+  const seekAbortRef = useRef<AbortController | null>(null);
+  /** Resolve callback of the previous debounced seek promise (to avoid hanging). */
+  const seekResolveRef = useRef<(() => void) | null>(null);
 
   const availableFiles = useMemo<FileRef[]>(() => {
     const fromRecord = selectedTorrent?.files ?? [];
@@ -395,6 +401,19 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
     setTrackSwitchInProgress(false);
     trackSwitchTokenRef.current += 1;
     resumePositionRef.current = null;
+    // Cancel any pending/in-flight debounced seek.
+    if (seekDebounceRef.current !== null) {
+      clearTimeout(seekDebounceRef.current);
+      seekDebounceRef.current = null;
+    }
+    if (seekAbortRef.current) {
+      seekAbortRef.current.abort();
+      seekAbortRef.current = null;
+    }
+    if (seekResolveRef.current) {
+      seekResolveRef.current();
+      seekResolveRef.current = null;
+    }
   }, [selectedTorrent?.id]);
 
   // Reset track selection when file changes.
@@ -408,7 +427,29 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
     setTrackSwitchInProgress(false);
     trackSwitchTokenRef.current += 1;
     resumePositionRef.current = null;
+    // Cancel any pending/in-flight debounced seek.
+    if (seekDebounceRef.current !== null) {
+      clearTimeout(seekDebounceRef.current);
+      seekDebounceRef.current = null;
+    }
+    if (seekAbortRef.current) {
+      seekAbortRef.current.abort();
+      seekAbortRef.current = null;
+    }
+    if (seekResolveRef.current) {
+      seekResolveRef.current();
+      seekResolveRef.current = null;
+    }
   }, [selectedFileIndex]);
+
+  // Clean up debounced seek on unmount.
+  useEffect(() => {
+    return () => {
+      if (seekDebounceRef.current !== null) clearTimeout(seekDebounceRef.current);
+      seekAbortRef.current?.abort();
+      if (seekResolveRef.current) seekResolveRef.current();
+    };
+  }, []);
 
   // Map native HTMLVideoElement errors.
   // Auto-fallback to HLS on decode/format errors when in direct mode.
@@ -522,37 +563,80 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
   );
 
   const hlsSeekTo = useCallback(
-    async (absoluteTime: number) => {
-      if (!selectedTorrent || selectedFileIndex === null) return;
-      const audio = audioTrack ?? findDefaultAudioTrack(mediaInfo);
-      const maxAttempts = 3;
-      try {
-        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-          try {
-            const result = await hlsSeek(selectedTorrent.id, selectedFileIndex, absoluteTime, {
-              audioTrack: audio,
-              subtitleTrack,
-            });
-            setSeekOffset(result.seekTime);
-            setSeekToken(Date.now());
-            setVideoError(null);
-            return;
-          } catch (error) {
-            if (attempt >= maxAttempts || !isRetryableSeekError(error)) {
-              throw error;
-            }
-            const delayMs = attempt === 1 ? 450 : 1200;
-            await sleep(delayMs);
-          }
-        }
-      } catch (error) {
-        if (isApiError(error)) {
-          setVideoError(`seek failed: ${error.message}`);
-        } else {
-          setVideoError('seek failed');
-        }
-        throw error;
+    (absoluteTime: number): Promise<void> => {
+      if (!selectedTorrent || selectedFileIndex === null) return Promise.resolve();
+
+      // Clamp to valid range.
+      const duration = mediaInfo?.duration ?? 0;
+      let clamped = absoluteTime;
+      if (duration > 0) {
+        clamped = Math.max(0, Math.min(clamped, duration));
+      } else {
+        // Duration unknown — just prevent negative values.
+        clamped = Math.max(0, clamped);
       }
+
+      // Debounce rapid seeks — cancel any pending timer and in-flight request.
+      if (seekDebounceRef.current !== null) {
+        clearTimeout(seekDebounceRef.current);
+        seekDebounceRef.current = null;
+      }
+      if (seekAbortRef.current) {
+        seekAbortRef.current.abort();
+        seekAbortRef.current = null;
+      }
+      // Resolve the previous debounced promise so callers are not left hanging.
+      if (seekResolveRef.current) {
+        seekResolveRef.current();
+        seekResolveRef.current = null;
+      }
+
+      return new Promise<void>((resolve, reject) => {
+        seekResolveRef.current = resolve;
+        seekDebounceRef.current = setTimeout(async () => {
+          seekResolveRef.current = null;
+          seekDebounceRef.current = null;
+          const controller = new AbortController();
+          seekAbortRef.current = controller;
+
+          const audio = audioTrack ?? findDefaultAudioTrack(mediaInfo);
+          const maxAttempts = 3;
+          try {
+            for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+              try {
+                const result = await hlsSeek(selectedTorrent.id, selectedFileIndex, clamped, {
+                  audioTrack: audio,
+                  subtitleTrack,
+                  signal: controller.signal,
+                });
+                if (controller.signal.aborted) return;
+                setSeekOffset(result.seekTime);
+                setSeekToken(Date.now());
+                setVideoError(null);
+                resolve();
+                return;
+              } catch (error) {
+                if (controller.signal.aborted) return;
+                if (attempt >= maxAttempts || !isRetryableSeekError(error)) {
+                  throw error;
+                }
+                const delayMs = attempt === 1 ? 450 : 1200;
+                await sleep(delayMs);
+                if (controller.signal.aborted) return;
+              }
+            }
+            resolve();
+          } catch (error) {
+            if (controller.signal.aborted) return;
+            if (isApiError(error)) {
+              setVideoError(`seek failed: ${error.message}`);
+            } else {
+              setVideoError('seek failed');
+            }
+            reject(error);
+          }
+        }, 300);
+      });
     },
     [selectedTorrent, selectedFileIndex, audioTrack, subtitleTrack, mediaInfo],
   );

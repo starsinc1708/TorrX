@@ -622,7 +622,7 @@ export const hlsSeek = async (
   id: string,
   fileIndex: number,
   time: number,
-  options?: { audioTrack?: number | null; subtitleTrack?: number | null },
+  options?: { audioTrack?: number | null; subtitleTrack?: number | null; signal?: AbortSignal },
 ): Promise<{ seekTime: number }> => {
   const params = new URLSearchParams();
   params.set('time', String(time));
@@ -634,7 +634,7 @@ export const hlsSeek = async (
   }
   const response = await fetch(
     buildUrl(`/torrents/${id}/hls/${fileIndex}/seek?${params.toString()}`),
-    { method: 'POST' },
+    { method: 'POST', signal: options?.signal },
   );
   return handleResponse(response);
 };

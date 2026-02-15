@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"torrentstream/internal/app"
@@ -82,28 +83,44 @@ type MediaProbe interface {
 	ProbeReader(ctx context.Context, reader io.Reader) (domain.MediaInfo, error)
 }
 
+// mediaProbeCacheEntry holds a cached ffprobe result with an expiration time.
+type mediaProbeCacheEntry struct {
+	info      domain.MediaInfo
+	expiresAt time.Time
+}
+
+// mediaProbeCacheKey uniquely identifies a media probe request.
+type mediaProbeCacheKey struct {
+	torrentID domain.TorrentID
+	fileIndex int
+}
+
+const mediaProbeCacheTTL = 5 * time.Minute
+
 type Server struct {
-	createTorrent CreateTorrentUseCase
-	startTorrent  StartTorrentUseCase
-	stopTorrent   StopTorrentUseCase
-	deleteTorrent DeleteTorrentUseCase
-	streamTorrent StreamTorrentUseCase
-	getState      GetTorrentStateUseCase
-	listStates    ListTorrentStatesUseCase
-	storage       StorageSettingsController
-	repo          domainports.TorrentRepository
-	openAPIPath   string
-	hls           *hlsManager
-	hlsCfg        *HLSConfig
-	mediaProbe    MediaProbe
-	mediaDataDir  string
-	watchHistory  WatchHistoryStore
-	encoding      EncodingSettingsController
-	player        PlayerSettingsController
-	engine        domainports.Engine
-	logger        *slog.Logger
-	handler       http.Handler
-	wsHub         *wsHub
+	createTorrent   CreateTorrentUseCase
+	startTorrent    StartTorrentUseCase
+	stopTorrent     StopTorrentUseCase
+	deleteTorrent   DeleteTorrentUseCase
+	streamTorrent   StreamTorrentUseCase
+	getState        GetTorrentStateUseCase
+	listStates      ListTorrentStatesUseCase
+	storage         StorageSettingsController
+	repo            domainports.TorrentRepository
+	openAPIPath     string
+	hls             *hlsManager
+	hlsCfg          *HLSConfig
+	mediaProbe      MediaProbe
+	mediaDataDir    string
+	watchHistory    WatchHistoryStore
+	encoding        EncodingSettingsController
+	player          PlayerSettingsController
+	engine          domainports.Engine
+	logger          *slog.Logger
+	handler         http.Handler
+	wsHub           *wsHub
+	mediaCacheMu    sync.RWMutex
+	mediaProbeCache map[mediaProbeCacheKey]mediaProbeCacheEntry
 }
 
 type ServerOption func(*Server)
@@ -261,7 +278,11 @@ func WithLogger(logger *slog.Logger) ServerOption {
 }
 
 func NewServer(create CreateTorrentUseCase, opts ...ServerOption) *Server {
-	s := &Server{createTorrent: create, openAPIPath: defaultOpenAPIPath()}
+	s := &Server{
+		createTorrent:   create,
+		openAPIPath:     defaultOpenAPIPath(),
+		mediaProbeCache: make(map[mediaProbeCacheKey]mediaProbeCacheEntry),
+	}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -1033,6 +1054,8 @@ func (s *Server) handleDeleteTorrent(w http.ResponseWriter, r *http.Request, id 
 		s.hls.cache.PurgeTorrent(id)
 	}
 
+	s.invalidateMediaProbeCache(domain.TorrentID(id))
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1157,6 +1180,7 @@ func (s *Server) handleBulkDelete(w http.ResponseWriter, r *http.Request) {
 		if s.hls != nil && s.hls.cache != nil {
 			s.hls.cache.PurgeTorrent(id)
 		}
+		s.invalidateMediaProbeCache(domain.TorrentID(id))
 		results = append(results, bulkResultItem{ID: id, OK: true})
 	}
 	writeJSON(w, http.StatusOK, bulkResponse{Items: results})
@@ -1329,11 +1353,36 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 			}
 		}
 
-		if job.err != nil {
-			if errors.Is(job.err, errSubtitleSourceUnavailable) {
-				writeError(w, http.StatusServiceUnavailable, "stream_unavailable", "subtitle track is not ready yet")
+		// When subtitle source is unavailable, fall back to transcoding
+		// without subtitles instead of failing the entire request.
+		if job.err != nil && errors.Is(job.err, errSubtitleSourceUnavailable) && subtitleTrack >= 0 {
+			s.logger.Warn("hls subtitle source unavailable, falling back to no subtitles",
+				slog.String("torrentId", id),
+				slog.Int("fileIndex", fileIndex),
+				slog.Int("requestedSubtitleTrack", subtitleTrack),
+			)
+			fallbackKey := hlsKey{
+				id:            domain.TorrentID(id),
+				fileIndex:     fileIndex,
+				audioTrack:    audioTrack,
+				subtitleTrack: -1,
+			}
+			key = fallbackKey
+			subtitleTrack = -1
+			job, err = s.hls.ensureJob(domain.TorrentID(id), fileIndex, audioTrack, -1)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal_error", "failed to start hls without subtitles")
 				return
 			}
+			select {
+			case <-job.ready:
+			case <-time.After(30 * time.Second):
+				writeError(w, http.StatusServiceUnavailable, "stream_unavailable", "hls playlist not ready (subtitle fallback)")
+				return
+			}
+		}
+
+		if job.err != nil {
 			writeError(w, http.StatusInternalServerError, "internal_error", job.err.Error())
 			return
 		}
@@ -1410,6 +1459,28 @@ func (s *Server) handleHLSSeek(w http.ResponseWriter, r *http.Request, id domain
 		return
 	}
 
+	// When subtitle source is unavailable during seek, fall back to
+	// transcoding without subtitles instead of failing entirely.
+	if job.err != nil && errors.Is(job.err, errSubtitleSourceUnavailable) && subtitleTrack >= 0 {
+		s.logger.Warn("hls seek subtitle source unavailable, falling back to no subtitles",
+			slog.String("torrentId", string(id)),
+			slog.Int("fileIndex", fileIndex),
+			slog.Int("requestedSubtitleTrack", subtitleTrack),
+			slog.Float64("seekTime", seekTime),
+		)
+		job, err = s.hls.seekJob(id, fileIndex, audioTrack, -1, seekTime)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "failed to start hls seek without subtitles")
+			return
+		}
+		select {
+		case <-job.ready:
+		case <-time.After(30 * time.Second):
+			writeError(w, http.StatusServiceUnavailable, "stream_unavailable", "hls playlist not ready after seek (subtitle fallback)")
+			return
+		}
+	}
+
 	if job.err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", job.err.Error())
 		return
@@ -1446,6 +1517,22 @@ func (s *Server) handleMediaInfo(w http.ResponseWriter, r *http.Request, id stri
 	// UI can still proceed with default playback mode.
 	if s.mediaProbe == nil || s.mediaDataDir == "" {
 		writeJSON(w, http.StatusOK, domain.MediaInfo{Tracks: []domain.MediaTrack{}})
+		return
+	}
+
+	// Check in-memory probe cache first.
+	cacheKey := mediaProbeCacheKey{torrentID: domain.TorrentID(id), fileIndex: fileIndex}
+	if cached, ok := s.lookupMediaProbeCache(cacheKey); ok {
+		// SubtitlesReady is dynamic (depends on file existence on disk), so
+		// recompute it even on cache hit.
+		if fileIndex < len(record.Files) && record.Files[fileIndex].Path != "" && s.mediaDataDir != "" {
+			if resolved, resolveErr := resolveDataFilePath(s.mediaDataDir, record.Files[fileIndex].Path); resolveErr == nil {
+				if info, statErr := os.Stat(resolved); statErr == nil && !info.IsDir() {
+					cached.SubtitlesReady = true
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, cached)
 		return
 	}
 
@@ -1538,7 +1625,57 @@ func (s *Server) handleMediaInfo(w http.ResponseWriter, r *http.Request, id stri
 		}
 	}
 
+	// Cache the probe result (without SubtitlesReady, which is recomputed on hit).
+	// Only cache results with more than 1 track — partially downloaded files may
+	// expose incomplete track lists that would become stale once more data arrives.
+	if len(bestInfo.Tracks) > 1 {
+		cachedInfo := bestInfo
+		cachedInfo.SubtitlesReady = false
+		s.storeMediaProbeCache(cacheKey, cachedInfo)
+	}
+
 	writeJSON(w, http.StatusOK, bestInfo)
+}
+
+// lookupMediaProbeCache returns a cached MediaInfo if present and not expired.
+func (s *Server) lookupMediaProbeCache(key mediaProbeCacheKey) (domain.MediaInfo, bool) {
+	s.mediaCacheMu.RLock()
+	entry, ok := s.mediaProbeCache[key]
+	s.mediaCacheMu.RUnlock()
+	if !ok {
+		return domain.MediaInfo{}, false
+	}
+	if time.Now().After(entry.expiresAt) {
+		// Expired — remove lazily.
+		s.mediaCacheMu.Lock()
+		if existing, stillThere := s.mediaProbeCache[key]; stillThere && time.Now().After(existing.expiresAt) {
+			delete(s.mediaProbeCache, key)
+		}
+		s.mediaCacheMu.Unlock()
+		return domain.MediaInfo{}, false
+	}
+	return entry.info, true
+}
+
+// storeMediaProbeCache stores a MediaInfo result in the cache with TTL.
+func (s *Server) storeMediaProbeCache(key mediaProbeCacheKey, info domain.MediaInfo) {
+	s.mediaCacheMu.Lock()
+	s.mediaProbeCache[key] = mediaProbeCacheEntry{
+		info:      info,
+		expiresAt: time.Now().Add(mediaProbeCacheTTL),
+	}
+	s.mediaCacheMu.Unlock()
+}
+
+// invalidateMediaProbeCache removes all cached probe entries for the given torrent ID.
+func (s *Server) invalidateMediaProbeCache(id domain.TorrentID) {
+	s.mediaCacheMu.Lock()
+	for key := range s.mediaProbeCache {
+		if key.torrentID == id {
+			delete(s.mediaProbeCache, key)
+		}
+	}
+	s.mediaCacheMu.Unlock()
 }
 
 type torrentStateList struct {

@@ -24,11 +24,16 @@ var ErrSessionNotFound = domain.ErrNotFound
 // Anacrolix default is 55.
 const defaultMaxConns = 55
 
+// ErrSessionLimitReached is returned when the maximum number of sessions is
+// reached and no idle session can be evicted.
+var ErrSessionLimitReached = errors.New("session limit reached")
+
 type Config struct {
 	DataDir          string
 	StorageMode      string
 	MemoryLimitBytes int64
 	MemorySpillDir   string
+	MaxSessions      int // 0 = unlimited
 }
 
 type Engine struct {
@@ -42,6 +47,8 @@ type Engine struct {
 	focusedPieces  map[domain.TorrentID]focusedPieceRange
 	focusedID      domain.TorrentID // cached; always consistent with modes
 	peakCompleted  map[domain.TorrentID]int64 // high-water mark for BytesCompleted per torrent
+	lastAccess     map[domain.TorrentID]time.Time // LRU tracking for session eviction
+	maxSessions    int
 	storageMode    string
 	memoryProvider *memory.Provider
 }
@@ -81,6 +88,8 @@ func New(cfg Config) (*Engine, error) {
 		modes:          make(map[domain.TorrentID]domain.SessionMode),
 		speeds:         make(map[domain.TorrentID]speedSample),
 		peakCompleted:  make(map[domain.TorrentID]int64),
+		lastAccess:     make(map[domain.TorrentID]time.Time),
+		maxSessions:    cfg.MaxSessions,
 		storageMode:    mode,
 		memoryProvider: provider,
 	}, nil
@@ -93,6 +102,7 @@ func NewWithClient(client *torrent.Client) *Engine {
 		modes:         make(map[domain.TorrentID]domain.SessionMode),
 		speeds:        make(map[domain.TorrentID]speedSample),
 		peakCompleted: make(map[domain.TorrentID]int64),
+		lastAccess:    make(map[domain.TorrentID]time.Time),
 		storageMode:   "disk",
 	}
 }
@@ -248,6 +258,7 @@ func (e *Engine) Open(ctx context.Context, src domain.TorrentSource) (ports.Sess
 	// If this torrent is already tracked, return the existing session.
 	e.mu.Lock()
 	if _, exists := e.sessions[id]; exists {
+		e.lastAccess[id] = time.Now().UTC()
 		e.mu.Unlock()
 		ready := torrentInfoReady(t)
 		var files []domain.FileRef
@@ -256,9 +267,33 @@ func (e *Engine) Open(ctx context.Context, src domain.TorrentSource) (ports.Sess
 		}
 		return &Session{engine: e, torrent: t, id: id, files: files, ready: ready}, nil
 	}
+
+	// Enforce session limit: evict the least-recently-used idle session.
+	var evictedTorrent *torrent.Torrent
+	var evictedID domain.TorrentID
+	if e.maxSessions > 0 && len(e.sessions) >= e.maxSessions {
+		et, eid, err := e.evictIdleSessionLocked()
+		if err != nil {
+			e.mu.Unlock()
+			t.Drop()
+			return nil, ErrSessionLimitReached
+		}
+		evictedTorrent = et
+		evictedID = eid
+	}
+
 	e.sessions[id] = t
 	e.modes[id] = domain.ModeIdle
+	e.lastAccess[id] = time.Now().UTC()
 	e.mu.Unlock()
+
+	// Drop evicted torrent synchronously outside the lock to avoid
+	// a race between Drop and the new session registration.
+	if evictedTorrent != nil {
+		e.forgetFocusedPieces(evictedID)
+		e.forgetSpeed(evictedID)
+		evictedTorrent.Drop()
+	}
 
 	// Try to get info with a short timeout; if not ready, return pending session.
 	shortCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -291,8 +326,12 @@ func (e *Engine) waitForInfo(t *torrent.Torrent, id domain.TorrentID) {
 			t.Drop() // Release torrent resources
 			delete(e.sessions, id)
 			delete(e.modes, id)
+			delete(e.peakCompleted, id)
+			delete(e.lastAccess, id)
 		}
 		e.mu.Unlock()
+		e.forgetSpeed(id)
+		e.forgetFocusedPieces(id)
 		return
 	}
 
@@ -337,6 +376,8 @@ func (e *Engine) GetSessionState(ctx context.Context, id domain.TorrentID) (doma
 	if t == nil {
 		return domain.SessionState{}, ErrSessionNotFound
 	}
+
+	e.touchLastAccess(id)
 
 	e.mu.RLock()
 	mode := e.modes[id]
@@ -416,6 +457,7 @@ func (e *Engine) GetSession(ctx context.Context, id domain.TorrentID) (ports.Ses
 	if t == nil {
 		return nil, ErrSessionNotFound
 	}
+	e.touchLastAccess(id)
 	ready := torrentInfoReady(t)
 	return &Session{engine: e, torrent: t, id: id, files: mapFiles(t), ready: ready}, nil
 }
@@ -550,6 +592,8 @@ func (e *Engine) FocusSession(ctx context.Context, id domain.TorrentID) error {
 		return ErrSessionNotFound
 	}
 
+	e.lastAccess[id] = time.Now().UTC()
+
 	// If already focused, nothing to do.
 	if e.modes[id] == domain.ModeFocused {
 		return nil
@@ -631,6 +675,7 @@ func (e *Engine) dropTorrent(id domain.TorrentID, t *torrent.Torrent) error {
 	delete(e.sessions, id)
 	delete(e.modes, id)
 	delete(e.peakCompleted, id)
+	delete(e.lastAccess, id)
 	if e.focusedID == id {
 		e.focusedID = ""
 	}
@@ -745,6 +790,59 @@ func (e *Engine) forgetSpeed(id domain.TorrentID) {
 	e.speedMu.Lock()
 	delete(e.speeds, id)
 	e.speedMu.Unlock()
+}
+
+// touchLastAccess updates the last-access timestamp for the given session.
+func (e *Engine) touchLastAccess(id domain.TorrentID) {
+	e.mu.Lock()
+	if _, ok := e.sessions[id]; ok {
+		e.lastAccess[id] = time.Now().UTC()
+	}
+	e.mu.Unlock()
+}
+
+// evictIdleSessionLocked removes the least-recently-used idle session to make
+// room for a new one. Caller must hold e.mu write lock. Sessions in Focused
+// mode are never evicted.
+func (e *Engine) evictIdleSessionLocked() (*torrent.Torrent, domain.TorrentID, error) {
+	var evictID domain.TorrentID
+	var evictTime time.Time
+	found := false
+
+	for id := range e.sessions {
+		mode := e.modes[id]
+		if mode == domain.ModeFocused {
+			continue // never evict the focused session
+		}
+		// Prefer idle/stopped sessions over active ones.
+		isIdle := mode == domain.ModeIdle || mode == domain.ModeStopped || mode == domain.ModeCompleted || mode == domain.ModePaused
+		if !isIdle {
+			continue
+		}
+		accessed := e.lastAccess[id]
+		if !found || accessed.Before(evictTime) {
+			evictID = id
+			evictTime = accessed
+			found = true
+		}
+	}
+
+	if !found {
+		return nil, "", ErrSessionLimitReached
+	}
+
+	t := e.sessions[evictID]
+	delete(e.sessions, evictID)
+	delete(e.modes, evictID)
+	delete(e.peakCompleted, evictID)
+	delete(e.lastAccess, evictID)
+	if e.focusedID == evictID {
+		e.focusedID = ""
+	}
+
+	// Return the evicted torrent so the caller can Drop() it
+	// synchronously outside the lock (avoids a race condition).
+	return t, evictID, nil
 }
 
 func resolveSpillDir(dataDir, configured string) string {

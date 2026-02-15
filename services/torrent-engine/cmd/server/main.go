@@ -110,6 +110,7 @@ func main() {
 		StorageMode:      cfg.StorageMode,
 		MemoryLimitBytes: cfg.MemoryLimitBytes,
 		MemorySpillDir:   cfg.MemorySpillDir,
+		MaxSessions:      cfg.MaxSessions,
 	})
 	if err != nil {
 		logger.Error("torrent engine init failed", slog.String("error", err.Error()))
@@ -132,6 +133,18 @@ func main() {
 	// Start background state sync.
 	syncUC := usecase.SyncState{Engine: engine, Repo: repo, Logger: logger}
 	go syncUC.Run(rootCtx)
+
+	// Start disk pressure monitor.
+	if cfg.MinDiskSpaceBytes > 0 {
+		diskUC := usecase.DiskPressure{
+			Engine:        engine,
+			Logger:        logger,
+			DataDir:       cfg.TorrentDataDir,
+			MinFreeBytes:  cfg.MinDiskSpaceBytes,
+			ResumeBytes:   cfg.MinDiskSpaceBytes * 2,
+		}
+		go diskUC.Run(rootCtx)
+	}
 
 	createUC := usecase.CreateTorrent{Engine: engine, Repo: repo, Now: time.Now}
 	startUC := usecase.StartTorrent{Engine: engine, Repo: repo, Now: time.Now}
