@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { ErrorBoundary } from './ErrorBoundary';
 
-function ThrowingComponent() {
+function ThrowingComponent(): React.ReactNode {
   throw new Error('Test error');
 }
 
