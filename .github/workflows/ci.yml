@@ -71,6 +71,7 @@ jobs:
   go-lint:
     name: Go Lint
     runs-on: ubuntu-latest
+    # TODO: switch back to golangci/golangci-lint-action@v6 when it supports Go 1.25
     steps:
       - uses: actions/checkout@v4
 
@@ -78,15 +79,11 @@ jobs:
         with:
           go-version-file: services/torrent-engine/go.mod
 
-      - name: golangci-lint (torrent-engine)
-        uses: golangci/golangci-lint-action@v6
-        with:
-          working-directory: services/torrent-engine
+      - name: go vet (torrent-engine)
+        run: cd services/torrent-engine && go vet ./...
 
-      - name: golangci-lint (torrent-search)
-        uses: golangci/golangci-lint-action@v6
-        with:
-          working-directory: services/torrent-search
+      - name: go vet (torrent-search)
+        run: cd services/torrent-search && go vet ./...
 
   frontend:
     name: Frontend (React)
