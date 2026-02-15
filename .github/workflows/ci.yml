@@ -68,6 +68,26 @@ jobs:
           name: torrent-search-coverage
           path: services/torrent-search/coverage.out
 
+  go-lint:
+    name: Go Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/torrent-engine/go.mod
+
+      - name: golangci-lint (torrent-engine)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: services/torrent-engine
+
+      - name: golangci-lint (torrent-search)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: services/torrent-search
+
   frontend:
     name: Frontend (React)
     runs-on: ubuntu-latest
@@ -84,10 +104,16 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --legacy-peer-deps
+
+      - name: Lint
+        run: npm run lint
 
       - name: Type-check
-        run: npx tsc --noEmit
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
 
       - name: Build
         run: npm run build

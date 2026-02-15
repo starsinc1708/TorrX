@@ -11,13 +11,19 @@ test-search:
 
 test-frontend:
 	cd frontend && npx tsc --noEmit
+	cd frontend && npx vitest run
 
 # ── Lint ─────────────────────────────────────────────────────────────
-lint:
+lint: lint-go lint-frontend
+
+lint-go:
 	@echo "── Go (torrent-engine) ──"
 	cd services/torrent-engine && go vet ./...
 	@echo "── Go (torrent-search) ──"
 	cd services/torrent-search && go vet ./...
+
+lint-frontend:
+	cd frontend && npm run lint
 
 # ── Build ────────────────────────────────────────────────────────────
 build: build-engine build-search build-frontend
