@@ -45,12 +45,6 @@ const LONG_REQUEST_TIMEOUT_MS = 90000;
 // single network round-trip.
 const inflightGets = new Map<string, Promise<Response>>();
 
-// ---- POST/PUT/DELETE request deduplication ----
-// Prevents duplicate mutation requests caused by double-clicks or rapid
-// repeated invocations. Keyed by "METHOD:url" so concurrent identical
-// mutations collapse into a single network round-trip.
-const inflightMutations = new Map<string, Promise<Response>>();
-
 const deduplicatedFetch = async (
   url: string,
   init?: RequestInit,
@@ -58,16 +52,11 @@ const deduplicatedFetch = async (
 ): Promise<Response> => {
   const method = init?.method?.toUpperCase() ?? 'GET';
 
+  // Don't deduplicate mutations (POST, PUT, DELETE, etc.) because different
+  // request bodies should not share the same response. Mutations are idempotent
+  // by design and should execute independently.
   if (method !== 'GET') {
-    const mutKey = `${method}:${url}`;
-    const existing = inflightMutations.get(mutKey);
-    if (existing) return existing.then((r) => r.clone());
-
-    const promise = fetchWithTimeout(url, init, timeoutMs).finally(() => {
-      inflightMutations.delete(mutKey);
-    });
-    inflightMutations.set(mutKey, promise);
-    return promise;
+    return fetchWithTimeout(url, init, timeoutMs);
   }
 
   const existing = inflightGets.get(url);
@@ -460,10 +449,10 @@ export const bulkDeleteTorrents = async (ids: string[], deleteFiles: boolean): P
   return handleResponse(response);
 };
 
-export const getTorrentState = async (id: string): Promise<SessionState> => {
+export const getTorrentState = async (id: string, signal?: AbortSignal): Promise<SessionState> => {
   const response = await deduplicatedFetch(
     buildUrl(`/torrents/${id}/state`),
-    undefined,
+    { signal },
     POLL_REQUEST_TIMEOUT_MS,
   );
   return handleResponse(response);

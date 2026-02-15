@@ -48,6 +48,12 @@ export function useWebSocket(enabled: boolean) {
       wsRef.current = null;
       // Only attempt reconnect if the component is still mounted.
       if (!mountedRef.current) return;
+
+      // Clear any existing reconnect timer before scheduling new one
+      if (reconnectTimerRef.current !== null) {
+        clearTimeout(reconnectTimerRef.current);
+      }
+
       const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
       reconnectAttemptsRef.current += 1;
       reconnectTimerRef.current = window.setTimeout(connect, delay);
