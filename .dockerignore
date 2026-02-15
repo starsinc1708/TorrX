@@ -1,0 +1,8 @@
+.git
+.sop
+data
+**/*.log
+**/*.tmp
+**/*.srt
+**/*.puml
+**/*.DS_Store

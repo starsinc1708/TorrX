@@ -1,0 +1,16 @@
+@startuml
+participant "Web Client / Player" as C
+participant "HTTP API" as H
+participant "HLS Manager" as M
+participant "Filesystem" as FS
+
+C -> H: GET /torrents/{id}/hls/{fileIndex}/seg-XXXXX.ts
+H -> M: ensureJob(id, fileIndex, audioTrack, subtitleTrack)
+H -> FS: stat segment file
+
+alt segment exists
+  H --> C: 200 video/MP2T
+else missing
+  H --> C: 404 Not Found
+end
+@enduml

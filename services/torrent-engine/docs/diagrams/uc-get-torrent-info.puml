@@ -1,0 +1,10 @@
+@startuml
+participant Client as C
+participant "HTTP API" as H
+participant "TorrentRepository (port)" as R
+
+C -> H: GET /torrents/{id}
+H -> R: Get(id)
+R --> H: record
+H --> C: 200 OK
+@enduml

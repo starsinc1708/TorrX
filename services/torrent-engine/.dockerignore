@@ -1,0 +1,6 @@
+.git
+.sop
+**/*.log
+**/*.tmp
+**/*.puml
+**/*.DS_Store

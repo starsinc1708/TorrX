@@ -1,0 +1,15 @@
+@startuml
+participant Client as C
+participant "HTTP API" as H
+participant "StopTorrent UC" as U
+participant "TorrentRepository (port)" as R
+participant "Engine (port)" as E
+
+C -> H: POST /torrents/{id}/stop
+H -> U: Execute(id)
+U -> R: Get(id)
+U -> E: StopSession(id)
+U -> R: Update(status=stopped)
+U --> H: updated record
+H --> C: 200 OK
+@enduml

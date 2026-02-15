@@ -1,0 +1,15 @@
+@startuml
+participant Client as C
+participant "HTTP API" as H
+participant "GetTorrentState UC" as U
+participant "Engine (port)" as E
+
+C -> H: GET /torrents/{id}/state
+H -> U: GetTorrentState(id)
+U -> E: GetSessionState(id)
+
+E --> U: state or not_found
+U --> H: 200 OK or 404
+
+H --> C: response
+@enduml

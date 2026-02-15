@@ -1,0 +1,19 @@
+@startuml
+participant "Video Player" as P
+participant "HTTP Handler" as H
+participant "StreamTorrent UC" as U
+participant "Engine (port)" as E
+participant "Session (port)" as S
+
+P -> H: GET /torrents/{id}/stream?fileIndex=0\nRange: bytes=START-END
+H -> U: Execute(id, fileIndex)
+U -> E: GetSession(id)
+U -> S: SelectFile(fileIndex)
+U -> S: SetPiecePriority(file, high)
+U -> S: NewReader(file)
+U --> H: reader + file metadata
+H -> H: parseByteRange()
+H -> S: Seek(start)
+H -> S: Read(end-start+1)
+H --> P: 206 Partial Content
+@enduml

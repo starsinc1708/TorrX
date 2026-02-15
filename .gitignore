@@ -1,0 +1,48 @@
+# Binaries and build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+/go.work
+/go.work.sum
+
+# Build output
+/bin/
+/dist/
+/services/torrent-engine/bin/
+/services/torrent-search/bin/
+/frontend/dist/
+
+# Web client
+/frontend/node_modules/
+/frontend/.env
+/deploy/.env
+
+# Vendor (uncomment if you do not commit vendor)
+/vendor/
+
+# Logs and temp files
+*.log
+*.tmp
+
+# IDE/editor
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Project data
+/data/
+/deploy/data/
+/.sop

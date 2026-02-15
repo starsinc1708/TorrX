@@ -1,0 +1,182 @@
+groups:
+  - name: slo_recording_rules
+    interval: 30s
+    rules:
+      # ── Search service ──────────────────────────────────────────────
+      - record: slo:search:requests:rate5m
+        expr: sum(rate(traefik_service_requests_total{service=~"torrent-search-api@file"}[5m]))
+
+      - record: slo:search:errors:rate5m
+        expr: sum(rate(traefik_service_requests_total{service=~"torrent-search-api@file",code=~"5.."}[5m]))
+
+      - record: slo:search:error_ratio:rate5m
+        expr: slo:search:errors:rate5m / clamp_min(slo:search:requests:rate5m, 1e-10)
+
+      - record: slo:search:availability:rate5m
+        expr: 1 - slo:search:error_ratio:rate5m
+
+      - record: slo:search:latency_p50
+        expr: histogram_quantile(0.50, sum(rate(traefik_service_request_duration_seconds_bucket{service=~"torrent-search-api@file"}[5m])) by (le))
+
+      - record: slo:search:latency_p95
+        expr: histogram_quantile(0.95, sum(rate(traefik_service_request_duration_seconds_bucket{service=~"torrent-search-api@file"}[5m])) by (le))
+
+      - record: slo:search:latency_p99
+        expr: histogram_quantile(0.99, sum(rate(traefik_service_request_duration_seconds_bucket{service=~"torrent-search-api@file"}[5m])) by (le))
+
+      # ── Torrent API ─────────────────────────────────────────────────
+      - record: slo:api:requests:rate5m
+        expr: sum(rate(traefik_service_requests_total{service=~"torrentstream-api@file"}[5m]))
+
+      - record: slo:api:errors:rate5m
+        expr: sum(rate(traefik_service_requests_total{service=~"torrentstream-api@file",code=~"5.."}[5m]))
+
+      - record: slo:api:error_ratio:rate5m
+        expr: slo:api:errors:rate5m / clamp_min(slo:api:requests:rate5m, 1e-10)
+
+      - record: slo:api:availability:rate5m
+        expr: 1 - slo:api:error_ratio:rate5m
+
+      - record: slo:api:latency_p50
+        expr: histogram_quantile(0.50, sum(rate(traefik_service_request_duration_seconds_bucket{service=~"torrentstream-api@file"}[5m])) by (le))
+
+      - record: slo:api:latency_p95
+        expr: histogram_quantile(0.95, sum(rate(traefik_service_request_duration_seconds_bucket{service=~"torrentstream-api@file"}[5m])) by (le))
+
+      - record: slo:api:latency_p99
+        expr: histogram_quantile(0.99, sum(rate(traefik_service_request_duration_seconds_bucket{service=~"torrentstream-api@file"}[5m])) by (le))
+
+      # ── Error budget (7d rolling window) ────────────────────────────
+      # Search SLO target: 99.0% → allowed error rate = 0.01
+      - record: slo:search:error_budget:remaining
+        expr: >
+          1 - (
+            sum(increase(traefik_service_requests_total{service=~"torrent-search-api@file",code=~"5.."}[7d]))
+            / clamp_min(sum(increase(traefik_service_requests_total{service=~"torrent-search-api@file"}[7d])), 1)
+          ) / 0.01
+
+      # API SLO target: 99.5% → allowed error rate = 0.005
+      - record: slo:api:error_budget:remaining
+        expr: >
+          1 - (
+            sum(increase(traefik_service_requests_total{service=~"torrentstream-api@file",code=~"5.."}[7d]))
+            / clamp_min(sum(increase(traefik_service_requests_total{service=~"torrentstream-api@file"}[7d])), 1)
+          ) / 0.005
+
+  - name: slo_alerts
+    rules:
+      # ── Search: error rate ──────────────────────────────────────────
+      - alert: SearchHighErrorRate
+        expr: slo:search:error_ratio:rate5m > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: search
+        annotations:
+          summary: "Search error rate > 5%"
+          description: "Search 5xx error rate is {{ $value | humanizePercentage }} over last 5m."
+
+      - alert: SearchCriticalErrorRate
+        expr: slo:search:error_ratio:rate5m > 0.10
+        for: 2m
+        labels:
+          severity: critical
+          service: search
+        annotations:
+          summary: "Search error rate > 10%"
+          description: "Search 5xx error rate is {{ $value | humanizePercentage }} — SLO breach imminent."
+
+      # ── Search: latency ─────────────────────────────────────────────
+      - alert: SearchHighLatency
+        expr: slo:search:latency_p95 > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: search
+        annotations:
+          summary: "Search P95 latency > 5s"
+          description: "Search P95 latency is {{ $value | humanizeDuration }}."
+
+      - alert: SearchCriticalLatency
+        expr: slo:search:latency_p95 > 15
+        for: 2m
+        labels:
+          severity: critical
+          service: search
+        annotations:
+          summary: "Search P95 latency > 15s"
+          description: "Search P95 latency is {{ $value | humanizeDuration }}."
+
+      # ── Search: error budget ────────────────────────────────────────
+      - alert: SearchErrorBudgetLow
+        expr: slo:search:error_budget:remaining < 0.25
+        for: 5m
+        labels:
+          severity: warning
+          service: search
+        annotations:
+          summary: "Search error budget < 25%"
+          description: "Only {{ $value | humanizePercentage }} of the 7d error budget remains."
+
+      - alert: SearchErrorBudgetExhausted
+        expr: slo:search:error_budget:remaining < 0
+        for: 2m
+        labels:
+          severity: critical
+          service: search
+        annotations:
+          summary: "Search error budget exhausted"
+          description: "Search SLO breached — budget {{ $value | humanizePercentage }}."
+
+      # ── API: error rate ─────────────────────────────────────────────
+      - alert: ApiHighErrorRate
+        expr: slo:api:error_ratio:rate5m > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "API error rate > 1%"
+          description: "API 5xx error rate is {{ $value | humanizePercentage }}."
+
+      - alert: ApiCriticalErrorRate
+        expr: slo:api:error_ratio:rate5m > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          service: api
+        annotations:
+          summary: "API error rate > 5%"
+          description: "API 5xx error rate is {{ $value | humanizePercentage }} — SLO breach."
+
+      # ── API: latency ────────────────────────────────────────────────
+      - alert: ApiHighLatency
+        expr: slo:api:latency_p95 > 1.2
+        for: 5m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "API P95 latency > 1.2s"
+          description: "API P95 latency is {{ $value | humanizeDuration }}."
+
+      # ── API: error budget ───────────────────────────────────────────
+      - alert: ApiErrorBudgetLow
+        expr: slo:api:error_budget:remaining < 0.25
+        for: 5m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "API error budget < 25%"
+          description: "Only {{ $value | humanizePercentage }} of the 7d error budget remains."
+
+      - alert: ApiErrorBudgetExhausted
+        expr: slo:api:error_budget:remaining < 0
+        for: 2m
+        labels:
+          severity: critical
+          service: api
+        annotations:
+          summary: "API error budget exhausted"
+          description: "API SLO breached — budget {{ $value | humanizePercentage }}."

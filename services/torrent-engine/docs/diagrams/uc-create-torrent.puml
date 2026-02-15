@@ -1,0 +1,22 @@
+@startuml
+participant Client as C
+participant "HTTP API" as H
+participant "CreateTorrent UC" as U
+participant "Engine (port)" as E
+participant "TorrentRepository (port)" as R
+
+C -> H: POST /torrents
+H -> U: CreateTorrent(request)
+
+alt magnet JSON
+  U -> E: Open(magnet)
+else torrent file multipart
+  U -> E: Open(torrent file)
+end
+
+U -> E: Session.Start()
+U -> E: Files()
+U -> R: Create(record with source)
+U --> H: 201 Created (torrentId, files)
+H --> C: 201 Created
+@enduml

@@ -1,0 +1,28 @@
+@startuml
+participant "Video Player" as P
+participant "HTTP API" as H
+participant "StreamVideo UC" as U
+participant "Engine (port)" as E
+participant "TorrentRepository (port)" as R
+participant "Session (port)" as S
+
+P -> H: GET /torrents/{id}/stream?fileIndex=0
+note right of P: Range: bytes=start-end
+H -> U: StreamVideo(request)
+U -> E: GetSession(id)
+
+alt session missing in memory
+  U -> R: Get(id)
+  U -> E: Open(source)
+  U -> S: Start()
+end
+
+U -> S: SelectFile(fileIndex)
+U -> S: SetPiecePriority(file, high)
+U -> S: NewReader(file)
+U --> H: stream reader + file
+
+H -> H: parse Range and stream bytes
+
+H --> P: 206 Partial Content
+@enduml

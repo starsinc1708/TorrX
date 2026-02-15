@@ -1,0 +1,22 @@
+@startuml
+participant Client as C
+participant "HTTP API" as H
+participant "StartTorrent UC" as U
+participant "TorrentRepository (port)" as R
+participant "Engine (port)" as E
+participant "Session (port)" as S
+
+C -> H: POST /torrents/{id}/start
+H -> U: Execute(id)
+U -> R: Get(id)
+U -> E: StartSession(id)
+
+alt session missing in engine
+  U -> E: Open(record.source)
+  U -> S: Start()
+end
+
+U -> R: Update(status=active)
+U --> H: updated record
+H --> C: 200 OK
+@enduml

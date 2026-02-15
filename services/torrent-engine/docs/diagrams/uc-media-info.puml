@@ -1,0 +1,20 @@
+@startuml
+participant "Web Client" as C
+participant "HTTP API" as H
+participant "Mongo Repository" as R
+participant "ffprobe Adapter" as P
+
+C -> H: GET /torrents/{id}/media/{fileIndex}
+H -> R: Get(id)
+R --> H: TorrentRecord(files[])
+H -> H: resolve file path in TORRENT_DATA_DIR
+H -> P: Probe(filePath)
+
+alt probe success
+  P --> H: MediaInfo(tracks)
+  H --> C: 200 MediaInfo
+else probe failed/incomplete file
+  P --> H: error
+  H --> C: 200 MediaInfo{tracks=[]}
+end
+@enduml

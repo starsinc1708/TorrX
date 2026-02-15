@@ -1,0 +1,97 @@
+http:
+  serversTransports:
+    backend-long-timeout:
+      forwardingTimeouts:
+        dialTimeout: "10s"
+        responseHeaderTimeout: "120s"
+        idleConnTimeout: "90s"
+
+  routers:
+    # --- HTTP routers (port 80) ---
+    api:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/torrents`) || PathPrefix(`/settings/storage`) || PathPrefix(`/settings/player`) || PathPrefix(`/settings/encoding`) || PathPrefix(`/watch-history`) || PathPrefix(`/swagger`) || PathPrefix(`/internal`) || PathPrefix(`/ws`)"
+      service: torrentstream-api
+      priority: 200
+
+    search:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/search`)"
+      service: torrent-search-api
+      priority: 190
+
+    jackett:
+      entryPoints:
+        - web
+      rule: "Host(`jackett.localhost`)"
+      service: jackett-ui
+      priority: 50
+
+    prowlarr:
+      entryPoints:
+        - web
+      rule: "Host(`prowlarr.localhost`)"
+      service: prowlarr-ui
+      priority: 50
+
+    web:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/`)"
+      service: web-client
+      priority: 1
+
+    # --- HTTPS routers (port 443, HTTP/2) ---
+    api-secure:
+      entryPoints:
+        - websecure
+      rule: "PathPrefix(`/torrents`) || PathPrefix(`/settings/storage`) || PathPrefix(`/settings/player`) || PathPrefix(`/settings/encoding`) || PathPrefix(`/watch-history`) || PathPrefix(`/swagger`) || PathPrefix(`/internal`) || PathPrefix(`/ws`)"
+      service: torrentstream-api
+      priority: 200
+      tls: {}
+
+    search-secure:
+      entryPoints:
+        - websecure
+      rule: "PathPrefix(`/search`)"
+      service: torrent-search-api
+      priority: 190
+      tls: {}
+
+    web-secure:
+      entryPoints:
+        - websecure
+      rule: "PathPrefix(`/`)"
+      service: web-client
+      priority: 1
+      tls: {}
+
+  services:
+    torrentstream-api:
+      loadBalancer:
+        serversTransport: backend-long-timeout
+        servers:
+          - url: "http://torrentstream:8080"
+
+    torrent-search-api:
+      loadBalancer:
+        serversTransport: backend-long-timeout
+        servers:
+          - url: "http://torrent-search:8090"
+
+    jackett-ui:
+      loadBalancer:
+        servers:
+          - url: "http://jackett:9117"
+
+    prowlarr-ui:
+      loadBalancer:
+        servers:
+          - url: "http://prowlarr:9696"
+
+    web-client:
+      loadBalancer:
+        servers:
+          - url: "http://web-client:80"

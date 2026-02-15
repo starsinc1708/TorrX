@@ -1,0 +1,20 @@
+@startuml
+participant "Web Client / Player" as C
+participant "HTTP API" as H
+participant "HLS Manager" as M
+participant "StreamTorrent UC" as U
+participant "ffmpeg" as F
+
+C -> H: GET /torrents/{id}/hls/{fileIndex}/index.m3u8?audioTrack=A&subtitleTrack=S
+H -> M: ensureJob(id, fileIndex, A, S)
+
+alt no existing job
+  M -> U: Execute(id, fileIndex)
+  M -> F: start transcoding with -map 0:a:A and optional subtitle burn-in S
+  M -> M: wait for index.m3u8 ready
+end
+
+H -> M: check job status
+M --> H: playlist path or error
+H --> C: 200 playlist / 503 not ready / 500 error
+@enduml

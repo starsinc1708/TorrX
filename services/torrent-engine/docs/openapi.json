@@ -1,0 +1,661 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Torrent Stream API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/torrents": {
+      "get": {
+        "summary": "List torrents",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": ["active", "completed", "stopped", "all"],
+              "default": "all"
+            }
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": ["summary", "full"],
+              "default": "summary"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1 }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 0 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/TorrentListSummary" },
+                    { "$ref": "#/components/schemas/TorrentListFull" }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create torrent",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTorrentJSON"
+              },
+              "examples": {
+                "magnet": {
+                  "value": {
+                    "magnet": "magnet:?xt=urn:btih:..."
+                  }
+                }
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTorrentMultipart"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TorrentRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported media type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/torrents/{id}": {
+      "get": {
+        "summary": "Get torrent",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TorrentRecord"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete torrent",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "deleteFiles",
+            "in": "query",
+            "schema": { "type": "boolean", "default": false }
+          }
+        ],
+        "responses": {
+          "204": { "description": "No Content" },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/torrents/{id}/start": {
+      "post": {
+        "summary": "Start torrent download",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TorrentRecord" }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/torrents/{id}/stop": {
+      "post": {
+        "summary": "Stop torrent download",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TorrentRecord" }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/torrents/{id}/stream": {
+      "get": {
+        "summary": "Stream torrent file",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "fileIndex",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "integer", "minimum": 0 }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": { "type": "string" },
+            "description": "HTTP byte range, e.g. bytes=0-1023"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/octet-stream": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          },
+          "206": {
+            "description": "Partial Content",
+            "content": {
+              "application/octet-stream": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "416": {
+            "description": "Range not satisfiable"
+          }
+        }
+      }
+    },
+    "/torrents/{id}/hls/{fileIndex}/index.m3u8": {
+      "get": {
+        "summary": "Stream torrent file as HLS playlist",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "fileIndex",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer", "minimum": 0 }
+          },
+          {
+            "name": "audioTrack",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 0, "default": 0 }
+          },
+          {
+            "name": "subtitleTrack",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 0 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/vnd.apple.mpegurl": {
+                "schema": { "type": "string" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "503": {
+            "description": "Stream not ready",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/torrents/{id}/media/{fileIndex}": {
+      "get": {
+        "summary": "Probe media tracks (audio/subtitle) for torrent file",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "fileIndex",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer", "minimum": 0 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MediaInfo" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/torrents/{id}/hls/{fileIndex}/{segment}": {
+      "get": {
+        "summary": "Get HLS segment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "fileIndex",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer", "minimum": 0 }
+          },
+          {
+            "name": "segment",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "audioTrack",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 0, "default": 0 }
+          },
+          {
+            "name": "subtitleTrack",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 0 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "video/MP2T": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/torrents/{id}/state": {
+      "get": {
+        "summary": "Get torrent session state",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SessionState" }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/torrents/state": {
+      "get": {
+        "summary": "List active torrent session states",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "enum": ["active"] }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SessionStateList" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CreateTorrentJSON": {
+        "type": "object",
+        "properties": {
+          "magnet": { "type": "string" },
+          "name": { "type": "string" }
+        },
+        "required": ["magnet"]
+      },
+      "CreateTorrentMultipart": {
+        "type": "object",
+        "properties": {
+          "torrent": { "type": "string", "format": "binary" },
+          "name": { "type": "string" }
+        },
+        "required": ["torrent"]
+      },
+      "TorrentRecord": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "status": { "type": "string" },
+          "infoHash": { "type": "string" },
+          "files": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/FileRef" }
+          },
+          "totalBytes": { "type": "integer", "format": "int64" },
+          "doneBytes": { "type": "integer", "format": "int64" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "required": ["id", "status"]
+      },
+      "TorrentSummary": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "status": { "type": "string" },
+          "progress": { "type": "number", "format": "double" },
+          "doneBytes": { "type": "integer", "format": "int64" },
+          "totalBytes": { "type": "integer", "format": "int64" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "TorrentListSummary": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/TorrentSummary" }
+          },
+          "count": { "type": "integer" }
+        }
+      },
+      "TorrentListFull": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/TorrentRecord" }
+          },
+          "count": { "type": "integer" }
+        }
+      },
+      "FileRef": {
+        "type": "object",
+        "properties": {
+          "index": { "type": "integer" },
+          "path": { "type": "string" },
+          "length": { "type": "integer", "format": "int64" }
+        }
+      },
+      "SessionState": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "type": "string" },
+          "progress": { "type": "number", "format": "double" },
+          "peers": { "type": "integer" },
+          "downloadSpeed": { "type": "integer", "format": "int64" },
+          "uploadSpeed": { "type": "integer", "format": "int64" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SessionStateList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/SessionState" }
+          },
+          "count": { "type": "integer" }
+        }
+      },
+      "MediaTrack": {
+        "type": "object",
+        "properties": {
+          "index": { "type": "integer" },
+          "type": { "type": "string", "enum": ["audio", "subtitle"] },
+          "codec": { "type": "string" },
+          "language": { "type": "string" },
+          "title": { "type": "string" },
+          "default": { "type": "boolean" }
+        }
+      },
+      "MediaInfo": {
+        "type": "object",
+        "properties": {
+          "tracks": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/MediaTrack" }
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string" },
+              "message": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

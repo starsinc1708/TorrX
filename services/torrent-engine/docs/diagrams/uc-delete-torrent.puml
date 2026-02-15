@@ -1,0 +1,21 @@
+@startuml
+participant Client as C
+participant "HTTP API" as H
+participant "DeleteTorrent UC" as U
+participant "TorrentRepository (port)" as R
+participant "Engine (port)" as E
+participant "Filesystem" as FS
+
+C -> H: DELETE /torrents/{id}?deleteFiles=true|false
+H -> U: Execute(id, deleteFiles)
+U -> R: Get(id)
+U -> E: RemoveSession(id)
+
+opt deleteFiles=true
+  U -> FS: remove files under TORRENT_DATA_DIR
+end
+
+U -> R: Delete(id)
+U --> H: done
+H --> C: 204 No Content
+@enduml

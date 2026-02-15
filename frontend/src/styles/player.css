@@ -1,0 +1,35 @@
+/* Player-specific CSS.
+ * Kept intentionally minimal: Tailwind cannot style range input thumbs consistently.
+ */
+
+.ctrl-volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.ctrl-volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+
+.ctrl-volume-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: white;
+  border: none;
+  cursor: pointer;
+}
+

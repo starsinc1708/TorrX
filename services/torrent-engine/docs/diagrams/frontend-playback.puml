@@ -1,0 +1,26 @@
+@startuml
+actor User as U
+participant "React App" as FE
+participant "HTTP API" as API
+participant "Video Element / hls.js" as PLAYER
+
+U -> FE: Select torrent and file
+FE -> API: GET /torrents/{id}/media/{fileIndex}
+API --> FE: MediaInfo(tracks)
+FE -> FE: choose playback mode + selected tracks
+
+alt native format and no track override
+  FE -> PLAYER: src=/torrents/{id}/stream?fileIndex=n
+  PLAYER -> API: GET /stream with Range
+  API --> PLAYER: 200/206 media bytes
+else HLS mode
+  FE -> PLAYER: load /hls/{fileIndex}/index.m3u8?audioTrack=&subtitleTrack=
+  PLAYER -> API: GET index.m3u8
+  PLAYER -> API: GET seg-XXXXX.ts
+  API --> PLAYER: playlist + segments
+end
+
+U -> FE: Start/Stop/Delete actions
+FE -> API: control endpoints
+API --> FE: updated torrent record
+@enduml

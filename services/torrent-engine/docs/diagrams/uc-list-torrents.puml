@@ -1,0 +1,11 @@
+@startuml
+participant Client as C
+participant "HTTP API" as H
+participant "TorrentRepository (port)" as R
+
+C -> H: GET /torrents?status=...&view=...
+H -> R: List(filter)
+R --> H: records
+H -> H: apply limit/offset + summary/full view
+H --> C: 200 OK
+@enduml
