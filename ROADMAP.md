@@ -81,6 +81,24 @@ All P0 bugs have been fixed as of 2026-02-15:
 
 ## P2 — Medium: Frontend Stability
 
+**3 bugs fixed** (commit `2a61f52`, 2026-02-15):
+
+### ✅ Missing AbortController in useSessionState — FIXED
+- **File**: `frontend/src/hooks/useSessionState.ts`
+- **Solution**: Added AbortController ref. getTorrentState accepts AbortSignal. Aborts pending requests on unmount/new poll. Prevents stale responses updating unmounted components.
+
+### ✅ API client: mutation deduplication ignores body — FIXED
+- **File**: `frontend/src/api.ts`
+- **Solution**: Removed deduplication for mutations (POST/PUT/DELETE). Mutations execute independently. Deleted inflightMutations map.
+
+### ✅ WebSocket reconnect timer leak — FIXED
+- **File**: `frontend/src/hooks/useWebSocket.ts`
+- **Solution**: Clear existing reconnect timer before scheduling new one in onclose. Prevents timer accumulation during connection flaps.
+
+---
+
+**Remaining P2 items (refactoring/optimization):**
+
 ### VideoPlayer component too large (~2000 lines)
 - **File**: `frontend/src/components/VideoPlayer.tsx`
 - 29 `useState` + 33 `useRef`. Mixes HLS management, keyboard shortcuts, timeline preview, screenshot, watch-position saving.
@@ -91,25 +109,10 @@ All P0 bugs have been fixed as of 2026-02-15:
 - Inline ranking profile logic, filter presets, SSE streaming, results rendering.
 - **Fix**: Extract `useSearchRankingProfile`, `useSearchFilterPresets`, `useSearchStream` hooks. Split `SearchResults` into a subcomponent.
 
-### Missing AbortController in polling hooks
-- **Files**: `frontend/src/hooks/useSessionState.ts`, `useVideoPlayer.ts` (mediaInfo polling), `useTorrents.ts`
-- Polling `fetch` calls can't be cancelled on unmount. Stale responses update unmounted component state.
-- **Fix**: Add `AbortController` to each polling effect; abort in cleanup.
-
-### API client: mutation deduplication ignores body
-- **File**: `frontend/src/api.ts`
-- Mutation key is `METHOD:url` (line 62). Two POSTs with different bodies deduplicate incorrectly.
-- **Fix**: Include body hash in deduplication key, or don't deduplicate mutations.
-
-### VideoPlayer memory leaks
+### VideoPlayer memory leaks (partial - needs audit)
 - **File**: `frontend/src/components/VideoPlayer.tsx`
 - Preview canvas HLS instance, some fullscreen event listeners, and keyboard handlers may not clean up in all unmount paths.
 - **Fix**: Audit all `addEventListener` calls for matching `removeEventListener` in cleanup. Null out refs.
-
-### WebSocket reconnect timer leak
-- **File**: `frontend/src/hooks/useWebSocket.ts`
-- Reconnect timer stored in ref (line 53) is not cleared if `connect()` is called again before timer fires.
-- **Fix**: Clear previous timer before scheduling new one.
 
 ---
 
