@@ -79,7 +79,8 @@ func (p *Prober) runProbe(ctx context.Context, args []string, stdin io.Reader) (
 			} `json:"disposition"`
 		} `json:"streams"`
 		Format struct {
-			Duration string `json:"duration"`
+			Duration  string `json:"duration"`
+			StartTime string `json:"start_time"`
 		} `json:"format"`
 	}
 
@@ -140,7 +141,14 @@ func (p *Prober) runProbe(ctx context.Context, args []string, stdin io.Reader) (
 		}
 	}
 
-	return domain.MediaInfo{Tracks: tracks, Duration: duration}, nil
+	var startTime float64
+	if payload.Format.StartTime != "" {
+		if st, err := strconv.ParseFloat(payload.Format.StartTime, 64); err == nil && st > 0 {
+			startTime = st
+		}
+	}
+
+	return domain.MediaInfo{Tracks: tracks, Duration: duration, StartTime: startTime}, nil
 }
 
 func getTag(tags map[string]string, key string) string {

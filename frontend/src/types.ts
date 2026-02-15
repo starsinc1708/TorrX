@@ -75,6 +75,7 @@ export interface MediaTrack {
 export interface MediaInfo {
   tracks: MediaTrack[];
   duration: number;
+  startTime?: number;
   subtitlesReady: boolean;
 }
 

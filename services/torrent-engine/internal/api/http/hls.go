@@ -418,8 +418,9 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 		"-loglevel", "error",
 		"-fflags", "+genpts+discardcorrupt",
 		"-err_detect", "ignore_err",
-		"-analyzeduration", "2000000",
-		"-probesize", "1000000",
+		"-analyzeduration", "20000000",
+		"-probesize", "10000000",
+		"-avoid_negative_ts", "make_zero",
 	}
 
 	if job.seekSeconds > 0 {
@@ -460,6 +461,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 		} else {
 			args = append(args, "-c:a", "aac", "-b:a", encAudioBitrate, "-ac", "2")
 		}
+		args = append(args, "-copyts", "-start_at_zero")
 		m.logger.Info("hls using stream copy mode", slog.String("input", input))
 	} else {
 		args = append(args,

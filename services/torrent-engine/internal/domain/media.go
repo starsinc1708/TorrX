@@ -12,5 +12,6 @@ type MediaTrack struct {
 type MediaInfo struct {
 	Tracks         []MediaTrack `json:"tracks"`
 	Duration       float64      `json:"duration"`
+	StartTime      float64      `json:"startTime"`
 	SubtitlesReady bool         `json:"subtitlesReady"`
 }

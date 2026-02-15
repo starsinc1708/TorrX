@@ -325,6 +325,12 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
           if (!prev) return info;
           return info.tracks.length >= prev.tracks.length ? info : prev;
         });
+        // Defense-in-depth: if the source has a non-zero startTime and we
+        // haven't applied a seek offset yet, record it so the player can
+        // compensate if HLS segments carry original PTS values.
+        if (info.startTime && info.startTime > 0 && seekOffset === 0) {
+          setSeekOffset(info.startTime);
+        }
         // Stop polling once we have track info — no need to keep fetching.
         if (info.tracks.length > 0) {
           gotTracks = true;
