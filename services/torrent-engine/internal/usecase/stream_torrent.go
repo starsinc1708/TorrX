@@ -71,6 +71,7 @@ func (uc StreamTorrent) Execute(ctx context.Context, id domain.TorrentID, fileIn
 				return StreamResult{}, wrapEngine(err)
 			}
 			if err := session.Start(); err != nil {
+				_ = session.Stop() // Clean up session on Start failure
 				return StreamResult{}, wrapEngine(err)
 			}
 		} else if errors.Is(err, domain.ErrNotFound) {

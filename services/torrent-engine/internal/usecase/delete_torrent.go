@@ -32,18 +32,21 @@ func (uc DeleteTorrent) Execute(ctx context.Context, id domain.TorrentID, delete
 		}
 	}
 
-	if deleteFiles {
-		if err := removeTorrentFiles(uc.DataDir, record.Files); err != nil {
-			return err
-		}
-	}
-
+	// Delete DB record first, then files. This ensures that if file deletion fails,
+	// the record is already gone and cleanup can be retried safely.
 	if err := uc.Repo.Delete(ctx, id); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return err
 		}
 		return wrapRepo(err)
 	}
+
+	if deleteFiles {
+		if err := removeTorrentFiles(uc.DataDir, record.Files); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -58,25 +61,34 @@ func removeTorrentFiles(baseDir string, files []domain.FileRef) error {
 	}
 	baseAbs = filepath.Clean(baseAbs)
 
+	// Accumulate errors instead of aborting on first failure
+	var errs []error
+
 	for _, file := range files {
 		if strings.TrimSpace(file.Path) == "" {
-			return errors.New("invalid file path")
+			errs = append(errs, errors.New("invalid file path: empty"))
+			continue
 		}
 		if filepath.IsAbs(file.Path) {
-			return errors.New("invalid file path")
+			errs = append(errs, errors.New("invalid file path: absolute path"))
+			continue
 		}
 		relPath := filepath.FromSlash(file.Path)
 		fullPath := filepath.Join(baseAbs, relPath)
 		fullPath = filepath.Clean(fullPath)
 
 		if !strings.HasPrefix(fullPath, baseAbs+string(os.PathSeparator)) && fullPath != baseAbs {
-			return errors.New("invalid file path")
+			errs = append(errs, errors.New("invalid file path: outside base dir"))
+			continue
 		}
 
 		if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
-			return err
+			errs = append(errs, err)
 		}
 	}
 
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
 	return nil
 }

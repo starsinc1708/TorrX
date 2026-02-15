@@ -2,34 +2,33 @@
 
 Technical debt and improvements identified via codebase audit (2026-02-15).
 
+**Last updated:** 2026-02-15
+
 ---
 
-## P0 — Critical: Data Integrity & Resource Leaks
+## ✅ P0 — Critical: Data Integrity & Resource Leaks (COMPLETED)
 
-### HLS reader double-close
+All P0 bugs have been fixed as of 2026-02-15:
+
+### ✅ HLS reader double-close — FIXED
 - **File**: `services/torrent-engine/internal/api/http/hls.go`
-- `result.Reader` has both a `defer Close()` (line 373) and a manual `Close()` (line 509 when `!useReader`). Early-return paths (line 402-407) also call `Close()`, causing double-close panics.
-- **Fix**: Remove the defer; close explicitly on each exit path, or use a `sync.Once`-guarded closer.
+- **Solution**: Removed `defer result.Reader.Close()` and added explicit `Close()` calls on each exit path (subtitle error, cmd.Start failure). Reader is closed when `!useReader` or passed to ffmpeg stdin when `useReader=true`.
 
-### CreateTorrent race on duplicate magnets
+### ✅ CreateTorrent race on duplicate magnets — FIXED
 - **File**: `services/torrent-engine/internal/usecase/create_torrent.go`
-- Two concurrent requests with the same magnet both pass `Repo.Get` (line 43), then second `Repo.Create` (line 83) fails with MongoDB duplicate key.
-- **Fix**: Handle `mongo.IsDuplicateKeyError` by re-fetching, or use `FindOneAndUpdate` with upsert.
+- **Solution**: Added `domain.ErrAlreadyExists` error type. Repository.Create now detects `mongo.IsDuplicateKeyError` and returns `ErrAlreadyExists`. CreateTorrent catches this error and re-fetches the existing record.
 
-### StreamTorrent session leak on Start failure
+### ✅ StreamTorrent session leak on Start failure — FIXED
 - **File**: `services/torrent-engine/internal/usecase/stream_torrent.go`
-- If `session.Start()` fails (line 74), the opened session is never closed.
-- **Fix**: Add `defer session.Close()` or explicit cleanup in error path.
+- **Solution**: Added `session.Stop()` cleanup in error path when `session.Start()` fails.
 
-### DeleteTorrent: files removed before DB record
+### ✅ DeleteTorrent: files removed before DB record — FIXED
 - **File**: `services/torrent-engine/internal/usecase/delete_torrent.go`
-- File deletion (line 35) happens before `Repo.Delete` (line 41). If DB delete fails, files are lost but record remains.
-- **Fix**: Delete files after successful DB deletion. Accumulate file-removal errors instead of aborting on first failure (line 76-78).
+- **Solution**: Swapped operation order: DB record is deleted first, then files. This prevents orphaned DB records if file deletion fails. Also fixed `removeTorrentFiles` to accumulate errors instead of aborting on first failure.
 
-### MongoDB Update silent no-op
+### ✅ MongoDB Update silent no-op — FIXED
 - **File**: `services/torrent-engine/internal/repository/mongo/repository.go`
-- `Update` (line 93) doesn't check `res.MatchedCount`. Returns nil even if document doesn't exist.
-- **Fix**: Check `MatchedCount == 0` and return `domain.ErrNotFound`.
+- **Solution**: Added `res.MatchedCount == 0` check. Returns `domain.ErrNotFound` when document doesn't exist, matching the pattern used in `UpdateTags` and `Delete`.
 
 ---
 

@@ -87,14 +87,25 @@ func (r *Repository) EnsureIndexes(ctx context.Context) error {
 func (r *Repository) Create(ctx context.Context, t domain.TorrentRecord) error {
 	doc := toDoc(t)
 	_, err := r.collection.InsertOne(ctx, doc)
+	if err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			return domain.ErrAlreadyExists
+		}
+	}
 	return err
 }
 
 func (r *Repository) Update(ctx context.Context, t domain.TorrentRecord) error {
 	doc := toUpdateDoc(t)
 	filter := bson.M{"_id": string(t.ID)}
-	_, err := r.collection.UpdateOne(ctx, filter, bson.M{"$set": doc})
-	return err
+	res, err := r.collection.UpdateOne(ctx, filter, bson.M{"$set": doc})
+	if err != nil {
+		return err
+	}
+	if res.MatchedCount == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
 }
 
 func (r *Repository) UpdateTags(ctx context.Context, id domain.TorrentID, tags []string) error {

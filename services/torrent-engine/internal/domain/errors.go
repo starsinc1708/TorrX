@@ -4,3 +4,4 @@ import "errors"
 
 var ErrNotFound = errors.New("not found")
 var ErrUnsupported = errors.New("unsupported operation")
+var ErrAlreadyExists = errors.New("already exists")

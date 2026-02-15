@@ -82,6 +82,15 @@ func (uc CreateTorrent) Execute(ctx context.Context, input CreateTorrentInput) (
 
 	if err := uc.Repo.Create(ctx, record); err != nil {
 		_ = session.Stop()
+		// If duplicate key error, another concurrent request created the same torrent.
+		// Re-fetch and return the existing record instead of failing.
+		if errors.Is(err, domain.ErrAlreadyExists) {
+			existing, getErr := uc.Repo.Get(ctx, session.ID())
+			if getErr == nil {
+				return existing, nil
+			}
+			// If re-fetch also fails, return the original error
+		}
 		return domain.TorrentRecord{}, wrapRepo(err)
 	}
 

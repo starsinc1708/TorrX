@@ -370,7 +370,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 		m.cleanupJob(key, job)
 		return
 	}
-	defer result.Reader.Close()
+	// Reader is closed explicitly on each exit path to avoid double-close panics.
 
 	input := "pipe:0"
 	useReader := true
@@ -400,6 +400,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	}
 
 	if key.subtitleTrack >= 0 && subtitleSourcePath == "" {
+		_ = result.Reader.Close()
 		job.err = errSubtitleSourceUnavailable
 		m.recordJobFailure(job, job.err)
 		job.signalReady()
@@ -513,6 +514,10 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 
 	ffmpegStart := time.Now()
 	if err := cmd.Start(); err != nil {
+		// Close reader if it was passed to cmd.Stdin and cmd failed to start
+		if useReader {
+			_ = result.Reader.Close()
+		}
 		m.logger.Error("hls ffmpeg start failed", slog.String("error", err.Error()))
 		job.err = err
 		m.recordJobFailure(job, err)
