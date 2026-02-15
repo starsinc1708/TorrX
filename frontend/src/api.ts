@@ -304,6 +304,8 @@ export const searchTorrentsStream = (
   };
 
   source.addEventListener('phase', handlePhase as EventListener);
+  source.addEventListener('update', handlePhase as EventListener);
+  source.addEventListener('bootstrap', handlePhase as EventListener);
   source.addEventListener('done', handleDone as EventListener);
   source.addEventListener('error', handleError as EventListener);
   source.onerror = () => {
@@ -314,6 +316,8 @@ export const searchTorrentsStream = (
 
   return () => {
     source.removeEventListener('phase', handlePhase as EventListener);
+    source.removeEventListener('update', handlePhase as EventListener);
+    source.removeEventListener('bootstrap', handlePhase as EventListener);
     source.removeEventListener('done', handleDone as EventListener);
     source.removeEventListener('error', handleError as EventListener);
     closeStream();

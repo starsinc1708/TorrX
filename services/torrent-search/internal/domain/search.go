@@ -95,6 +95,11 @@ type SearchEnrichment struct {
 	ContentType   string      `json:"contentType,omitempty"`
 }
 
+type SourceRef struct {
+	Name    string `json:"name"`
+	Tracker string `json:"tracker,omitempty"`
+}
+
 type SearchResult struct {
 	Name        string           `json:"name"`
 	InfoHash    string           `json:"infoHash,omitempty"`
@@ -105,6 +110,7 @@ type SearchResult struct {
 	Leechers    int              `json:"leechers,omitempty"`
 	Source      string           `json:"source,omitempty"`
 	Tracker     string           `json:"tracker,omitempty"`
+	Sources     []SourceRef      `json:"sources,omitempty"`
 	PublishedAt *time.Time       `json:"publishedAt,omitempty"`
 	Enrichment  SearchEnrichment `json:"enrichment,omitempty"`
 }
@@ -202,6 +208,7 @@ type SearchResponse struct {
 	SortBy     SearchSortBy     `json:"sortBy"`
 	SortOrder  SearchSortOrder  `json:"sortOrder"`
 	Phase      string           `json:"phase,omitempty"`
+	Provider   string           `json:"provider,omitempty"`
 	Final      bool             `json:"final"`
 }
 

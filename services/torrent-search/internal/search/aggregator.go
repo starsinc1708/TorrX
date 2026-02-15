@@ -640,6 +640,332 @@ func matchesDubbingGroups(info domain.DubbingInfo, wanted map[string]struct{}) b
 	return false
 }
 
+func appendUniqueSource(result *domain.SearchResult, ref domain.SourceRef) {
+	if ref.Name == "" {
+		return
+	}
+	for _, existing := range result.Sources {
+		if strings.EqualFold(existing.Name, ref.Name) && strings.EqualFold(existing.Tracker, ref.Tracker) {
+			return
+		}
+	}
+	result.Sources = append(result.Sources, ref)
+}
+
+func sourceRefFromResult(item domain.SearchResult) domain.SourceRef {
+	return domain.SourceRef{
+		Name:    item.Source,
+		Tracker: item.Tracker,
+	}
+}
+
+func (s *Service) SearchStream(ctx context.Context, request domain.SearchRequest, providerNames []string) <-chan domain.SearchResponse {
+	ch := make(chan domain.SearchResponse, 1)
+
+	prepared, err := s.prepareSearch(request, providerNames)
+	if err != nil {
+		close(ch)
+		return ch
+	}
+
+	// Check cache first (non-streaming path)
+	if !s.cacheDisabled && !request.NoCache {
+		startedAt := time.Now()
+		cacheKey := buildSearchCacheKey(prepared.cacheRequest(), prepared.providerNames)
+		if cached, ok, needsRefresh := s.cacheLookup(cacheKey, startedAt); ok {
+			s.markPopular(cacheKey, prepared.cacheRequest(), prepared.providerNames, startedAt)
+			if needsRefresh {
+				s.refreshCacheAsync(cacheKey, prepared)
+			}
+			cached.ElapsedMS = time.Since(startedAt).Milliseconds()
+			cached.Final = true
+			ch <- cached
+			close(ch)
+			return ch
+		}
+	}
+
+	go s.executeStreamSearch(ctx, prepared, ch)
+	return ch
+}
+
+func (s *Service) executeStreamSearch(ctx context.Context, prepared preparedSearch, ch chan<- domain.SearchResponse) {
+	defer close(ch)
+
+	runCtx := ctx
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline && s.timeout > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, s.timeout)
+		defer cancel()
+	}
+
+	startedAt := time.Now()
+	statuses := make([]domain.ProviderStatus, len(prepared.selected))
+	resultsByKey := make(map[string]domain.SearchResult)
+
+	var mu sync.Mutex
+	sem := semaphore.NewWeighted(maxConcurrentProviders)
+	var wg sync.WaitGroup
+
+	for i, provider := range prepared.selected {
+		wg.Add(1)
+		go func(index int, current Provider) {
+			defer wg.Done()
+
+			if err := sem.Acquire(runCtx, 1); err != nil {
+				mu.Lock()
+				statuses[index] = domain.ProviderStatus{
+					Name:  strings.ToLower(strings.TrimSpace(current.Info().Name)),
+					OK:    false,
+					Error: "context cancelled",
+				}
+				mu.Unlock()
+				return
+			}
+			defer sem.Release(1)
+
+			providerKey := strings.ToLower(strings.TrimSpace(current.Name()))
+			statusName := strings.ToLower(strings.TrimSpace(current.Info().Name))
+			if statusName == "" {
+				statusName = providerKey
+			}
+
+			now := time.Now()
+			if blocked, until, lastErr := s.isProviderBlocked(providerKey, now); blocked {
+				mu.Lock()
+				statuses[index] = domain.ProviderStatus{
+					Name:  statusName,
+					OK:    false,
+					Error: fmt.Sprintf("provider temporarily unhealthy until %s: %s", until.UTC().Format(time.RFC3339), lastErr),
+				}
+				mu.Unlock()
+				return
+			}
+
+			requestLimit := prepared.fetchLimit
+			if providerKey == "jackett" || providerKey == "prowlarr" {
+				requestLimit = prepared.limit + prepared.offset
+				if requestLimit <= 0 {
+					requestLimit = prepared.limit
+				}
+				if requestLimit < 10 {
+					requestLimit = 10
+				}
+				if requestLimit > 80 {
+					requestLimit = 80
+				}
+			}
+
+			providerStartedAt := time.Now()
+			items, searchErr := current.Search(runCtx, domain.SearchRequest{
+				Query:     prepared.query,
+				Limit:     requestLimit,
+				SortBy:    prepared.sortBy,
+				SortOrder: prepared.sortOrder,
+				Profile:   prepared.profile,
+			})
+			s.recordProviderResult(providerKey, prepared.query, searchErr, time.Since(providerStartedAt), time.Now())
+
+			status := domain.ProviderStatus{
+				Name: statusName,
+				OK:   searchErr == nil,
+			}
+			if searchErr != nil {
+				status.Error = searchErr.Error()
+			}
+			status.Count = len(items)
+
+			mu.Lock()
+			statuses[index] = status
+
+			for _, item := range items {
+				item = enrichSearchResult(item)
+				ref := sourceRefFromResult(item)
+				key := dedupeKey(item)
+				existing, exists := resultsByKey[key]
+				if !exists {
+					appendUniqueSource(&item, ref)
+					resultsByKey[key] = item
+				} else if shouldReplace(existing, item, prepared.queryMeta, prepared.profile) {
+					// Keep accumulated sources from the existing entry
+					item.Sources = existing.Sources
+					appendUniqueSource(&item, ref)
+					resultsByKey[key] = item
+				} else {
+					// Just add the new source to the existing result
+					appendUniqueSource(&existing, ref)
+					resultsByKey[key] = existing
+				}
+			}
+
+			// Build snapshot
+			snapshot := s.buildStreamSnapshot(prepared, resultsByKey, statuses, startedAt)
+			snapshot.Provider = statusName
+			mu.Unlock()
+
+			// Send snapshot (non-blocking if context cancelled)
+			select {
+			case ch <- snapshot:
+			case <-ctx.Done():
+			}
+		}(i, provider)
+	}
+
+	wg.Wait()
+
+	// Query expansion fallback
+	if len(resultsByKey) < 5 {
+		retry := make([]int, 0, len(statuses))
+		for i, status := range statuses {
+			if !status.OK || status.Count != 0 {
+				continue
+			}
+			expanded := expandedQueryForProvider(prepared.query, prepared.selected[i].Name(), prepared.profile)
+			if strings.TrimSpace(expanded) == "" || strings.EqualFold(expanded, prepared.query) {
+				continue
+			}
+			retry = append(retry, i)
+		}
+		if len(retry) > 0 {
+			var retryWg sync.WaitGroup
+			for _, idx := range retry {
+				retryWg.Add(1)
+				go func(index int) {
+					defer retryWg.Done()
+					current := prepared.selected[index]
+					providerKey := strings.ToLower(strings.TrimSpace(current.Name()))
+					statusName := strings.ToLower(strings.TrimSpace(current.Info().Name))
+					if statusName == "" {
+						statusName = providerKey
+					}
+					expanded := expandedQueryForProvider(prepared.query, current.Name(), prepared.profile)
+
+					if err := sem.Acquire(runCtx, 1); err != nil {
+						return
+					}
+					defer sem.Release(1)
+
+					requestLimit := prepared.fetchLimit
+					providerStartedAt := time.Now()
+					items, searchErr := current.Search(runCtx, domain.SearchRequest{
+						Query:     expanded,
+						Limit:     requestLimit,
+						SortBy:    prepared.sortBy,
+						SortOrder: prepared.sortOrder,
+						Profile:   prepared.profile,
+					})
+					s.recordProviderResult(providerKey, expanded, searchErr, time.Since(providerStartedAt), time.Now())
+
+					if searchErr != nil {
+						return
+					}
+
+					mu.Lock()
+					statuses[index].Count += len(items)
+					for _, item := range items {
+						item = enrichSearchResult(item)
+						ref := sourceRefFromResult(item)
+						key := dedupeKey(item)
+						existing, exists := resultsByKey[key]
+						if !exists {
+							appendUniqueSource(&item, ref)
+							resultsByKey[key] = item
+						} else if shouldReplace(existing, item, prepared.queryMeta, prepared.profile) {
+							item.Sources = existing.Sources
+							appendUniqueSource(&item, ref)
+							resultsByKey[key] = item
+						} else {
+							appendUniqueSource(&existing, ref)
+							resultsByKey[key] = existing
+						}
+					}
+					mu.Unlock()
+				}(idx)
+			}
+			retryWg.Wait()
+		}
+	}
+
+	// TMDB enrichment (single pass after all providers done)
+	allItems := make([]domain.SearchResult, 0, len(resultsByKey))
+	for _, item := range resultsByKey {
+		allItems = append(allItems, item)
+	}
+	allItems = s.enrichWithTMDB(runCtx, prepared.query, allItems)
+
+	// Rebuild map after TMDB enrichment
+	for _, item := range allItems {
+		key := dedupeKey(item)
+		resultsByKey[key] = item
+	}
+
+	// Ensure Source/Tracker backward compat: populate from Sources[0] if empty
+	for key, item := range resultsByKey {
+		if item.Source == "" && len(item.Sources) > 0 {
+			item.Source = item.Sources[0].Name
+			item.Tracker = item.Sources[0].Tracker
+			resultsByKey[key] = item
+		}
+	}
+
+	// Build final response
+	final := s.buildStreamSnapshot(prepared, resultsByKey, statuses, startedAt)
+	final.Final = true
+
+	// Cache the final response
+	cacheKey := buildSearchCacheKey(prepared.cacheRequest(), prepared.providerNames)
+	s.cacheStore(cacheKey, final, time.Now())
+	s.markPopular(cacheKey, prepared.cacheRequest(), prepared.providerNames, time.Now())
+
+	select {
+	case ch <- final:
+	case <-ctx.Done():
+	}
+}
+
+func (s *Service) buildStreamSnapshot(
+	prepared preparedSearch,
+	resultsByKey map[string]domain.SearchResult,
+	statuses []domain.ProviderStatus,
+	startedAt time.Time,
+) domain.SearchResponse {
+	items := make([]domain.SearchResult, 0, len(resultsByKey))
+	for _, item := range resultsByKey {
+		items = append(items, item)
+	}
+
+	sortResults(items, prepared.sortBy, prepared.sortOrder, prepared.queryMeta, prepared.profile)
+	items = applyFilters(items, prepared.filters)
+
+	total := len(items)
+	start := prepared.offset
+	if start > total {
+		start = total
+	}
+	end := start + prepared.limit
+	if end > total {
+		end = total
+	}
+	page := make([]domain.SearchResult, 0, end-start)
+	page = append(page, items[start:end]...)
+
+	statusesCopy := make([]domain.ProviderStatus, len(statuses))
+	copy(statusesCopy, statuses)
+
+	return domain.SearchResponse{
+		Query:      prepared.query,
+		Items:      page,
+		Providers:  statusesCopy,
+		ElapsedMS:  time.Since(startedAt).Milliseconds(),
+		TotalItems: total,
+		Limit:      prepared.limit,
+		Offset:     prepared.offset,
+		HasMore:    end < total,
+		SortBy:     prepared.sortBy,
+		SortOrder:  prepared.sortOrder,
+	}
+}
+
 func (s *Service) enrichWithTMDB(ctx context.Context, query string, items []domain.SearchResult) []domain.SearchResult {
 	if s.tmdb == nil || !s.tmdb.Enabled() || len(items) == 0 {
 		return items

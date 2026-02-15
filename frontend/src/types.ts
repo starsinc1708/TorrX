@@ -260,6 +260,11 @@ export interface SearchProviderStatus {
   error?: string;
 }
 
+export interface SearchSourceRef {
+  name: string;
+  tracker?: string;
+}
+
 export interface SearchResultItem {
   name: string;
   infoHash?: string;
@@ -270,6 +275,7 @@ export interface SearchResultItem {
   leechers?: number;
   source?: string;
   tracker?: string;
+  sources?: SearchSourceRef[];
   publishedAt?: string;
   enrichment?: SearchEnrichment;
 }
@@ -328,6 +334,7 @@ export interface SearchResponse {
   hasMore: boolean;
   sortBy: SearchSortBy;
   sortOrder: SearchSortOrder;
-  phase?: 'bootstrap' | 'fast' | 'full';
+  phase?: 'bootstrap' | 'fast' | 'full' | 'update';
+  provider?: string;
   final?: boolean;
 }

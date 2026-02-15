@@ -71,7 +71,8 @@ const defaultRankingProfile: SearchRankingProfile = {
 };
 
 const phaseLabels: Record<string, string> = {
-  bootstrap: 'Preparing phased search...',
+  bootstrap: 'Searching providers...',
+  update: 'Results incoming...',
   fast: 'Fast providers loaded. Fetching slow sources...',
   full: 'All providers loaded.',
 };
@@ -300,14 +301,19 @@ const SearchPage: React.FC = () => {
     return off;
   }, [providers]);
 
-  const applyResponse = useCallback((response: SearchResponse, append: boolean) => {
+  const applyResponse = useCallback((response: SearchResponse, mode: 'replace' | 'append' | 'merge') => {
     const safeItems = Array.isArray(response.items) ? response.items : [];
     const safeProviders = Array.isArray(response.providers) ? response.providers : [];
     setProviderStatus(safeProviders);
     setElapsedMs(response.elapsedMs ?? 0);
     setTotalItems(response.totalItems ?? 0);
     setHasMore(Boolean(response.hasMore));
-    setItems((prev) => (append ? [...prev, ...safeItems] : safeItems));
+    if (mode === 'append') {
+      setItems((prev) => [...prev, ...safeItems]);
+    } else {
+      // Both 'replace' and 'merge' use the full sorted snapshot from the server
+      setItems(safeItems);
+    }
   }, []);
 
   const runSearch = useCallback(
@@ -334,7 +340,7 @@ const SearchPage: React.FC = () => {
             profile,
             noCache,
           });
-          applyResponse(response, true);
+          applyResponse(response, 'append');
         } catch (error) {
           if (isApiError(error)) setErrorMessage(error.message || 'Search failed');
           else setErrorMessage('Search failed');
@@ -367,6 +373,21 @@ const SearchPage: React.FC = () => {
           {
             onPhase: (response) => {
               if (streamTokenRef.current !== token) return;
+            if (response.phase === 'bootstrap') {
+              setPhaseMessage(phaseLabels.bootstrap);
+              setStreamActive(true);
+              return;
+            }
+            if (response.phase === 'update') {
+              const providerName = response.provider ?? '';
+              const label = providerName ? `${providerName} loaded` : 'Results updated';
+              setPhaseMessage(label);
+              applyResponse(response, 'merge');
+              setIsLoading(false);
+              setStreamActive(!response.final);
+              return;
+            }
+            // Legacy: fast/full phases for backward compat
             if (response.phase) {
               const nextPhase = response.phase;
               setPhaseMessage(phaseLabels[nextPhase] ?? nextPhase);
@@ -375,11 +396,7 @@ const SearchPage: React.FC = () => {
               }
               lastPhaseRef.current = nextPhase;
             }
-            if (response.phase === 'bootstrap') {
-              setStreamActive(true);
-              return;
-            }
-            applyResponse(response, false);
+            applyResponse(response, 'replace');
             setIsLoading(false);
             setStreamActive(!response.final);
           },
@@ -526,8 +543,15 @@ const SearchPage: React.FC = () => {
   const sourceFacetOptions = useMemo(() => {
     const set = new Set<string>();
     for (const item of items) {
-      const v = String(item.source ?? '').trim();
-      if (v) set.add(v);
+      if (item.sources?.length) {
+        for (const src of item.sources) {
+          const v = String(src.name ?? '').trim();
+          if (v) set.add(v);
+        }
+      } else {
+        const v = String(item.source ?? '').trim();
+        if (v) set.add(v);
+      }
     }
     return Array.from(set)
       .sort((a, b) => a.localeCompare(b))
@@ -590,8 +614,12 @@ const SearchPage: React.FC = () => {
     const excludeCam = resultFilters.excludeCam;
 
     const filtered = items.filter((item) => {
-      const source = String(item.source ?? '').trim();
-      if (sources.size > 0 && !sources.has(source)) return false;
+      if (sources.size > 0) {
+        const itemSources = item.sources?.length
+          ? item.sources.map((s) => String(s.name ?? '').trim()).filter(Boolean)
+          : [String(item.source ?? '').trim()].filter(Boolean);
+        if (!itemSources.some((v) => sources.has(v))) return false;
+      }
 
       const quality = String(item.enrichment?.quality ?? '').trim();
       if (qualities.size > 0 && !qualities.has(quality)) return false;
@@ -1320,10 +1348,18 @@ const SearchPage: React.FC = () => {
                     }}
                     className="group flex h-full cursor-pointer flex-col overflow-hidden rounded-lg border border-border/70 bg-card shadow-soft transition-colors hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   >
-                    <div className="flex items-center justify-between border-b border-border/70 bg-muted/10 px-3 py-2">
-                      <span className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground" title={item.source || ''}>
-                        {item.source || 'torrent'}
-                      </span>
+                    <div className="flex items-center justify-between gap-1 border-b border-border/70 bg-muted/10 px-3 py-2">
+                      <div className="flex min-w-0 flex-wrap gap-1">
+                        {(item.sources?.length ? item.sources : [{ name: item.source || 'torrent' }]).map((src, idx) => (
+                          <span
+                            key={`${key}-src-${idx}`}
+                            className="truncate rounded-sm bg-muted/40 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+                            title={src.name + (src.tracker ? ` (${src.tracker})` : '')}
+                          >
+                            {src.name}
+                          </span>
+                        ))}
+                      </div>
                       {tmdbRating && tmdbRating > 0 ? (
                         <span className="rounded-full border border-border/70 bg-background px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
                           TMDB {tmdbRating.toFixed(1)}
@@ -1459,15 +1495,19 @@ const SearchPage: React.FC = () => {
                           <span className="text-muted-foreground">Peers</span>
                           <span className="font-mono">{detailItem.leechers ?? 0}</span>
                         </div>
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-muted-foreground">Source</span>
-                          <span>{detailItem.source || 'unknown'}</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-muted-foreground">Tracker</span>
-                          <span className="truncate text-right" title={detailItem.tracker || ''}>
-                            {detailItem.tracker || 'n/a'}
-                          </span>
+                        <div className="flex items-center justify-between gap-2 sm:col-span-2">
+                          <span className="text-muted-foreground">Sources</span>
+                          <div className="flex flex-wrap justify-end gap-1">
+                            {(detailItem.sources?.length ? detailItem.sources : [{ name: detailItem.source || 'unknown', tracker: detailItem.tracker }]).map((src, idx) => (
+                              <span
+                                key={`detail-src-${idx}`}
+                                className="rounded-sm bg-muted/40 px-1.5 py-0.5 text-xs font-medium"
+                                title={src.tracker ? `${src.name} (${src.tracker})` : src.name}
+                              >
+                                {src.name}{src.tracker ? ` · ${src.tracker}` : ''}
+                              </span>
+                            ))}
+                          </div>
                         </div>
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-muted-foreground">Season/Episode</span>

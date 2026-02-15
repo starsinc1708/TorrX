@@ -55,6 +55,36 @@ func (f *fakeSearchService) Providers() []domain.ProviderInfo {
 	}
 }
 
+func (f *fakeSearchService) SearchStream(ctx context.Context, request domain.SearchRequest, providers []string) <-chan domain.SearchResponse {
+	_ = ctx
+	ch := make(chan domain.SearchResponse, 1)
+	f.callCount++
+	f.lastProviders = append([]string(nil), providers...)
+	f.lastRequest = request
+	statusName := "fake"
+	if len(providers) > 0 {
+		statusName = providers[0]
+	}
+	ch <- domain.SearchResponse{
+		Query: request.Query,
+		Items: []domain.SearchResult{
+			{Name: request.Query + "-result", Source: "fake"},
+		},
+		Providers: []domain.ProviderStatus{
+			{Name: statusName, OK: true, Count: 1},
+		},
+		ElapsedMS:  3,
+		TotalItems: 1,
+		Limit:      request.Limit,
+		Offset:     request.Offset,
+		SortBy:     request.SortBy,
+		SortOrder:  request.SortOrder,
+		Final:      true,
+	}
+	close(ch)
+	return ch
+}
+
 func (f *fakeSearchService) ProviderDiagnostics() []domain.ProviderDiagnostics {
 	return []domain.ProviderDiagnostics{
 		{Name: "bittorrent", Label: "BitTorrent Index", Kind: "index", Enabled: true, LastLatencyMS: 120},
@@ -293,11 +323,11 @@ func TestSearchStreamSendsPhases(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !containsAll(body, []string{"event: phase", "event: done"}) {
+	if !containsAll(body, []string{"event: bootstrap", "event: update", "event: done"}) {
 		t.Fatalf("unexpected stream body: %s", body)
 	}
-	if fake.callCount < 2 {
-		t.Fatalf("expected at least 2 search calls, got %d", fake.callCount)
+	if fake.callCount < 1 {
+		t.Fatalf("expected at least 1 SearchStream call, got %d", fake.callCount)
 	}
 }
 

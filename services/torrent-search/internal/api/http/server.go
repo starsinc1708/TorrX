@@ -24,6 +24,7 @@ import (
 
 type SearchService interface {
 	Search(ctx context.Context, request domain.SearchRequest, providers []string) (domain.SearchResponse, error)
+	SearchStream(ctx context.Context, request domain.SearchRequest, providers []string) <-chan domain.SearchResponse
 	Providers() []domain.ProviderInfo
 	ProviderDiagnostics() []domain.ProviderDiagnostics
 }
@@ -274,7 +275,7 @@ func (s *Server) handleSearchStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	if err := writeSSEEvent(w, flusher, "phase", map[string]any{
+	if err := writeSSEEvent(w, flusher, "bootstrap", map[string]any{
 		"phase":  "bootstrap",
 		"final":  false,
 		"query":  query,
@@ -283,74 +284,20 @@ func (s *Server) handleSearchStream(w http.ResponseWriter, r *http.Request) {
 		return // Client disconnected
 	}
 
-	selectedProviders := append([]string(nil), providers...)
-	if len(selectedProviders) == 0 {
-		for _, info := range s.search.Providers() {
-			name := strings.ToLower(strings.TrimSpace(info.Name))
-			if name != "" {
-				selectedProviders = append(selectedProviders, name)
-			}
-		}
-	}
-
-	fastProviders, slowProviders := splitProvidersForPhasedSearch(selectedProviders)
-	if len(fastProviders) == 0 {
-		fastProviders = selectedProviders
-	}
-
-	if len(fastProviders) > 0 {
-		// Check if client is still connected
+	ch := s.search.SearchStream(r.Context(), request, providers)
+	for response := range ch {
 		select {
 		case <-r.Context().Done():
 			return // Client disconnected
 		default:
 		}
-
-		fastCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		quick, quickErr := s.search.Search(fastCtx, request, fastProviders)
-		cancel()
-		if quickErr == nil {
-			quick.Phase = "fast"
-			quick.Final = len(slowProviders) == 0
-			if err := writeSSEEvent(w, flusher, "phase", quick); err != nil {
-				return // Client disconnected
-			}
-			if len(slowProviders) == 0 {
-				_ = writeSSEEvent(w, flusher, "done", map[string]any{"phase": "fast", "final": true})
-				return
-			}
-		} else {
-			if err := writeSSEEvent(w, flusher, "phase", map[string]any{
-				"phase": "fast",
-				"final": false,
-				"error": quickErr.Error(),
-			}); err != nil {
-				return // Client disconnected
-			}
+		response.Phase = "update"
+		if err := writeSSEEvent(w, flusher, "update", response); err != nil {
+			return // Client disconnected
 		}
 	}
 
-	// Check if client is still connected before full search
-	select {
-	case <-r.Context().Done():
-		return // Client disconnected
-	default:
-	}
-
-	finalResponse, finalErr := s.search.Search(r.Context(), request, selectedProviders)
-	if finalErr != nil {
-		_ = writeSSEEvent(w, flusher, "error", map[string]any{
-			"code":    "search_failed",
-			"message": finalErr.Error(),
-		})
-		return
-	}
-	finalResponse.Phase = "full"
-	finalResponse.Final = true
-	if err := writeSSEEvent(w, flusher, "phase", finalResponse); err != nil {
-		return // Client disconnected
-	}
-	_ = writeSSEEvent(w, flusher, "done", map[string]any{"phase": "full", "final": true})
+	_ = writeSSEEvent(w, flusher, "done", map[string]any{"final": true})
 }
 
 func (s *Server) handleSearchSuggest(w http.ResponseWriter, r *http.Request) {
@@ -950,34 +897,6 @@ func parseOptionalBool(raw string) bool {
 	default:
 		return false
 	}
-}
-
-func splitProvidersForPhasedSearch(selected []string) ([]string, []string) {
-	if len(selected) == 0 {
-		return nil, nil
-	}
-	fastSet := map[string]struct{}{
-		"piratebay": {},
-		"prowlarr":  {},
-	}
-	fast := make([]string, 0, len(selected))
-	slow := make([]string, 0, len(selected))
-	for _, provider := range selected {
-		name := strings.ToLower(strings.TrimSpace(provider))
-		if name == "" {
-			continue
-		}
-		if _, ok := fastSet[name]; ok {
-			fast = append(fast, name)
-		} else {
-			slow = append(slow, name)
-		}
-	}
-	if len(fast) == 0 && len(slow) > 0 {
-		fast = append(fast, slow[0])
-		slow = slow[1:]
-	}
-	return fast, slow
 }
 
 func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, event string, payload any) error {
