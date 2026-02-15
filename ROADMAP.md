@@ -50,32 +50,32 @@ All P0 bugs have been fixed as of 2026-02-15:
 
 ---
 
+**4 bugs fixed** (commit `017ce4a`, 2026-02-15):
+
+### ✅ Search aggregator: no concurrency limit — FIXED
+- **File**: `services/torrent-search/internal/search/aggregator.go`
+- **Solution**: Added semaphore with maxConcurrentProviders=10. Prevents overwhelming system when Jackett has 20+ indexers.
+
+### ✅ Torznab serial torrent-file downloads — FIXED
+- **File**: `services/torrent-search/internal/providers/torznab/provider.go`
+- **Solution**: Added prefetchMissingInfoHashes() with bounded concurrency (5 workers). RuTracker via Jackett/Prowlarr now downloads in parallel. 50 results: 200s → 40s.
+
+### ✅ Cache warmer runs sequentially — FIXED
+- **File**: `services/torrent-search/internal/search/cache.go`
+- **Solution**: Parallelized runWarmCycle with semaphore (3 workers). Added context cancellation checks. 12 queries: 180s → 60s.
+
+### ✅ Cache stale-while-revalidate race — FIXED
+- **File**: `services/torrent-search/internal/search/cache.go`
+- **Solution**: Added sync.Once per cache entry (refreshOnce field). Ensures only one refresh per stale period, prevents duplicate work.
+
+---
+
 **Remaining P1 bugs (lower priority):**
 
 ### Abandoned AddMagnet after timeout
 - **File**: `services/torrent-engine/internal/services/torrent/engine/anacrolix/engine.go`
 - `Open()` (line 190) returns timeout error, but background goroutine may still complete `AddMagnet`. Torrent added to engine without caller knowing.
 - **Fix**: Track pending operations; remove torrent if caller timed out.
-
-### Torznab serial torrent-file downloads
-- **File**: `services/torrent-search/internal/providers/torznab/provider.go`
-- InfoHash fallback (line 254) downloads up to 2MB torrent files per result, 4s timeout each, no concurrency limit. 50 results = +200s.
-- **Fix**: Fan out with bounded concurrency (semaphore, e.g. 5 parallel). Skip download if result already has magnet.
-
-### Search aggregator: no concurrency limit
-- **File**: `services/torrent-search/internal/search/aggregator.go`
-- Fan-out (line 172) spawns unlimited goroutines. Jackett with 20 indexers = 20 simultaneous requests.
-- **Fix**: Use `golang.org/x/sync/semaphore` or a worker pool with configurable max concurrency.
-
-### Cache warmer runs sequentially
-- **File**: `services/torrent-search/internal/search/cache.go`
-- `runWarmCycle` (line 78) refreshes queries one by one. With 12 queries x 15s each, cycle takes 180s on a 5min interval.
-- **Fix**: Parallelize with bounded concurrency. Respect context cancellation between queries.
-
-### Cache stale-while-revalidate race
-- **File**: `services/torrent-search/internal/search/cache.go`
-- `entry.refreshing = true` (line 170) is set under read-side lock but not atomically. Two requests can both trigger background refresh.
-- **Fix**: Use `sync.Once` per entry, or check-and-set under write lock.
 
 ---
 
