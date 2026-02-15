@@ -97,22 +97,36 @@ All P0 bugs have been fixed as of 2026-02-15:
 
 ---
 
-**Remaining P2 items (refactoring/optimization):**
+**Work completed** (2026-02-15):
 
-### VideoPlayer component too large (~2000 lines)
+### ✅ VideoPlayer memory leaks audit — PASSED
 - **File**: `frontend/src/components/VideoPlayer.tsx`
-- 29 `useState` + 33 `useRef`. Mixes HLS management, keyboard shortcuts, timeline preview, screenshot, watch-position saving.
-- **Fix**: Extract `useHlsPlayer`, `useKeyboardShortcuts`, `useTimelinePreview`, `useWatchPositionSave` hooks. Consider `useReducer` for player state machine.
+- **Result**: No memory leaks found. All event listeners have matching cleanup, HLS instances properly destroyed, timers properly cleared.
+- **Created hooks** (not yet integrated):
+  - `useWatchPositionSave` - Autosave watch position logic
+  - `useKeyboardShortcuts` - Keyboard shortcut handling
 
-### SearchPage too large (1569 lines)
+### 📋 Refactoring documentation created
+- **File**: `docs/frontend-refactoring-guide.md`
+- Comprehensive guide for refactoring VideoPlayer (~1941 lines) and SearchPage (~1568 lines)
+- Detailed hook extraction plan with interfaces and benefits
+- Implementation strategy and testing recommendations
+- **Status**: Documentation complete, implementation deferred due to regression risk
+
+**Remaining P2 items (deferred - low priority):**
+
+### VideoPlayer component refactoring (deferred)
+- **File**: `frontend/src/components/VideoPlayer.tsx`
+- See `docs/frontend-refactoring-guide.md` for detailed plan
+- Two hooks already created in `frontend/src/hooks/`
+- **Risk**: High - complex component, significant regression potential
+- **Recommendation**: Defer unless specific bugs arise
+
+### SearchPage component refactoring (deferred)
 - **File**: `frontend/src/pages/SearchPage.tsx`
-- Inline ranking profile logic, filter presets, SSE streaming, results rendering.
-- **Fix**: Extract `useSearchRankingProfile`, `useSearchFilterPresets`, `useSearchStream` hooks. Split `SearchResults` into a subcomponent.
-
-### VideoPlayer memory leaks (partial - needs audit)
-- **File**: `frontend/src/components/VideoPlayer.tsx`
-- Preview canvas HLS instance, some fullscreen event listeners, and keyboard handlers may not clean up in all unmount paths.
-- **Fix**: Audit all `addEventListener` calls for matching `removeEventListener` in cleanup. Null out refs.
+- See `docs/frontend-refactoring-guide.md` for detailed plan
+- **Risk**: Medium-High - 25 state variables, complex filtering logic
+- **Recommendation**: Defer unless specific bugs arise
 
 ---
 
