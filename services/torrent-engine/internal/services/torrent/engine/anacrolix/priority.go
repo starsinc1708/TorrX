@@ -1,6 +1,8 @@
 package anacrolix
 
 import (
+	"log/slog"
+
 	"github.com/anacrolix/torrent"
 
 	"torrentstream/internal/domain"
@@ -11,18 +13,43 @@ type focusedPieceRange struct {
 	end   int
 }
 
+func mapPriority(prio domain.Priority) torrent.PiecePriority {
+	switch prio {
+	case domain.PriorityHigh:
+		return torrent.PiecePriorityNow
+	case domain.PriorityNormal:
+		return torrent.PiecePriorityNormal
+	default:
+		return torrent.PiecePriorityNormal
+	}
+}
+
 func (e *Engine) applyPiecePriority(t *torrent.Torrent, id domain.TorrentID, file domain.FileRef, r domain.Range, prio domain.Priority) {
-	// Safety mode: avoid File.SetPriority/Piece.SetPriority calls.
-	// They can trigger a fatal panic in anacrolix under heavy seek/focus churn:
-	// "piece request order has {} and pending pieces has {...}".
-	//
-	// Stream prefetch remains functional via reader demand + Allow/DisallowDataDownload.
-	// Priority requests for stopped/paused torrents are filtered in SetPiecePriority.
-	_ = t
-	_ = id
-	_ = file
-	_ = r
-	_ = prio
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Warn("applyPiecePriority recovered from panic",
+				slog.Any("panic", rec),
+				slog.String("torrentId", string(id)),
+			)
+		}
+	}()
+
+	files := t.Files()
+	if file.Index < 0 || file.Index >= len(files) {
+		return
+	}
+
+	pr, ok := computeFocusedPieceRange(t, files[file.Index], r)
+	if !ok {
+		return
+	}
+
+	target := mapPriority(prio)
+	for i := pr.start; i < pr.end; i++ {
+		t.Piece(i).SetPriority(target)
+	}
+
+	e.storeFocusedPieces(id, pr)
 }
 
 func computeFocusedPieceRange(t *torrent.Torrent, f *torrent.File, r domain.Range) (focusedPieceRange, bool) {

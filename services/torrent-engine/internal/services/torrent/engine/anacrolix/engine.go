@@ -165,7 +165,8 @@ func (e *Engine) hardPauseTorrent(t *torrent.Torrent) {
 	t.SetMaxEstablishedConns(0)
 }
 
-// resumeTorrent re-enables data transfer and peer connections.
+// resumeTorrent re-enables data transfer and peer connections, and starts
+// downloading all pieces. Use for normal Start/Resume operations.
 func (e *Engine) resumeTorrent(t *torrent.Torrent) {
 	if t == nil {
 		return
@@ -176,6 +177,19 @@ func (e *Engine) resumeTorrent(t *torrent.Torrent) {
 	if torrentInfoReady(t) {
 		t.DownloadAll()
 	}
+}
+
+// resumeTorrentForStreaming re-enables data transfer and peer connections but
+// does NOT call DownloadAll(). This ensures bandwidth is used exclusively for
+// pieces demanded by the reader's readahead window rather than being spread
+// across the entire torrent.
+func (e *Engine) resumeTorrentForStreaming(t *torrent.Torrent) {
+	if t == nil {
+		return
+	}
+	t.SetMaxEstablishedConns(defaultMaxConns)
+	t.AllowDataUpload()
+	t.AllowDataDownload()
 }
 
 // ---------------------------------------------------------------------------
@@ -533,8 +547,9 @@ func (e *Engine) FocusSession(ctx context.Context, id domain.TorrentID) error {
 		}
 	}
 
-	// Ensure the focused torrent is fully active.
-	e.resumeTorrent(t)
+	// Resume the focused torrent for streaming: enable data transfer but do
+	// NOT call DownloadAll() so that only reader-demanded pieces get bandwidth.
+	e.resumeTorrentForStreaming(t)
 
 	return nil
 }

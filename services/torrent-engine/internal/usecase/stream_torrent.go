@@ -112,8 +112,6 @@ func (uc StreamTorrent) Execute(ctx context.Context, id domain.TorrentID, fileIn
 
 	// Use the full priority window as readahead so the torrent client
 	// requests pieces well ahead of the current playback position.
-	// Since applyPiecePriority is disabled (anacrolix panic safety),
-	// the reader readahead is the primary mechanism for piece demand.
 	reader.SetReadahead(priorityWindow)
 
 	return StreamResult{Reader: reader, File: file}, nil
