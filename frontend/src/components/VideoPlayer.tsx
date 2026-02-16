@@ -65,6 +65,8 @@ interface VideoPlayerProps {
   onRetryInitialize?: () => void;
   initialPlaybackRate?: number;
   onPlaybackRateChange?: (rate: number) => void;
+  initialQualityLevel?: number;
+  onQualityLevelChange?: (level: number) => void;
   onOpenInfo?: () => void;
   playerHealth?: PlayerHealth | null;
   onShowHealth?: () => void;
@@ -157,6 +159,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onRetryInitialize,
   initialPlaybackRate = 1,
   onPlaybackRateChange,
+  initialQualityLevel = -1,
+  onQualityLevelChange,
   onOpenInfo,
   playerHealth,
   onShowHealth,
@@ -181,6 +185,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
+  const [availableLevels, setAvailableLevels] = useState<Array<{
+    index: number;
+    width: number;
+    height: number;
+    bitrate: number;
+    name?: string;
+  }>>([]);
+  const [currentQualityLevel, setCurrentQualityLevel] = useState(-1);
+  const [actualPlayingLevel, setActualPlayingLevel] = useState(-1);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hlsError, setHlsError] = useState<string | null>(null);
   const [seekStatus, setSeekStatus] = useState<'idle' | 'seeking' | 'buffering' | 'error'>('idle');
@@ -236,6 +250,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (Math.abs(video.playbackRate - nextRate) < 0.001) return;
     video.playbackRate = nextRate;
   }, [initialPlaybackRate, videoRef]);
+
+  useEffect(() => {
+    if (initialQualityLevel !== undefined) {
+      setCurrentQualityLevel(initialQualityLevel);
+    }
+  }, [initialQualityLevel]);
 
   const tryPlay = useCallback(() => {
     const video = videoRef.current;
@@ -720,6 +740,34 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const attachHlsHandlers = (hls: Hls, useWasPlayingSnapshot: boolean) => {
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         if (loadTokenRef.current !== loadToken) return;
+
+        // Extract and store available quality levels
+        const levels = hls.levels;
+        if (levels && levels.length > 0) {
+          const levelData = levels.map((level, index) => ({
+            index,
+            width: level.width,
+            height: level.height,
+            bitrate: level.bitrate,
+            name: level.name,
+          }));
+          setAvailableLevels(levelData);
+
+          // Apply preferred quality level if set
+          if (currentQualityLevel !== undefined && currentQualityLevel >= -1) {
+            // Validate level index is within bounds
+            if (currentQualityLevel === -1 || currentQualityLevel < levels.length) {
+              hls.currentLevel = currentQualityLevel;
+            } else {
+              // Invalid level, fall back to Auto
+              hls.currentLevel = -1;
+              setCurrentQualityLevel(-1);
+            }
+          }
+        } else {
+          setAvailableLevels([]);
+        }
+
         setRuntimeStatus('buffering');
         if (justFinishedTrackSwitch) {
           setRuntimeStatusText('New track ready. Buffering segments...');
@@ -736,6 +784,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (pendingPlayRef.current) {
           tryPlay();
         }
+      });
+
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+        if (loadTokenRef.current !== loadToken) return;
+        setActualPlayingLevel(data.level);
       });
 
       hlsRecoveryCountRef.current = 0;
@@ -1525,6 +1578,27 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     [videoRef],
   );
 
+  const handleQualityChange = useCallback(
+    (levelIndex: number) => {
+      const hls = hlsRef.current;
+      if (!hls || !useHls) return;
+
+      // Validate level index
+      if (levelIndex !== -1 && (levelIndex < 0 || levelIndex >= availableLevels.length)) {
+        console.warn(`Invalid quality level index: ${levelIndex}`);
+        return;
+      }
+
+      // Set quality level
+      hls.currentLevel = levelIndex;
+      setCurrentQualityLevel(levelIndex);
+
+      // Notify parent for persistence
+      onQualityLevelChange?.(levelIndex);
+    },
+    [useHls, availableLevels.length, onQualityLevelChange],
+  );
+
   const handleSeekStart = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       setSeeking(true);
@@ -1622,14 +1696,14 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setShowControls(true);
     setCursorHidden(false);
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    if (settingsOpen || speedMenuOpen) return;
+    if (settingsOpen || speedMenuOpen || qualityMenuOpen) return;
     hideTimerRef.current = setTimeout(() => {
       if (playingRef.current) {
         setShowControls(false);
         setCursorHidden(true);
       }
     }, 3000);
-  }, [settingsOpen, speedMenuOpen]);
+  }, [settingsOpen, speedMenuOpen, qualityMenuOpen]);
 
   useEffect(() => {
     if (!playing) {
@@ -1645,7 +1719,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   }, [playing, resetHideTimer]);
 
   useEffect(() => {
-    if (settingsOpen || speedMenuOpen) {
+    if (settingsOpen || speedMenuOpen || qualityMenuOpen) {
       setShowControls(true);
       setCursorHidden(false);
       if (hideTimerRef.current) {
@@ -1657,7 +1731,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (playing) {
       resetHideTimer();
     }
-  }, [settingsOpen, speedMenuOpen, playing, resetHideTimer]);
+  }, [settingsOpen, speedMenuOpen, qualityMenuOpen, playing, resetHideTimer]);
 
   useEffect(() => {
     return () => {
@@ -1911,6 +1985,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       speedMenuOpen={speedMenuOpen}
                       setSpeedMenuOpen={setSpeedMenuOpen}
                       playbackRate={playbackRate}
+                      qualityMenuOpen={qualityMenuOpen}
+                      setQualityMenuOpen={setQualityMenuOpen}
+                      availableLevels={availableLevels}
+                      currentQualityLevel={currentQualityLevel}
+                      actualPlayingLevel={actualPlayingLevel}
+                      onQualityChange={handleQualityChange}
+                      useHls={useHls}
                       videoRef={videoRef}
                       handleOpenInfo={handleOpenInfo}
                       torrentId={torrentId}

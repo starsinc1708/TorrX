@@ -150,6 +150,12 @@ const PlayerPage: React.FC = () => {
     return Math.max(0.25, Math.min(2, value));
   }, [torrentPreferences?.playbackRate]);
 
+  const initialQualityLevel = useMemo(() => {
+    const value = torrentPreferences?.preferredQualityLevel;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < -1) return -1;
+    return value;
+  }, [torrentPreferences?.preferredQualityLevel]);
+
   // Keep selected file in sync with URL param.
   useEffect(() => {
     if (fileIndex === undefined) return;
@@ -238,6 +244,14 @@ const PlayerPage: React.FC = () => {
     (rate: number) => {
       if (!torrentId) return;
       patchTorrentPlayerPreferences(torrentId, { playbackRate: rate });
+    },
+    [torrentId],
+  );
+
+  const handleQualityLevelChange = useCallback(
+    (level: number) => {
+      if (!torrentId) return;
+      patchTorrentPlayerPreferences(torrentId, { preferredQualityLevel: level });
     },
     [torrentId],
   );
@@ -506,6 +520,8 @@ const PlayerPage: React.FC = () => {
             onRetryInitialize={retryStreamInitialization}
             initialPlaybackRate={initialPlaybackRate}
             onPlaybackRateChange={handlePlaybackRateChange}
+            initialQualityLevel={initialQualityLevel}
+            onQualityLevelChange={handleQualityLevelChange}
             sessionState={effectiveSessionState}
             onSelectFile={handleSelectFile}
             onSelectAudioTrack={handleSelectAudioTrack}

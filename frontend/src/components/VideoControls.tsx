@@ -56,6 +56,19 @@ interface VideoControlsProps {
   speedMenuOpen: boolean;
   setSpeedMenuOpen: (open: boolean) => void;
   playbackRate: number;
+  qualityMenuOpen: boolean;
+  setQualityMenuOpen: (open: boolean) => void;
+  availableLevels: Array<{
+    index: number;
+    width: number;
+    height: number;
+    bitrate: number;
+    name?: string;
+  }>;
+  currentQualityLevel: number;
+  actualPlayingLevel: number;
+  onQualityChange: (level: number) => void;
+  useHls: boolean;
   videoRef: React.RefObject<HTMLVideoElement>;
   handleOpenInfo?: () => void;
   torrentId: string | null;
@@ -93,6 +106,13 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
   speedMenuOpen,
   setSpeedMenuOpen,
   playbackRate,
+  qualityMenuOpen,
+  setQualityMenuOpen,
+  availableLevels,
+  currentQualityLevel,
+  actualPlayingLevel,
+  onQualityChange,
+  useHls,
   videoRef,
   handleOpenInfo,
   torrentId,
@@ -101,6 +121,24 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
   isFullscreen,
   streamUrl,
 }) => {
+  const getQualityLabel = (levelIndex: number): string => {
+    if (levelIndex === -1) return 'Auto';
+    const level = availableLevels.find(l => l.index === levelIndex);
+    if (!level) return 'Auto';
+    return `${level.height}p`;
+  };
+
+  const getCurrentQualityDisplay = (): string => {
+    if (currentQualityLevel === -1) {
+      // Auto mode: show actual playing level if available
+      if (actualPlayingLevel >= 0) {
+        const level = availableLevels.find(l => l.index === actualPlayingLevel);
+        if (level) return `${level.height}p`;
+      }
+      return 'Auto';
+    }
+    return getQualityLabel(currentQualityLevel);
+  };
 
   return (
     <div className="flex items-center justify-between gap-2">
@@ -262,6 +300,62 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+
+        {/* Quality selector - only show for HLS with multiple levels */}
+        {useHls && availableLevels.length > 1 && (
+          <DropdownMenu open={qualityMenuOpen} onOpenChange={setQualityMenuOpen}>
+            <DropdownMenuTrigger asChild>
+              <button
+                className={ctrlBtnClassName}
+                title="Video quality"
+                aria-label="Video quality"
+              >
+                <span className="text-xs font-semibold tabular-nums">
+                  {getCurrentQualityDisplay()}
+                </span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              portalContainer={dropdownPortalContainer}
+              className="w-[min(70vw,200px)] min-w-[160px] max-h-[min(70dvh,560px)] overflow-y-auto overscroll-contain"
+            >
+              <DropdownMenuLabel>Quality</DropdownMenuLabel>
+
+              {/* Auto option */}
+              <DropdownMenuItem
+                onSelect={() => onQualityChange(-1)}
+              >
+                <span className="flex-1">Auto</span>
+                {currentQualityLevel === -1 ? (
+                  <Check size={14} className="text-primary" />
+                ) : null}
+              </DropdownMenuItem>
+
+              <DropdownMenuSeparator />
+
+              {/* Specific quality levels - sorted by height descending */}
+              {availableLevels
+                .slice()
+                .sort((a, b) => b.height - a.height)
+                .map((level) => {
+                  const label = level.name || `${level.height}p`;
+                  const active = currentQualityLevel === level.index;
+
+                  return (
+                    <DropdownMenuItem
+                      key={level.index}
+                      onSelect={() => onQualityChange(level.index)}
+                    >
+                      <span className="flex-1">{label}</span>
+                      {active ? <Check size={14} className="text-primary" /> : null}
+                    </DropdownMenuItem>
+                  );
+                })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+
         {handleOpenInfo && torrentId ? (
           <button
             className={ctrlBtnClassName}

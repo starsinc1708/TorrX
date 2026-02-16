@@ -4,6 +4,7 @@ export type TorrentPlayerPreferences = {
   audioTrack?: number | null;
   subtitleTrack?: number | null;
   playbackRate?: number;
+  preferredQualityLevel?: number;
   updatedAt: string;
 };
 
@@ -11,6 +12,9 @@ type PreferencesMap = Record<string, TorrentPlayerPreferences>;
 
 const isValidTrackValue = (value: unknown): value is number | null =>
   value === null || (typeof value === 'number' && Number.isInteger(value) && value >= 0);
+
+const isValidQualityLevel = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value >= -1;
 
 const clampPlaybackRate = (value: number): number => {
   if (!Number.isFinite(value)) return 1;
@@ -43,6 +47,12 @@ const readMap = (): PreferencesMap => {
       }
       if (typeof candidate.playbackRate === 'number' && Number.isFinite(candidate.playbackRate)) {
         item.playbackRate = clampPlaybackRate(candidate.playbackRate);
+      }
+      if (
+        Object.prototype.hasOwnProperty.call(candidate, 'preferredQualityLevel') &&
+        isValidQualityLevel(candidate.preferredQualityLevel)
+      ) {
+        item.preferredQualityLevel = candidate.preferredQualityLevel;
       }
       next[torrentId] = item;
     }
@@ -89,6 +99,12 @@ export const patchTorrentPlayerPreferences = (
     Number.isFinite(patch.playbackRate)
   ) {
     next.playbackRate = clampPlaybackRate(patch.playbackRate);
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'preferredQualityLevel') &&
+    isValidQualityLevel(patch.preferredQualityLevel)
+  ) {
+    next.preferredQualityLevel = patch.preferredQualityLevel;
   }
 
   map[torrentId] = next;
