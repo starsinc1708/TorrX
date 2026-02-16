@@ -130,10 +130,12 @@ services:
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:latest
     restart: unless-stopped
+    env_file:
+      - ./.env
     environment:
       TZ: "UTC"
       LOG_LEVEL: "info"
-      PROXY_URL: "http://51.158.105.94:31826"
+      PROXY_URL: "${FLARESOLVERR_PROXY_URL:-}"
     ports:
       - "8191:8191"
     networks:
