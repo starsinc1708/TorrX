@@ -2,6 +2,7 @@ package anacrolix
 
 import (
 	"context"
+	"time"
 
 	"github.com/anacrolix/torrent"
 
@@ -51,6 +52,18 @@ func (s *Session) Ready() bool {
 }
 
 func (s *Session) SelectFile(index int) (domain.FileRef, error) {
+	// Wait for metadata with timeout if not ready yet (fixes "invalid file index"
+	// for partially downloaded torrents where metadata exists but isn't immediately ready)
+	if !s.ready && s.torrent != nil {
+		select {
+		case <-s.torrent.GotInfo():
+			s.files = mapFiles(s.torrent)
+			s.ready = true
+		case <-time.After(10 * time.Second):
+			// Metadata still not available after timeout
+		}
+	}
+
 	files := s.Files()
 	if index < 0 || index >= len(files) {
 		return domain.FileRef{}, ErrSessionNotFound
