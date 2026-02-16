@@ -63,8 +63,12 @@ func newHLSCache(baseDir string, maxBytes int64, maxAge time.Duration, logger *s
 	return c
 }
 
-// trackKey returns the track directory component for the given audio/subtitle tracks.
-func trackKey(audioTrack, subtitleTrack int) string {
+// trackKey returns the track directory component for the given audio/subtitle tracks
+// and optional quality variant.
+func trackKey(audioTrack, subtitleTrack int, variant string) string {
+	if variant != "" {
+		return fmt.Sprintf("a%d-s%d-%s", audioTrack, subtitleTrack, variant)
+	}
 	return fmt.Sprintf("a%d-s%d", audioTrack, subtitleTrack)
 }
 
@@ -180,12 +184,14 @@ func (c *hlsCache) addToIndex(torrentID string, fileIndex int, tk string, seg ca
 }
 
 // Store copies a segment file into the cache directory.
-func (c *hlsCache) Store(torrentID string, fileIndex, audioTrack, subtitleTrack int, startTime, endTime float64, srcPath string) error {
+// variant is the quality variant identifier (e.g. "v0", "v1") for multi-variant
+// jobs, or empty string for single-variant.
+func (c *hlsCache) Store(torrentID string, fileIndex, audioTrack, subtitleTrack int, variant string, startTime, endTime float64, srcPath string) error {
 	if endTime <= startTime {
 		return nil
 	}
 
-	tk := trackKey(audioTrack, subtitleTrack)
+	tk := trackKey(audioTrack, subtitleTrack, variant)
 	dir := filepath.Join(c.baseDir, torrentID, strconv.Itoa(fileIndex), tk)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -232,8 +238,8 @@ func (c *hlsCache) Store(torrentID string, fileIndex, audioTrack, subtitleTrack 
 }
 
 // Lookup finds a cached segment covering the given time position.
-func (c *hlsCache) Lookup(torrentID string, fileIndex, audioTrack, subtitleTrack int, timeSec float64) (cachedSegment, bool) {
-	tk := trackKey(audioTrack, subtitleTrack)
+func (c *hlsCache) Lookup(torrentID string, fileIndex, audioTrack, subtitleTrack int, variant string, timeSec float64) (cachedSegment, bool) {
+	tk := trackKey(audioTrack, subtitleTrack, variant)
 
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -254,8 +260,8 @@ func (c *hlsCache) Lookup(torrentID string, fileIndex, audioTrack, subtitleTrack
 }
 
 // LookupRange returns all contiguous cached segments starting from fromTime.
-func (c *hlsCache) LookupRange(torrentID string, fileIndex, audioTrack, subtitleTrack int, fromTime float64) []cachedSegment {
-	tk := trackKey(audioTrack, subtitleTrack)
+func (c *hlsCache) LookupRange(torrentID string, fileIndex, audioTrack, subtitleTrack int, variant string, fromTime float64) []cachedSegment {
+	tk := trackKey(audioTrack, subtitleTrack, variant)
 
 	c.mu.RLock()
 	defer c.mu.RUnlock()

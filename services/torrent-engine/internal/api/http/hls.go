@@ -53,11 +53,18 @@ type hlsJob struct {
 	completed    bool
 	lastActivity time.Time
 	restartCount int
+	multiVariant bool             // true when producing multiple quality variants
+	variants     []qualityVariant // populated for multi-variant jobs
 }
 
 type codecCacheEntry struct {
 	isH264 bool
 	isAAC  bool
+}
+
+type resolutionCacheEntry struct {
+	width  int
+	height int
 }
 
 type hlsManager struct {
@@ -75,6 +82,8 @@ type hlsManager struct {
 	cache                 *hlsCache
 	codecCacheMu          sync.RWMutex
 	codecCache            map[string]*codecCacheEntry // filePath → codec detection results
+	resolutionCacheMu     sync.RWMutex
+	resolutionCache       map[string]*resolutionCacheEntry // filePath → resolution
 	logger                *slog.Logger
 	totalJobStarts        uint64
 	totalJobFailures      uint64
@@ -173,10 +182,11 @@ func newHLSManager(stream StreamTorrentUseCase, cfg HLSConfig, logger *slog.Logg
 		preset:       preset,
 		crf:          crf,
 		audioBitrate: audioBitrate,
-		jobs:         make(map[hlsKey]*hlsJob),
-		cache:        cache,
-		codecCache:   make(map[string]*codecCacheEntry),
-		logger:       logger,
+		jobs:            make(map[hlsKey]*hlsJob),
+		cache:           cache,
+		codecCache:      make(map[string]*codecCacheEntry),
+		resolutionCache: make(map[string]*resolutionCacheEntry),
+		logger:          logger,
 	}
 }
 
@@ -239,6 +249,22 @@ func (m *hlsManager) ensureJob(id domain.TorrentID, fileIndex, audioTrack, subti
 		}
 
 		// Check for completed job from a previous run (survived restart via persistent volume).
+		// Multi-variant jobs write master.m3u8; check for it first.
+		masterPlaylist := filepath.Join(dir, "master.m3u8")
+		if _, statErr := os.Stat(masterPlaylist); statErr == nil {
+			v0Playlist := filepath.Join(dir, "v0", "index.m3u8")
+			if playlistHasEndList(v0Playlist) {
+				job = newHLSJob(dir, 0)
+				job.multiVariant = true
+				job.playlist = masterPlaylist
+				job.completed = true
+				job.signalReady()
+				m.jobs[key] = job
+				m.mu.Unlock()
+				m.logger.Info("hls reusing cached multi-variant transcode", slog.String("dir", dir))
+				return job, nil
+			}
+		}
 		playlist := filepath.Join(dir, "index.m3u8")
 		if playlistHasEndList(playlist) {
 			job = newHLSJob(dir, 0)
@@ -441,11 +467,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 		args = append(args, "-reconnect", "1", "-reconnect_streamed", "1")
 	}
 
-	args = append(args,
-		"-i", input,
-		"-map", "0:v:0",
-		"-map", fmt.Sprintf("0:a:%d?", key.audioTrack),
-	)
+	args = append(args, "-i", input)
 
 	// Snapshot encoding settings under lock so the job uses a consistent set.
 	m.mu.Lock()
@@ -454,17 +476,43 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	encAudioBitrate := m.audioBitrate
 	m.mu.Unlock()
 
+	// Detect source resolution for multi-variant encoding.
+	isLocalFile := !useReader &&
+		!strings.HasPrefix(input, "http://") && !strings.HasPrefix(input, "https://")
+	sourceHeight := 0
+	if isLocalFile {
+		_, sourceHeight = m.getVideoResolutionWithCache(input)
+	}
+
 	// When the source is a local H.264 file and no subtitle burning is
 	// needed, use stream copy to avoid expensive re-encoding.
 	streamCopy := false
-	if !useReader && key.subtitleTrack < 0 &&
-		!strings.HasPrefix(input, "http://") && !strings.HasPrefix(input, "https://") &&
-		m.isH264FileWithCache(input) {
+	if isLocalFile && key.subtitleTrack < 0 && m.isH264FileWithCache(input) {
 		streamCopy = true
 	}
 
+	// Multi-variant encoding: only for re-encoding with known source resolution.
+	multiVariant := false
+	var variants []qualityVariant
+	if !streamCopy && sourceHeight > 0 {
+		variants = computeVariants(sourceHeight)
+		if len(variants) > 0 {
+			multiVariant = true
+			job.multiVariant = true
+			job.variants = variants
+			job.playlist = filepath.Join(job.dir, "master.m3u8")
+			for i := range variants {
+				_ = os.MkdirAll(filepath.Join(job.dir, fmt.Sprintf("v%d", i)), 0o755)
+			}
+		}
+	}
+
 	if streamCopy {
-		args = append(args, "-c:v", "copy")
+		args = append(args,
+			"-map", "0:v:0",
+			"-map", fmt.Sprintf("0:a:%d?", key.audioTrack),
+			"-c:v", "copy",
+		)
 		if m.isAACAudioWithCache(input) {
 			args = append(args, "-c:a", "copy")
 		} else {
@@ -472,8 +520,50 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 		}
 		args = append(args, "-copyts", "-start_at_zero")
 		m.logger.Info("hls using stream copy mode", slog.String("input", input))
+	} else if multiVariant {
+		// Build filter_complex: optional subtitle burn → split → per-variant scale.
+		args = append(args, "-filter_complex",
+			buildMultiVariantFilterComplex(variants, subtitleSourcePath, key.subtitleTrack))
+
+		// Map each variant's video output + shared audio input.
+		for i := range variants {
+			args = append(args,
+				"-map", fmt.Sprintf("[out%d]", i),
+				"-map", fmt.Sprintf("0:a:%d?", key.audioTrack),
+			)
+		}
+
+		args = append(args,
+			"-c:v", "libx264",
+			"-pix_fmt", "yuv420p",
+			"-preset", encPreset,
+			"-force_key_frames", "expr:gte(t,n_forced*4)",
+		)
+
+		// Per-variant bitrate / CRF settings.
+		for i, v := range variants {
+			if v.VideoBitrate != "" {
+				args = append(args,
+					fmt.Sprintf("-b:v:%d", i), v.VideoBitrate,
+					fmt.Sprintf("-maxrate:v:%d", i), v.MaxRate,
+					fmt.Sprintf("-bufsize:v:%d", i), v.BufSize,
+				)
+			} else {
+				// Highest variant: CRF for best quality at source resolution.
+				args = append(args, fmt.Sprintf("-crf:v:%d", i), strconv.Itoa(encCRF))
+			}
+		}
+
+		args = append(args, "-c:a", "aac", "-b:a", encAudioBitrate, "-ac", "2")
+		m.logger.Info("hls using multi-variant mode",
+			slog.String("input", input),
+			slog.Int("variants", len(variants)),
+			slog.Int("sourceHeight", sourceHeight),
+		)
 	} else {
 		args = append(args,
+			"-map", "0:v:0",
+			"-map", fmt.Sprintf("0:a:%d?", key.audioTrack),
 			"-c:v", "libx264",
 			"-pix_fmt", "yuv420p",
 			"-preset", encPreset,
@@ -491,15 +581,36 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 			"-ac", "2",
 		)
 	}
-	args = append(args,
-		"-f", "hls",
-		"-hls_time", "4",
-		"-hls_list_size", "0",
-		"-hls_playlist_type", playlistType,
-		"-hls_flags", flags,
-		"-hls_segment_filename", "seg-%05d.ts",
-		"index.m3u8",
-	)
+
+	// HLS muxer output settings.
+	if multiVariant {
+		// Build var_stream_map: "v:0,a:0 v:1,a:1 ..."
+		streamParts := make([]string, len(variants))
+		for i := range variants {
+			streamParts[i] = fmt.Sprintf("v:%d,a:%d", i, i)
+		}
+		args = append(args,
+			"-f", "hls",
+			"-hls_time", "4",
+			"-hls_list_size", "0",
+			"-hls_playlist_type", playlistType,
+			"-hls_flags", flags,
+			"-master_pl_name", "master.m3u8",
+			"-hls_segment_filename", "v%v/seg-%05d.ts",
+			"-var_stream_map", strings.Join(streamParts, " "),
+			"v%v/index.m3u8",
+		)
+	} else {
+		args = append(args,
+			"-f", "hls",
+			"-hls_time", "4",
+			"-hls_list_size", "0",
+			"-hls_playlist_type", playlistType,
+			"-hls_flags", flags,
+			"-hls_segment_filename", "seg-%05d.ts",
+			"index.m3u8",
+		)
+	}
 
 	m.logger.Info("hls ffmpeg starting",
 		slog.String("input", input),
@@ -664,18 +775,33 @@ func newHLSJob(dir string, seekSeconds float64) *hlsJob {
 
 // segmentTimeOffset computes the absolute time offset (in seconds) for the
 // given segment filename by parsing the job's m3u8 playlist and summing
-// EXTINF durations up to that segment.
+// EXTINF durations up to that segment. For multi-variant segments (e.g.
+// "v0/seg-00001.ts"), the variant prefix is parsed to locate the correct
+// variant playlist.
 func segmentTimeOffset(job *hlsJob, segmentName string) (float64, bool) {
 	if job == nil {
 		return 0, false
 	}
-	segments, err := parseM3U8Segments(job.playlist)
+
+	playlist := job.playlist
+	parsedSegName := segmentName
+
+	// Multi-variant: parse "v0/seg-00001.ts" → variant="v0", seg="seg-00001.ts"
+	if job.multiVariant {
+		if idx := strings.IndexByte(segmentName, '/'); idx > 0 && segmentName[0] == 'v' {
+			variantPrefix := segmentName[:idx]
+			playlist = filepath.Join(job.dir, variantPrefix, "index.m3u8")
+			parsedSegName = segmentName[idx+1:]
+		}
+	}
+
+	segments, err := parseM3U8Segments(playlist)
 	if err != nil {
 		return 0, false
 	}
 	cumTime := job.seekSeconds
 	for _, seg := range segments {
-		if seg.Filename == segmentName {
+		if seg.Filename == parsedSegName {
 			return cumTime, true
 		}
 		cumTime += seg.Duration
@@ -703,43 +829,75 @@ func (m *hlsManager) cleanupJob(key hlsKey, job *hlsJob) {
 	}
 }
 
-// harvestSegmentsToCache parses the m3u8 playlist in dir, computes time
+// harvestSegmentsToCache parses the m3u8 playlist(s) in dir, computes time
 // offsets from seekSeconds + cumulative EXTINF durations, and copies each
-// segment file into the cache.
+// segment file into the cache. For multi-variant jobs, each variant directory
+// is harvested independently.
 func (m *hlsManager) harvestSegmentsToCache(key hlsKey, dir string, seekSeconds float64) {
 	if m.cache == nil {
 		return
 	}
-	playlist := filepath.Join(dir, "index.m3u8")
-	segments, err := parseM3U8Segments(playlist)
-	if err != nil {
-		return
+
+	type variantInfo struct {
+		dir      string
+		playlist string
+		variant  string
+	}
+	var variantsToParse []variantInfo
+
+	// Check for multi-variant (master.m3u8 exists).
+	masterPlaylist := filepath.Join(dir, "master.m3u8")
+	if _, err := os.Stat(masterPlaylist); err == nil {
+		for i := 0; ; i++ {
+			vDir := filepath.Join(dir, fmt.Sprintf("v%d", i))
+			vPlaylist := filepath.Join(vDir, "index.m3u8")
+			if _, err := os.Stat(vPlaylist); err != nil {
+				break
+			}
+			variantsToParse = append(variantsToParse, variantInfo{
+				dir: vDir, playlist: vPlaylist, variant: fmt.Sprintf("v%d", i),
+			})
+		}
+	}
+	if len(variantsToParse) == 0 {
+		variantsToParse = append(variantsToParse, variantInfo{
+			dir: dir, playlist: filepath.Join(dir, "index.m3u8"), variant: "",
+		})
 	}
 
-	cumTime := seekSeconds
-	for _, seg := range segments {
-		startTime := cumTime
-		endTime := cumTime + seg.Duration
-		srcPath := filepath.Join(dir, seg.Filename)
-		if _, err := os.Stat(srcPath); err != nil {
-			cumTime = endTime
+	for _, vi := range variantsToParse {
+		segments, err := parseM3U8Segments(vi.playlist)
+		if err != nil {
 			continue
 		}
-		if err := m.cache.Store(
-			string(key.id), key.fileIndex, key.audioTrack, key.subtitleTrack,
-			startTime, endTime, srcPath,
-		); err != nil {
-			m.logger.Warn("hls cache store failed",
-				slog.String("segment", seg.Filename),
-				slog.String("error", err.Error()),
-			)
+		cumTime := seekSeconds
+		for _, seg := range segments {
+			startTime := cumTime
+			endTime := cumTime + seg.Duration
+			srcPath := filepath.Join(vi.dir, seg.Filename)
+			if _, err := os.Stat(srcPath); err != nil {
+				cumTime = endTime
+				continue
+			}
+			if err := m.cache.Store(
+				string(key.id), key.fileIndex, key.audioTrack, key.subtitleTrack,
+				vi.variant, startTime, endTime, srcPath,
+			); err != nil {
+				m.logger.Warn("hls cache store failed",
+					slog.String("segment", seg.Filename),
+					slog.String("variant", vi.variant),
+					slog.String("error", err.Error()),
+				)
+			}
+			cumTime = endTime
 		}
-		cumTime = endTime
 	}
 }
 
 // cacheSegmentsLive runs alongside an active ffmpeg job, periodically
-// parsing the growing m3u8 playlist and caching new segments as they appear.
+// parsing the growing m3u8 playlist(s) and caching new segments as they
+// appear. For multi-variant jobs, each variant playlist is tracked
+// independently.
 func (m *hlsManager) cacheSegmentsLive(job *hlsJob, key hlsKey) {
 	if m.cache == nil {
 		return
@@ -747,35 +905,67 @@ func (m *hlsManager) cacheSegmentsLive(job *hlsJob, key hlsKey) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	cached := 0 // number of segments already cached from this job
+	type variantState struct {
+		dir      string
+		playlist string
+		variant  string
+		cached   int
+	}
+
+	var variants []*variantState
+	initialized := false
 
 	for {
 		select {
 		case <-job.ctx.Done():
 			return
 		case <-ticker.C:
-			segments, err := parseM3U8Segments(job.playlist)
-			if err != nil || len(segments) <= cached {
-				continue
-			}
-			cumTime := job.seekSeconds
-			for i := 0; i < cached && i < len(segments); i++ {
-				cumTime += segments[i].Duration
-			}
-			for i := cached; i < len(segments); i++ {
-				seg := segments[i]
-				startTime := cumTime
-				endTime := cumTime + seg.Duration
-				srcPath := filepath.Join(job.dir, seg.Filename)
-				if _, statErr := os.Stat(srcPath); statErr == nil {
-					_ = m.cache.Store(
-						string(key.id), key.fileIndex, key.audioTrack, key.subtitleTrack,
-						startTime, endTime, srcPath,
-					)
+			// Lazy-initialize variant list after ffmpeg has started and
+			// potentially set job.multiVariant.
+			if !initialized {
+				if job.multiVariant {
+					for i := range job.variants {
+						vDir := filepath.Join(job.dir, fmt.Sprintf("v%d", i))
+						variants = append(variants, &variantState{
+							dir:      vDir,
+							playlist: filepath.Join(vDir, "index.m3u8"),
+							variant:  fmt.Sprintf("v%d", i),
+						})
+					}
+				} else {
+					variants = append(variants, &variantState{
+						dir:      job.dir,
+						playlist: job.playlist,
+						variant:  "",
+					})
 				}
-				cumTime = endTime
+				initialized = true
 			}
-			cached = len(segments)
+
+			for _, vs := range variants {
+				segments, err := parseM3U8Segments(vs.playlist)
+				if err != nil || len(segments) <= vs.cached {
+					continue
+				}
+				cumTime := job.seekSeconds
+				for i := 0; i < vs.cached && i < len(segments); i++ {
+					cumTime += segments[i].Duration
+				}
+				for i := vs.cached; i < len(segments); i++ {
+					seg := segments[i]
+					startTime := cumTime
+					endTime := cumTime + seg.Duration
+					srcPath := filepath.Join(vs.dir, seg.Filename)
+					if _, statErr := os.Stat(srcPath); statErr == nil {
+						_ = m.cache.Store(
+							string(key.id), key.fileIndex, key.audioTrack, key.subtitleTrack,
+							vs.variant, startTime, endTime, srcPath,
+						)
+					}
+					cumTime = endTime
+				}
+				vs.cached = len(segments)
+			}
 		}
 	}
 }
@@ -1048,6 +1238,41 @@ func subtitleFilterArg(sourcePath string, subtitleTrack int) string {
 	return fmt.Sprintf("subtitles='%s':si=%d", path, subtitleTrack)
 }
 
+// buildMultiVariantFilterComplex constructs an FFmpeg filter_complex string
+// that splits the input video into multiple quality variants with optional
+// subtitle burning applied before the split.
+func buildMultiVariantFilterComplex(variants []qualityVariant, subtitleSourcePath string, subtitleTrack int) string {
+	n := len(variants)
+	var b strings.Builder
+
+	// Input chain: [0:v:0] → optional subtitle burn → split=N
+	b.WriteString("[0:v:0]")
+	if subtitleTrack >= 0 && subtitleSourcePath != "" {
+		b.WriteString(subtitleFilterArg(subtitleSourcePath, subtitleTrack))
+		b.WriteString(",")
+	}
+	b.WriteString(fmt.Sprintf("split=%d", n))
+
+	// Split output labels: [v0][v1]...[vN]
+	for i := 0; i < n; i++ {
+		b.WriteString(fmt.Sprintf("[v%d]", i))
+	}
+
+	// Per-variant scaling filters.
+	for i := 0; i < n; i++ {
+		b.WriteString("; ")
+		if i < n-1 {
+			// Lower variants: scale to target height, preserve aspect ratio.
+			b.WriteString(fmt.Sprintf("[v%d]scale=-2:%d[out%d]", i, variants[i].Height, i))
+		} else {
+			// Highest variant: pass through at source resolution.
+			b.WriteString(fmt.Sprintf("[v%d]null[out%d]", i, i))
+		}
+	}
+
+	return b.String()
+}
+
 func safeSegmentPath(base, name string) (string, error) {
 	cleaned := filepath.Clean(name)
 	if strings.Contains(cleaned, "..") || strings.HasPrefix(cleaned, string(filepath.Separator)) {
@@ -1175,6 +1400,86 @@ func isAACAudio(ffprobePath, filePath string) bool {
 		return false
 	}
 	return strings.Contains(strings.TrimSpace(string(out)), "aac")
+}
+
+// getVideoResolution returns the width and height of the first video stream.
+func getVideoResolution(ffprobePath, filePath string) (int, int) {
+	out, err := exec.Command(
+		ffprobePath,
+		"-v", "quiet",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=width,height",
+		"-of", "csv=p=0",
+		filePath,
+	).Output()
+	if err != nil {
+		return 0, 0
+	}
+	line := strings.TrimSpace(string(out))
+	parts := strings.SplitN(line, ",", 2)
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	w, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+	h, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err1 != nil || err2 != nil || w <= 0 || h <= 0 {
+		return 0, 0
+	}
+	return w, h
+}
+
+// getVideoResolutionWithCache returns the cached video resolution, detecting
+// it with ffprobe on first call.
+func (m *hlsManager) getVideoResolutionWithCache(filePath string) (int, int) {
+	m.resolutionCacheMu.RLock()
+	if entry, ok := m.resolutionCache[filePath]; ok {
+		m.resolutionCacheMu.RUnlock()
+		return entry.width, entry.height
+	}
+	m.resolutionCacheMu.RUnlock()
+
+	w, h := getVideoResolution(m.ffprobePath, filePath)
+
+	m.resolutionCacheMu.Lock()
+	m.resolutionCache[filePath] = &resolutionCacheEntry{width: w, height: h}
+	m.resolutionCacheMu.Unlock()
+
+	return w, h
+}
+
+// qualityVariant describes a single quality level for multi-variant HLS output.
+type qualityVariant struct {
+	Height       int
+	VideoBitrate string // e.g. "1500k"; empty means use CRF (highest quality variant)
+	MaxRate      string // e.g. "2000k"
+	BufSize      string // e.g. "3000k"
+}
+
+// qualityPresets defines the available quality levels. Only presets whose
+// height does not exceed the source are included. Sorted by height ascending.
+var qualityPresets = []qualityVariant{
+	{Height: 480, VideoBitrate: "1500k", MaxRate: "2000k", BufSize: "3000k"},
+	{Height: 720, VideoBitrate: "3000k", MaxRate: "4000k", BufSize: "6000k"},
+	{Height: 1080, VideoBitrate: "6000k", MaxRate: "7500k", BufSize: "12000k"},
+}
+
+// computeVariants returns the quality variants to produce for the given source
+// resolution. Returns nil when only one variant qualifies (single-variant mode).
+func computeVariants(sourceHeight int) []qualityVariant {
+	var variants []qualityVariant
+	for _, preset := range qualityPresets {
+		if sourceHeight >= preset.Height {
+			variants = append(variants, preset)
+		}
+	}
+	if len(variants) <= 1 {
+		return nil
+	}
+	// Highest variant uses CRF at source resolution (no bitrate cap).
+	variants[len(variants)-1].VideoBitrate = ""
+	variants[len(variants)-1].MaxRate = ""
+	variants[len(variants)-1].BufSize = ""
+	return variants
 }
 
 func playlistHasEndList(path string) bool {

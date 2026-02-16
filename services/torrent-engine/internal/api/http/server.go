@@ -1440,6 +1440,9 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 			return
 		}
 
+		// For multi-variant jobs, job.playlist points to master.m3u8;
+		// for single-variant it points to index.m3u8. Both are rewritten
+		// with query params so the client forwards track selection.
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 		w.Header().Set("Pragma", "no-cache")
@@ -1455,6 +1458,36 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 		return
 	}
 
+	// Variant playlist request (e.g. v0/index.m3u8, v1/index.m3u8).
+	if strings.HasSuffix(segmentName, ".m3u8") {
+		variantPath, pathErr := safeSegmentPath(job.dir, segmentName)
+		if pathErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "invalid segment path")
+			return
+		}
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+		playlistBytes, readErr := os.ReadFile(variantPath)
+		if readErr != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "variant playlist unavailable")
+			return
+		}
+		playlistBytes = rewritePlaylistSegmentURLs(playlistBytes, audioTrack, subtitleTrack)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(playlistBytes)
+		return
+	}
+
+	// Extract variant prefix for cache lookups (e.g. "v0" from "v0/seg-00001.ts").
+	variant := ""
+	if job.multiVariant {
+		if idx := strings.IndexByte(segmentName, '/'); idx > 0 && segmentName[0] == 'v' {
+			variant = segmentName[:idx]
+		}
+	}
+
 	segmentPath, err := safeSegmentPath(job.dir, segmentName)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid segment path")
@@ -1466,7 +1499,7 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 		// Segment not in job dir — try the HLS cache.
 		if os.IsNotExist(err) && s.hls != nil && s.hls.cache != nil {
 			if timeSec, ok := segmentTimeOffset(job, segmentName); ok {
-				if cached, found := s.hls.cache.Lookup(string(id), fileIndex, audioTrack, subtitleTrack, timeSec); found {
+				if cached, found := s.hls.cache.Lookup(string(id), fileIndex, audioTrack, subtitleTrack, variant, timeSec); found {
 					w.Header().Set("Content-Type", "video/MP2T")
 					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 					http.ServeFile(w, r, cached.Path)
