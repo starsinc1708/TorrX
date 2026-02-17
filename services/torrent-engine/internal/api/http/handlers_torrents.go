@@ -94,7 +94,7 @@ func (s *Server) handleCreateTorrentMultipart(w http.ResponseWriter, r *http.Req
 	}
 	defer file.Close()
 
-	path, err := saveUploadedFile(file, header.Filename)
+	path, err := saveUploadedFile(file, header.Filename, s.mediaDataDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to store torrent file")
 		return

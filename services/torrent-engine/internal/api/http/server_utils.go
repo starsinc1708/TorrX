@@ -84,7 +84,7 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
-func saveUploadedFile(src io.Reader, filename string) (string, error) {
+func saveUploadedFile(src io.Reader, filename, dataDir string) (string, error) {
 	base := strings.TrimSpace(filename)
 	if base == "" {
 		base = "torrent"
@@ -94,7 +94,15 @@ func saveUploadedFile(src io.Reader, filename string) (string, error) {
 	prefix := strings.TrimSuffix(base, ext)
 	pattern := prefix + "-*" + ext
 
-	out, err := os.CreateTemp(os.TempDir(), pattern)
+	dir := os.TempDir()
+	if dataDir != "" {
+		dir = filepath.Join(dataDir, ".torrents")
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return "", err
+		}
+	}
+
+	out, err := os.CreateTemp(dir, pattern)
 	if err != nil {
 		return "", err
 	}
