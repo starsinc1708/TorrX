@@ -292,8 +292,51 @@ services:
       timeout: 10s
       retries: 3
 
+  mongo-backup:
+    image: mongo:7
+    profiles: [backup]
+    command: ["/scripts/mongo-backup.sh"]
+    volumes:
+      - ./scripts/mongo-backup.sh:/scripts/mongo-backup.sh:ro
+      - mongo_backups:/backups
+    environment:
+      - MONGO_URI=mongodb://mongo:27017
+      - DB_NAME=torrentstream
+    networks:
+      - core
+    depends_on:
+      - mongo
+
+  mongo-backup-scheduled:
+    image: mongo:7
+    profiles: [backup-scheduled]
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "Starting scheduled backup (daily at 3 AM)"
+        while true; do
+          NEXT=$$(date -d "tomorrow 03:00" +%s 2>/dev/null || date -v+1d -v3H -v0M -v0S +%s)
+          NOW=$$(date +%s)
+          SLEEP=$$((NEXT - NOW))
+          echo "Next backup in $${SLEEP}s ($$(date -d @$${NEXT} 2>/dev/null || date -r $${NEXT}))"
+          sleep $${SLEEP}
+          /scripts/mongo-backup.sh
+        done
+    volumes:
+      - ./scripts/mongo-backup.sh:/scripts/mongo-backup.sh:ro
+      - mongo_backups:/backups
+    environment:
+      - MONGO_URI=mongodb://mongo:27017
+      - DB_NAME=torrentstream
+    networks:
+      - core
+    depends_on:
+      - mongo
+    restart: unless-stopped
+
 volumes:
   mongo_data:
+  mongo_backups:
   torrent_data:
   hls_cache:
   anacrolix_cache:
