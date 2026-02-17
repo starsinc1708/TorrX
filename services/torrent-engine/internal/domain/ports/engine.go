@@ -20,4 +20,7 @@ type Engine interface {
 	FocusSession(ctx context.Context, id domain.TorrentID) error
 	UnfocusAll(ctx context.Context) error
 	GetSessionMode(ctx context.Context, id domain.TorrentID) (domain.SessionMode, error)
+	// SetDownloadRateLimit sets a per-torrent download rate limit in bytes/sec.
+	// Pass 0 to remove the limit (unlimited).
+	SetDownloadRateLimit(ctx context.Context, id domain.TorrentID, bytesPerSec int64) error
 }

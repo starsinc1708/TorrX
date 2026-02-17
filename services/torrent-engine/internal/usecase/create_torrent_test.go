@@ -71,6 +71,9 @@ func (f *fakeEngine) UnfocusAll(ctx context.Context) error                      
 func (f *fakeEngine) GetSessionMode(ctx context.Context, id domain.TorrentID) (domain.SessionMode, error) {
 	return domain.ModeDownloading, nil
 }
+func (f *fakeEngine) SetDownloadRateLimit(ctx context.Context, id domain.TorrentID, bytesPerSec int64) error {
+	return nil
+}
 
 type fakeSession struct {
 	id       domain.TorrentID

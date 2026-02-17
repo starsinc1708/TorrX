@@ -384,7 +384,9 @@ func (c *hlsCache) PurgeTorrent(torrentID string) {
 				purgedSize += seg.Size
 				// Remove from eviction heap.
 				if e, ok := c.evictByPath[seg.Path]; ok {
-					heap.Remove(&c.evictHeap, e.heapIdx)
+					if e.heapIdx >= 0 {
+						heap.Remove(&c.evictHeap, e.heapIdx)
+					}
 					delete(c.evictByPath, seg.Path)
 				}
 			}

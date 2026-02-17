@@ -63,6 +63,9 @@ func (f *fakeStateEngine) UnfocusAll(ctx context.Context) error                 
 func (f *fakeStateEngine) GetSessionMode(ctx context.Context, id domain.TorrentID) (domain.SessionMode, error) {
 	return domain.ModeDownloading, nil
 }
+func (f *fakeStateEngine) SetDownloadRateLimit(ctx context.Context, id domain.TorrentID, bytesPerSec int64) error {
+	return nil
+}
 
 func TestGetTorrentState(t *testing.T) {
 	now := time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC)

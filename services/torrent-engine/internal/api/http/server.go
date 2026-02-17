@@ -366,7 +366,7 @@ func NewServer(create CreateTorrentUseCase, opts ...ServerOption) *Server {
 		if s.hlsCfg != nil {
 			cfg = *s.hlsCfg
 		}
-		s.hls = newHLSManager(s.streamTorrent, cfg, s.logger)
+		s.hls = newHLSManager(s.streamTorrent, s.engine, cfg, s.logger)
 	}
 
 	s.wsHub = newWSHub(s.logger)
@@ -425,8 +425,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }
 
-// Close gracefully shuts down the WebSocket hub, disconnecting all clients.
+// Close gracefully shuts down the HLS manager (cancelling all FFmpeg jobs)
+// and the WebSocket hub, disconnecting all clients.
 func (s *Server) Close() {
+	if s.hls != nil {
+		s.hls.shutdown()
+	}
 	if s.wsHub != nil {
 		s.wsHub.Close()
 	}

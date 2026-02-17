@@ -90,8 +90,9 @@ const sourceKeyFromStreamUrl = (streamUrl: string): string => {
     }
     if (kind === 'hls' && torrentsIndex + 3 < parts.length) {
       const fileIndex = parts[torrentsIndex + 3];
-      const seekToken = parsed.searchParams.get('_st');
-      return seekToken ? `${torrentId}:${fileIndex}:st:${seekToken}` : `${torrentId}:${fileIndex}`;
+      // Exclude _st (server-side seek token) from the source key so that
+      // seeks reuse the same HLS.js instance without triggering video.load().
+      return `${torrentId}:${fileIndex}`;
     }
     return `${torrentId}:${kind}`;
   } catch {

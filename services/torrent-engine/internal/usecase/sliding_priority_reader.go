@@ -39,7 +39,7 @@ func newSlidingPriorityReader(
 	file domain.FileRef,
 	readahead int64,
 	window int64,
-) ports.StreamReader {
+) *slidingPriorityReader {
 	backtrack := readahead
 	if backtrack < 0 {
 		backtrack = 0
@@ -178,6 +178,13 @@ func (r *slidingPriorityReader) updatePriorityWindowLocked(force bool) {
 		domain.PriorityHigh,
 	)
 	r.lastOff = off
+}
+
+// EffectiveBytesPerSec returns the EMA-smoothed read throughput.
+func (r *slidingPriorityReader) EffectiveBytesPerSec() float64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.effectiveBytesPerSec
 }
 
 var _ ports.StreamReader = (*slidingPriorityReader)(nil)

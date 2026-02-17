@@ -246,7 +246,7 @@ func (s *Server) handleTorrentByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if path == "state" {
-		if r.Method != http.MethodGet {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
@@ -321,13 +321,13 @@ func (s *Server) handleTorrentByID(w http.ResponseWriter, r *http.Request) {
 			}
 			s.handleStopTorrent(w, r, id)
 		case "stream":
-			if r.Method != http.MethodGet {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
 			s.handleStreamTorrent(w, r, id)
 		case "state":
-			if r.Method != http.MethodGet {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
@@ -339,7 +339,7 @@ func (s *Server) handleTorrentByID(w http.ResponseWriter, r *http.Request) {
 			}
 			s.handleHLS(w, r, id, parts[2:])
 		case "media":
-			if r.Method != http.MethodGet {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}

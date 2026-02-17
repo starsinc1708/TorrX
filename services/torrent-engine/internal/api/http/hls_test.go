@@ -39,9 +39,9 @@ func (f *failingStreamUseCase) Execute(ctx context.Context, _ domain.TorrentID, 
 func TestSeekJobUsesUniqueDirectoryAndCancelsPreviousJob(t *testing.T) {
 	stream := &blockingStreamUseCase{started: make(chan struct{})}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	manager := newHLSManager(stream, HLSConfig{BaseDir: t.TempDir()}, logger)
+	manager := newHLSManager(stream, nil, HLSConfig{BaseDir: t.TempDir()}, logger)
 
-	first, err := manager.seekJob("t1", 0, 0, -1, 120)
+	first, _, err := manager.seekJob("t1", 0, 0, -1, 120)
 	if err != nil {
 		t.Fatalf("first seekJob returned error: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestSeekJobUsesUniqueDirectoryAndCancelsPreviousJob(t *testing.T) {
 		t.Fatalf("first job did not start")
 	}
 
-	second, err := manager.seekJob("t1", 0, 0, -1, 240)
+	second, _, err := manager.seekJob("t1", 0, 0, -1, 240)
 	if err != nil {
 		t.Fatalf("second seekJob returned error: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestSeekJobUsesUniqueDirectoryAndCancelsPreviousJob(t *testing.T) {
 func TestSeekJobDirectoryIsNotNestedUnderRegularJobDirectory(t *testing.T) {
 	stream := &blockingStreamUseCase{started: make(chan struct{})}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	manager := newHLSManager(stream, HLSConfig{BaseDir: t.TempDir()}, logger)
+	manager := newHLSManager(stream, nil, HLSConfig{BaseDir: t.TempDir()}, logger)
 
 	regular, err := manager.ensureJob("t1", 0, 0, -1)
 	if err != nil {
@@ -89,7 +89,7 @@ func TestSeekJobDirectoryIsNotNestedUnderRegularJobDirectory(t *testing.T) {
 		t.Fatalf("regular job did not start")
 	}
 
-	seek, err := manager.seekJob("t1", 0, 0, -1, 150)
+	seek, _, err := manager.seekJob("t1", 0, 0, -1, 150)
 	if err != nil {
 		t.Fatalf("seekJob returned error: %v", err)
 	}
@@ -109,9 +109,9 @@ func TestSeekJobDirectoryIsNotNestedUnderRegularJobDirectory(t *testing.T) {
 func TestHLSHealthSnapshotTracksSeekFailures(t *testing.T) {
 	stream := &failingStreamUseCase{err: context.DeadlineExceeded}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	manager := newHLSManager(stream, HLSConfig{BaseDir: t.TempDir()}, logger)
+	manager := newHLSManager(stream, nil, HLSConfig{BaseDir: t.TempDir()}, logger)
 
-	job, err := manager.seekJob("t1", 0, 0, -1, 180)
+	job, _, err := manager.seekJob("t1", 0, 0, -1, 180)
 	if err != nil {
 		t.Fatalf("seekJob returned error: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestHLSHealthSnapshotTracksSeekFailures(t *testing.T) {
 func TestHLSAutoRestartUpdatesTelemetry(t *testing.T) {
 	stream := &failingStreamUseCase{err: context.DeadlineExceeded}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	manager := newHLSManager(stream, HLSConfig{BaseDir: t.TempDir()}, logger)
+	manager := newHLSManager(stream, nil, HLSConfig{BaseDir: t.TempDir()}, logger)
 
 	key := hlsKey{id: "t1", fileIndex: 0, audioTrack: 0, subtitleTrack: -1}
 	dir := t.TempDir()

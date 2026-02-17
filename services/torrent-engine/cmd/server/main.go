@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -133,16 +134,9 @@ func main() {
 	}
 
 	// Restore previously active torrents from DB (in background so HTTP server starts immediately).
+	// The focused torrent is opened and focused first so playback resumes with minimum delay.
 	go func() {
-		restoreTorrents(rootCtx, engine, repo, logger)
-		if currentTorrentID != "" {
-			if err := engine.FocusSession(rootCtx, currentTorrentID); err != nil {
-				logger.Warn("restore focused torrent failed",
-					slog.String("torrentId", string(currentTorrentID)),
-					slog.String("error", err.Error()),
-				)
-			}
-		}
+		restoreTorrents(rootCtx, engine, repo, logger, currentTorrentID)
 	}()
 
 	// Start background state sync.
@@ -313,7 +307,7 @@ func updateEngineMetrics(ctx context.Context, engine *anacrolix.Engine, cacheSiz
 	}
 }
 
-func restoreTorrents(ctx context.Context, engine *anacrolix.Engine, repo *mongorepo.Repository, logger *slog.Logger) {
+func restoreTorrents(ctx context.Context, engine *anacrolix.Engine, repo *mongorepo.Repository, logger *slog.Logger, priorityID domain.TorrentID) {
 	active := domain.TorrentActive
 	pending := domain.TorrentPending
 
@@ -333,27 +327,53 @@ func restoreTorrents(ctx context.Context, engine *anacrolix.Engine, repo *mongor
 
 	logger.Info("restoring torrents", slog.Int("count", len(records)))
 
-	for _, rec := range records {
+	restoreOne := func(rec domain.TorrentRecord) {
 		src := rec.Source
 		if strings.TrimSpace(src.Magnet) == "" && strings.TrimSpace(src.Torrent) == "" {
 			logger.Warn("restore: no source", slog.String("id", string(rec.ID)))
-			continue
+			return
 		}
-
 		session, err := engine.Open(ctx, src)
 		if err != nil {
 			logger.Warn("restore: open failed", slog.String("id", string(rec.ID)), slog.String("error", err.Error()))
-			continue
+			return
 		}
-
 		if rec.Status == domain.TorrentActive {
 			if err := session.Start(); err != nil {
 				logger.Warn("restore: start failed", slog.String("id", string(rec.ID)), slog.String("error", err.Error()))
 			}
 		}
-
 		logger.Info("restored torrent", slog.String("id", string(rec.ID)), slog.String("name", rec.Name))
 	}
+
+	// Open and focus the priority torrent first so playback resumes immediately.
+	for _, rec := range records {
+		if rec.ID != priorityID {
+			continue
+		}
+		restoreOne(rec)
+		if err := engine.FocusSession(ctx, priorityID); err != nil {
+			logger.Warn("restore focused torrent failed",
+				slog.String("torrentId", string(priorityID)),
+				slog.String("error", err.Error()),
+			)
+		}
+		break
+	}
+
+	// Restore remaining torrents in parallel.
+	var wg sync.WaitGroup
+	for _, rec := range records {
+		if rec.ID == priorityID {
+			continue
+		}
+		wg.Add(1)
+		go func(r domain.TorrentRecord) {
+			defer wg.Done()
+			restoreOne(r)
+		}(rec)
+	}
+	wg.Wait()
 }
 
 func newLogger(levelRaw, formatRaw string) *slog.Logger {

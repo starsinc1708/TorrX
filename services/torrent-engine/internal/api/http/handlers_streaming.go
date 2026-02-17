@@ -47,6 +47,9 @@ func (s *Server) handleStreamTorrent(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	defer result.Reader.Close()
+	// HTTP streaming benefits from responsive mode: return partial data
+	// immediately rather than blocking until full pieces are downloaded.
+	result.Reader.SetResponsive()
 
 	ext := strings.ToLower(path.Ext(result.File.Path))
 	contentType := mime.TypeByExtension(ext)
@@ -57,6 +60,16 @@ func (s *Server) handleStreamTorrent(w http.ResponseWriter, r *http.Request, id 
 	w.Header().Set("Accept-Ranges", "bytes")
 
 	size := result.File.Length
+
+	// HEAD request: return headers only, no body.
+	if r.Method == http.MethodHead {
+		if size >= 0 {
+			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
 		start, end, err := parseByteRange(rangeHeader, size)
@@ -166,17 +179,27 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 	if segmentName == "index.m3u8" {
 		select {
 		case <-job.ready:
-		case <-time.After(30 * time.Second):
+		case <-time.After(90 * time.Second):
 			writeError(w, http.StatusServiceUnavailable, "stream_unavailable", "hls playlist not ready")
 			return
 		}
 
 		if job.err != nil {
-			if restarted, ok := s.hls.tryAutoRestart(key, job, "request_error"); ok && restarted != nil {
+			// The job may have been replaced by a seek — re-fetch the
+			// current job before attempting an auto-restart.
+			if current, _ := s.hls.ensureJob(domain.TorrentID(id), fileIndex, audioTrack, subtitleTrack); current != nil && current != job {
+				job = current
+				select {
+				case <-job.ready:
+				case <-time.After(90 * time.Second):
+					writeError(w, http.StatusServiceUnavailable, "stream_unavailable", "hls playlist not ready after seek")
+					return
+				}
+			} else if restarted, ok := s.hls.tryAutoRestart(key, job, "request_error"); ok && restarted != nil {
 				job = restarted
 				select {
 				case <-job.ready:
-				case <-time.After(30 * time.Second):
+				case <-time.After(90 * time.Second):
 					writeError(w, http.StatusServiceUnavailable, "stream_unavailable", "hls playlist not ready after auto-restart")
 					return
 				}
@@ -206,14 +229,16 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 			}
 			select {
 			case <-job.ready:
-			case <-time.After(30 * time.Second):
+			case <-time.After(90 * time.Second):
 				writeError(w, http.StatusServiceUnavailable, "stream_unavailable", "hls playlist not ready (subtitle fallback)")
 				return
 			}
 		}
 
 		if job.err != nil {
-			writeError(w, http.StatusInternalServerError, "internal_error", job.err.Error())
+			// Return 503 for transient errors (context cancelled by seek, etc.)
+			// so the player retries instead of treating it as a permanent failure.
+			writeError(w, http.StatusServiceUnavailable, "stream_unavailable", "hls stream error: "+job.err.Error())
 			return
 		}
 
@@ -328,7 +353,11 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 					return
 				}
 			}
-			http.NotFound(w, r)
+			// Segment not yet produced by FFmpeg and not in cache.
+			// Return 503 (not 404) so HLS.js treats this as a retryable
+			// transient error rather than a permanent "not found".
+			w.Header().Set("Retry-After", "1")
+			writeError(w, http.StatusServiceUnavailable, "stream_unavailable", "segment not yet available")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "internal_error", "segment unavailable")
@@ -350,6 +379,11 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 	}
 }
 
+type seekResponse struct {
+	SeekTime float64 `json:"seekTime"`
+	SeekMode string  `json:"seekMode"`
+}
+
 func (s *Server) handleHLSSeek(w http.ResponseWriter, r *http.Request, id domain.TorrentID, fileIndex, audioTrack, subtitleTrack int) {
 	timeStr := r.URL.Query().Get("time")
 	if timeStr == "" {
@@ -362,9 +396,18 @@ func (s *Server) handleHLSSeek(w http.ResponseWriter, r *http.Request, id domain
 		return
 	}
 
-	job, err := s.hls.seekJob(id, fileIndex, audioTrack, subtitleTrack, seekTime)
+	job, seekMode, err := s.hls.seekJob(id, fileIndex, audioTrack, subtitleTrack, seekTime)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to start hls seek")
+		return
+	}
+
+	// Soft seek: no FFmpeg restart needed, return immediately.
+	if seekMode == SeekModeSoft {
+		writeJSON(w, http.StatusOK, seekResponse{
+			SeekTime: seekTime,
+			SeekMode: seekMode.String(),
+		})
 		return
 	}
 
@@ -379,7 +422,10 @@ func (s *Server) handleHLSSeek(w http.ResponseWriter, r *http.Request, id domain
 	case <-job.ready:
 	case <-time.After(5 * time.Second):
 		// Job still starting — return success; client will poll manifest.
-		writeJSON(w, http.StatusOK, map[string]float64{"seekTime": seekTime})
+		writeJSON(w, http.StatusOK, seekResponse{
+			SeekTime: seekTime,
+			SeekMode: seekMode.String(),
+		})
 		return
 	}
 
@@ -392,7 +438,7 @@ func (s *Server) handleHLSSeek(w http.ResponseWriter, r *http.Request, id domain
 			slog.Int("requestedSubtitleTrack", subtitleTrack),
 			slog.Float64("seekTime", seekTime),
 		)
-		job, err = s.hls.seekJob(id, fileIndex, audioTrack, -1, seekTime)
+		job, seekMode, err = s.hls.seekJob(id, fileIndex, audioTrack, -1, seekTime)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal_error", "failed to start hls seek without subtitles")
 			return
@@ -400,7 +446,10 @@ func (s *Server) handleHLSSeek(w http.ResponseWriter, r *http.Request, id domain
 		select {
 		case <-job.ready:
 		case <-time.After(5 * time.Second):
-			writeJSON(w, http.StatusOK, map[string]float64{"seekTime": seekTime})
+			writeJSON(w, http.StatusOK, seekResponse{
+				SeekTime: seekTime,
+				SeekMode: seekMode.String(),
+			})
 			return
 		}
 	}
@@ -410,7 +459,10 @@ func (s *Server) handleHLSSeek(w http.ResponseWriter, r *http.Request, id domain
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]float64{"seekTime": seekTime})
+	writeJSON(w, http.StatusOK, seekResponse{
+		SeekTime: seekTime,
+		SeekMode: seekMode.String(),
+	})
 }
 
 func (s *Server) handleMediaInfo(w http.ResponseWriter, r *http.Request, id string, tail []string) {
@@ -628,6 +680,11 @@ func rewritePlaylistSegmentURLs(playlist []byte, audioTrack, subtitleTrack int) 
 	return []byte(strings.Join(lines, "\n"))
 }
 
+// playlistCacheTTL is the duration for which a cached rewritten playlist is
+// served without re-checking the source file mtime. This eliminates os.Stat
+// calls in the hot path when HLS.js polls the manifest rapidly.
+const playlistCacheTTL = 500 * time.Millisecond
+
 // cachedRewrittenPlaylist returns the cached rewritten playlist if the
 // source file hasn't changed and track parameters match. Returns nil on miss.
 func cachedRewrittenPlaylist(job *hlsJob, playlistPath string, audioTrack, subtitleTrack int) []byte {
@@ -640,7 +697,11 @@ func cachedRewrittenPlaylist(job *hlsJob, playlistPath string, audioTrack, subti
 		job.rewrittenSubTrack != subtitleTrack {
 		return nil
 	}
-	// Check if the underlying playlist file changed since we cached it.
+	// Within TTL, serve from cache without any disk I/O.
+	if time.Since(job.rewrittenCacheTime) < playlistCacheTTL {
+		return job.rewrittenPlaylist
+	}
+	// TTL expired — verify the underlying playlist file hasn't changed.
 	info, err := os.Stat(playlistPath)
 	if err != nil || info.ModTime().After(job.rewrittenPlaylistMod) {
 		return nil
@@ -661,5 +722,6 @@ func storeRewrittenPlaylist(job *hlsJob, playlistPath string, audioTrack, subtit
 	job.rewrittenPlaylistMod = mod
 	job.rewrittenAudioTrack = audioTrack
 	job.rewrittenSubTrack = subtitleTrack
+	job.rewrittenCacheTime = time.Now()
 	job.rewrittenMu.Unlock()
 }

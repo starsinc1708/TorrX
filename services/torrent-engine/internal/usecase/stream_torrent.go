@@ -37,8 +37,10 @@ func streamPriorityWindow(readahead, fileLength int64) int64 {
 }
 
 type StreamResult struct {
-	Reader ports.StreamReader
-	File   domain.FileRef
+	Reader          ports.StreamReader
+	File            domain.FileRef
+	Generation      uint64         // HLS generation counter; used for stale reader detection
+	ConsumptionRate func() float64 // returns EMA consumer read rate in bytes/sec; nil if unavailable
 }
 
 type StreamTorrent struct {
@@ -107,13 +109,16 @@ func (uc StreamTorrent) Execute(ctx context.Context, id domain.TorrentID, fileIn
 		return StreamResult{}, errors.New("stream reader not available")
 	}
 
-	reader = newSlidingPriorityReader(reader, session, file, readahead, priorityWindow)
-	reader.SetContext(ctx)
-	reader.SetResponsive()
+	spr := newSlidingPriorityReader(reader, session, file, readahead, priorityWindow)
+	spr.SetContext(ctx)
 
 	// Use the full priority window as readahead so the torrent client
 	// requests pieces well ahead of the current playback position.
-	reader.SetReadahead(priorityWindow)
+	spr.SetReadahead(priorityWindow)
 
-	return StreamResult{Reader: reader, File: file}, nil
+	return StreamResult{
+		Reader:          spr,
+		File:            file,
+		ConsumptionRate: spr.EffectiveBytesPerSec,
+	}, nil
 }

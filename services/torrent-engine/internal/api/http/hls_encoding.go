@@ -25,6 +25,17 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 		slog.Int("subtitleTrack", key.subtitleTrack),
 	)
 
+	// Log state transitions for observability.
+	job.ctrl.OnTransition(func(from, to PlaybackState) {
+		m.logger.Info("hls state transition",
+			slog.String("torrentId", string(key.id)),
+			slog.Int("fileIndex", key.fileIndex),
+			slog.String("from", from.String()),
+			slog.String("to", to.String()),
+			slog.Uint64("generation", job.ctrl.Generation()),
+		)
+	})
+
 	// Use job context so cancellation is available before goroutine starts.
 	ctx := job.ctx
 	if ctx == nil {
@@ -38,6 +49,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	result, err := m.stream.Execute(ctx, key.id, key.fileIndex)
 	if err != nil {
 		job.err = err
+		_ = job.ctrl.TransitionWithError(err)
 		m.recordJobFailure(job, err)
 		job.signalReady()
 		m.cleanupJob(key, job)
@@ -45,59 +57,32 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	}
 	if result.Reader == nil {
 		job.err = errors.New("stream reader not available")
+		_ = job.ctrl.TransitionWithError(job.err)
 		m.recordJobFailure(job, job.err)
 		job.signalReady()
 		m.cleanupJob(key, job)
 		return
 	}
-	// Reader is closed explicitly on each exit path to avoid double-close panics.
 
-	input := "pipe:0"
-	useReader := true
-	subtitleSourcePath := ""
-	partialDirectRead := false // true when using direct file read for a partial download
-	if m.dataDir != "" {
-		candidatePath, pathErr := resolveDataFilePath(m.dataDir, result.File.Path)
-		if pathErr == nil {
-			if info, statErr := os.Stat(candidatePath); statErr == nil && !info.IsDir() {
-				subtitleSourcePath = candidatePath
-				if result.File.Length <= 0 || info.Size() >= result.File.Length {
-					// Fully downloaded — direct file read.
-					input = candidatePath
-					useReader = false
-				} else if info.Size() >= 10*1024*1024 && job.seekSeconds == 0 {
-					// Partial download but header region (≥10 MB) is available and
-					// playing from the start: FFmpeg can read directly from the
-					// partial file. The torrent engine continues downloading pieces
-					// ahead of FFmpeg's read position via the sliding priority reader.
-					// This enables stream copy for H.264 content, avoiding re-encoding.
-					input = candidatePath
-					useReader = false
-					partialDirectRead = true
-					m.logger.Info("hls using partial direct read",
-						slog.String("path", candidatePath),
-						slog.Int64("available", info.Size()),
-						slog.Int64("total", result.File.Length),
-					)
-				}
-			}
-		}
-	}
+	// Store generation reference for stale reader detection.
+	job.genRef.Store(job.ctrl.Generation())
+	// Store consumption rate callback for adaptive download rate control.
+	job.consumptionRate = result.ConsumptionRate
+	// HLS uses responsive mode: the torrent reader returns EOF immediately
+	// when piece data isn't available instead of blocking indefinitely.
+	// The bufferedStreamReader retries transient EOFs with exponential
+	// backoff, so FFmpeg gets data as soon as pieces are downloaded.
+	result.Reader.SetResponsive()
 
-	// When seeking and file is not on disk, use the internal HTTP stream
-	// endpoint so FFmpeg can use HTTP range requests for efficient seeking.
-	if job.seekSeconds > 0 && useReader && m.listenAddr != "" {
-		host := m.listenAddr
-		if strings.HasPrefix(host, ":") {
-			host = "127.0.0.1" + host
-		}
-		input = fmt.Sprintf("http://%s/torrents/%s/stream?fileIndex=%d", host, string(key.id), key.fileIndex)
-		useReader = false
-	}
+	// Build the data source abstraction (replaces inline if/else logic).
+	dataSource, subtitleSourcePath := m.newDataSource(result, job, key)
+	defer dataSource.Close()
+	input, pipeReader := dataSource.InputSpec()
+	useReader := pipeReader != nil
 
 	if key.subtitleTrack >= 0 && subtitleSourcePath == "" {
-		_ = result.Reader.Close()
 		job.err = errSubtitleSourceUnavailable
+		_ = job.ctrl.TransitionWithError(job.err)
 		m.recordJobFailure(job, job.err)
 		job.signalReady()
 		m.cleanupJob(key, job)
@@ -131,13 +116,13 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 
 	args = append(args, "-i", input)
 
-	// Snapshot encoding settings under lock so the job uses a consistent set.
-	m.mu.Lock()
+	// Snapshot encoding settings under shared lock so the job uses a consistent set.
+	m.mu.RLock()
 	encPreset := m.preset
 	encCRF := m.crf
 	encAudioBitrate := m.audioBitrate
 	segDur := m.segmentDuration
-	m.mu.Unlock()
+	m.mu.RUnlock()
 	if segDur <= 0 {
 		segDur = 4
 	}
@@ -215,8 +200,15 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 					fmt.Sprintf("-bufsize:v:%d", i), v.BufSize,
 				)
 			} else {
-				// Highest variant: CRF for best quality at source resolution.
+				// Highest variant: CRF for best quality, with maxrate cap to prevent
+				// runaway output on high-bitrate HEVC sources.
 				args = append(args, fmt.Sprintf("-crf:v:%d", i), strconv.Itoa(encCRF))
+				if v.MaxRate != "" {
+					args = append(args,
+						fmt.Sprintf("-maxrate:v:%d", i), v.MaxRate,
+						fmt.Sprintf("-bufsize:v:%d", i), v.BufSize,
+					)
+				}
 			}
 		}
 
@@ -289,33 +281,18 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	cmd := exec.CommandContext(ctx, m.ffmpegPath, args...)
 	cmd.Dir = job.dir
 	var stderr bytes.Buffer
-	if useReader {
-		// Wrap the torrent reader in a buffered reader to absorb download
-		// stalls and prevent FFmpeg watchdog kills from piece latency spikes.
-		buffered := newBufferedStreamReader(result.Reader, defaultStreamBufSize, m.logger)
-		cmd.Stdin = buffered
-		defer buffered.Close()
-	} else if !partialDirectRead {
-		// For fully downloaded files, close the reader immediately.
-		// For partial direct reads, keep the reader open so the torrent
-		// engine continues downloading pieces ahead of FFmpeg's position.
-		_ = result.Reader.Close()
+	if pipeReader != nil {
+		cmd.Stdin = pipeReader
 	}
 	cmd.Stdout = io.Discard
 	cmd.Stderr = &stderr
-
-	// For partial direct reads, keep the reader open so the torrent engine
-	// continues downloading while FFmpeg reads from the file. Close it when
-	// the run() function returns (FFmpeg finished or failed).
-	if partialDirectRead {
-		defer result.Reader.Close()
-	}
 
 	ffmpegStart := time.Now()
 	if err := cmd.Start(); err != nil {
 		// buffered reader (if any) is closed by defer above
 		m.logger.Error("hls ffmpeg start failed", slog.String("error", err.Error()))
 		job.err = err
+		_ = job.ctrl.TransitionWithError(err)
 		m.recordJobFailure(job, err)
 		job.signalReady()
 		m.cleanupJob(key, job)
@@ -335,7 +312,13 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 		defer ticker.Stop()
 		for {
 			if _, err := os.Stat(job.playlist); err == nil {
-				m.logger.Info("hls playlist ready", slog.String("dir", job.dir))
+				m.logger.Info("hls playlist ready",
+					slog.String("dir", job.dir),
+					slog.String("state", job.ctrl.State().String()),
+				)
+				// Transition: Starting → Buffering → Playing
+				_ = job.ctrl.Transition(StateBuffering)
+				_ = job.ctrl.Transition(StatePlaying)
 				m.touchJobActivity(key, job)
 				m.recordPlaylistReady(job)
 				job.signalReady()
@@ -352,6 +335,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 					} else {
 						job.err = fmt.Errorf("ffmpeg timed out after %s waiting for first segment", startupTimeout)
 					}
+					_ = job.ctrl.TransitionWithError(job.err)
 					m.logger.Error("hls ffmpeg startup timeout",
 						slog.String("dir", job.dir),
 						slog.String("stderr", stderrMsg),
@@ -368,15 +352,16 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 		}
 	}()
 
+	waitErr := cmd.Wait()
 	metrics.HLSEncodeDuration.Observe(time.Since(ffmpegStart).Seconds())
 
-	if err := cmd.Wait(); err != nil && job.err == nil {
+	if waitErr != nil && job.err == nil {
 		stderrMsg := strings.TrimSpace(stderr.String())
 		// Expected path for seek/track switch cancellation.
 		if ctx.Err() != nil {
 			m.logger.Info("hls ffmpeg exited after context cancellation",
 				slog.String("dir", job.dir),
-				slog.String("error", err.Error()),
+				slog.String("error", waitErr.Error()),
 			)
 			job.signalReady()
 			return
@@ -387,7 +372,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 			if !playlistHasEndList(job.playlist) {
 				m.logger.Warn("hls ffmpeg exited before playlist completion",
 					slog.String("dir", job.dir),
-					slog.String("error", err.Error()),
+					slog.String("error", waitErr.Error()),
 					slog.String("stderr", stderrMsg),
 				)
 				if _, restarted := m.tryAutoRestart(key, job, "ffmpeg_exit"); restarted {
@@ -398,6 +383,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 				} else {
 					job.err = errors.New("ffmpeg exited before playlist completion")
 				}
+				_ = job.ctrl.TransitionWithError(job.err)
 				m.recordJobFailure(job, job.err)
 				job.signalReady()
 				m.cleanupJob(key, job)
@@ -409,13 +395,14 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 			job.signalReady()
 		} else {
 			if stderrMsg != "" {
-				job.err = fmt.Errorf("ffmpeg: %w: %s", err, stderrMsg)
+				job.err = fmt.Errorf("ffmpeg: %w: %s", waitErr, stderrMsg)
 			} else {
-				job.err = fmt.Errorf("ffmpeg: %w", err)
+				job.err = fmt.Errorf("ffmpeg: %w", waitErr)
 			}
+			_ = job.ctrl.TransitionWithError(job.err)
 			m.logger.Error("hls ffmpeg exited with error",
 				slog.String("dir", job.dir),
-				slog.String("error", err.Error()),
+				slog.String("error", waitErr.Error()),
 				slog.String("stderr", stderrMsg),
 			)
 			m.recordJobFailure(job, job.err)
@@ -431,6 +418,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 
 	if !waitForFile(job.playlist, 1*time.Millisecond) && job.err == nil {
 		job.err = errors.New("hls playlist not produced")
+		_ = job.ctrl.TransitionWithError(job.err)
 		m.recordJobFailure(job, job.err)
 		job.signalReady()
 		m.cleanupJob(key, job)
@@ -612,6 +600,46 @@ func isAACAudio(ffprobePath, filePath string) bool {
 	return strings.Contains(strings.TrimSpace(string(out)), "aac")
 }
 
+// getVideoDuration returns the duration in seconds of the media file.
+func getVideoDuration(ffprobePath, filePath string) float64 {
+	out, err := exec.Command(
+		ffprobePath,
+		"-v", "quiet",
+		"-show_entries", "format=duration",
+		"-of", "csv=p=0",
+		filePath,
+	).Output()
+	if err != nil {
+		return 0
+	}
+	line := strings.TrimSpace(string(out))
+	dur, err := strconv.ParseFloat(line, 64)
+	if err != nil || dur <= 0 {
+		return 0
+	}
+	return dur
+}
+
+// getVideoResolutionWithDuration returns width, height and duration, caching all values.
+func (m *hlsManager) getVideoResolutionWithDuration(filePath string) (int, int, float64) {
+	m.resolutionCacheMu.RLock()
+	if entry, ok := m.resolutionCache[filePath]; ok {
+		m.resolutionCacheMu.RUnlock()
+		return entry.width, entry.height, entry.duration
+	}
+	m.resolutionCacheMu.RUnlock()
+
+	w, h := getVideoResolution(m.ffprobePath, filePath)
+	dur := getVideoDuration(m.ffprobePath, filePath)
+
+	m.resolutionCacheMu.Lock()
+	m.resolutionCache[filePath] = &resolutionCacheEntry{width: w, height: h, duration: dur}
+	m.resolutionCacheMu.Unlock()
+
+	m.scheduleCodecCacheSave()
+	return w, h, dur
+}
+
 // getVideoResolution returns the width and height of the first video stream.
 func getVideoResolution(ffprobePath, filePath string) (int, int) {
 	out, err := exec.Command(
@@ -686,10 +714,9 @@ func computeVariants(sourceHeight int) []qualityVariant {
 	if len(variants) <= 1 {
 		return nil
 	}
-	// Highest variant uses CRF at source resolution (no bitrate cap).
+	// Highest variant uses CRF as quality target. MaxRate/BufSize are kept as
+	// a ceiling to prevent runaway output size on high-bitrate HEVC sources.
 	variants[len(variants)-1].VideoBitrate = ""
-	variants[len(variants)-1].MaxRate = ""
-	variants[len(variants)-1].BufSize = ""
 	return variants
 }
 

@@ -109,6 +109,9 @@ func (f *fakeStreamEngine) GetSessionMode(ctx context.Context, id domain.Torrent
 	return domain.ModeDownloading, nil
 }
 
+func (f *fakeStreamEngine) SetDownloadRateLimit(ctx context.Context, id domain.TorrentID, bytesPerSec int64) error {
+	return nil
+}
 func (f *fakeStreamEngine) GetSession(ctx context.Context, id domain.TorrentID) (ports.Session, error) {
 	if f.err != nil {
 		return nil, f.err
@@ -141,8 +144,8 @@ func TestStreamTorrentSuccess(t *testing.T) {
 	if reader.readahead != expectedWindow {
 		t.Fatalf("readahead not set to priority window: got %d, want %d", reader.readahead, expectedWindow)
 	}
-	if !reader.responsive {
-		t.Fatalf("responsive not set")
+	if reader.responsive {
+		t.Fatalf("responsive should not be set by use case (callers opt in when needed)")
 	}
 	if session.lastPrio != domain.PriorityHigh {
 		t.Fatalf("priority not set to high")
