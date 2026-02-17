@@ -2,23 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Hls from 'hls.js';
 import {
   Activity,
-  ChevronLeft,
-  ChevronRight,
   MonitorPlay,
   AlertTriangle,
-  Play,
-  Pause,
-  Volume2,
-  VolumeX,
-  SkipForward,
-  SkipBack,
-  Camera,
-  Maximize2,
-  Minimize2,
-  Info,
-  Settings2,
-  Check,
-  Loader2,
 } from 'lucide-react';
 import type { FileRef, MediaTrack, PlayerHealth, SessionState } from '../types';
 import type { PrebufferPhase } from '../hooks/useVideoPlayer';
@@ -27,15 +12,6 @@ import { saveWatchPosition } from '../api';
 import { upsertTorrentWatchState } from '../watchState';
 import { cn } from '../lib/cn';
 import { Button } from './ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from './ui/dropdown-menu';
 import { VideoTimeline, type TimelinePreviewState } from './VideoTimeline';
 import { VideoOverlays } from './VideoOverlays';
 import { VideoControls } from './VideoControls';
@@ -152,7 +128,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   mediaDuration,
   seekOffset,
   onHlsSeek,
-  sessionState,
+  sessionState: _sessionState,
   onSelectFile,
   onSelectAudioTrack,
   onSelectSubtitleTrack,
@@ -168,7 +144,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onResumeHandled,
   prebufferPhase = 'idle',
   activeMode = 'direct',
-  onFallbackToHls,
+  onFallbackToHls: _onFallbackToHls,
   trackSwitchInProgress = false,
   hlsDestroyRef,
 }) => {
@@ -235,7 +211,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const autoInitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoInitRetryCountRef = useRef<Map<string, number>>(new Map());
   const trackFallbackAppliedRef = useRef<Set<string>>(new Set());
-  const stableDurationRef = useRef(0);
+  const [stableDuration, setStableDuration] = useState(0);
   const lastSaveTimeRef = useRef(0);
   const loadTokenRef = useRef(0);
   const handledResumeRequestRef = useRef<number | null>(null);
@@ -1800,7 +1776,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Cache mediaDuration so the display doesn't fluctuate while HLS is still generating.
   useEffect(() => {
-    if (mediaDuration > 0) stableDurationRef.current = mediaDuration;
+    if (mediaDuration > 0) setStableDuration(mediaDuration);
   }, [mediaDuration]);
 
   // When HLS seek is active, adjust displayed time and duration.
@@ -1810,8 +1786,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const displayDuration =
     mediaDuration > 0
       ? mediaDuration
-      : stableDurationRef.current > 0
-        ? stableDurationRef.current
+      : stableDuration > 0
+        ? stableDuration
         : useHls && seekOffset > 0
           ? Math.max(seekOffset + duration, seekOffset + 1)
           : duration;
