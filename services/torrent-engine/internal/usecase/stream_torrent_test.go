@@ -204,7 +204,13 @@ func TestStreamTorrentSlidingPriorityOnSeek(t *testing.T) {
 	if last.Off <= 0 {
 		t.Fatalf("expected sliding priority offset > 0, got %d", last.Off)
 	}
-	if last.Length != streamPriorityWindow(uc.ReadaheadBytes, 1024) {
-		t.Fatalf("unexpected priority window length: %d", last.Length)
+	// After seek, the adaptive reader temporarily doubles the window (seek boost).
+	baseWindow := streamPriorityWindow(uc.ReadaheadBytes, 1024)
+	boostedWindow := baseWindow * 2
+	if boostedWindow > maxPriorityWindowBytes {
+		boostedWindow = maxPriorityWindowBytes
+	}
+	if last.Length != boostedWindow {
+		t.Fatalf("unexpected priority window length after seek: got %d, want %d (boosted)", last.Length, boostedWindow)
 	}
 }

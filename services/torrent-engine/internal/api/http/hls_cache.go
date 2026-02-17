@@ -1,6 +1,7 @@
 package apihttp
 
 import (
+	"container/heap"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,6 +15,42 @@ import (
 
 	"torrentstream/internal/metrics"
 )
+
+// ---- eviction min-heap (ordered by mtime, oldest first) --------------------
+
+type evictionEntry struct {
+	path      string
+	mtime     time.Time
+	size      int64
+	heapIdx   int // maintained by heap.Interface for Fix/Remove
+	torrentID string
+	fileIndex int
+	trackKey  string
+}
+
+type evictionMinHeap []*evictionEntry
+
+func (h evictionMinHeap) Len() int            { return len(h) }
+func (h evictionMinHeap) Less(i, j int) bool   { return h[i].mtime.Before(h[j].mtime) }
+func (h evictionMinHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+	h[i].heapIdx = i
+	h[j].heapIdx = j
+}
+func (h *evictionMinHeap) Push(x any) {
+	e := x.(*evictionEntry)
+	e.heapIdx = len(*h)
+	*h = append(*h, e)
+}
+func (h *evictionMinHeap) Pop() any {
+	old := *h
+	n := len(old)
+	e := old[n-1]
+	old[n-1] = nil
+	e.heapIdx = -1
+	*h = old[:n-1]
+	return e
+}
 
 const (
 	defaultCacheMaxBytes int64         = 10 << 30 // 10 GB
@@ -34,13 +71,15 @@ type cachedSegment struct {
 //
 //	{baseDir}/{torrentID}/{fileIndex}/a{audio}-s{sub}/t{start}-{end}.ts
 type hlsCache struct {
-	baseDir   string
-	maxBytes  int64
-	maxAge    time.Duration
-	mu        sync.RWMutex
-	index     map[string]map[int]map[string][]cachedSegment // torrentID → fileIndex → trackKey → sorted segments
-	totalSize int64
-	logger    *slog.Logger
+	baseDir      string
+	maxBytes     int64
+	maxAge       time.Duration
+	mu           sync.RWMutex
+	index        map[string]map[int]map[string][]cachedSegment // torrentID → fileIndex → trackKey → sorted segments
+	totalSize    int64
+	evictHeap    evictionMinHeap              // min-heap by mtime for O(log n) eviction
+	evictByPath  map[string]*evictionEntry    // path → heap entry for O(1) lookups
+	logger       *slog.Logger
 }
 
 func newHLSCache(baseDir string, maxBytes int64, maxAge time.Duration, logger *slog.Logger) *hlsCache {
@@ -53,11 +92,12 @@ func newHLSCache(baseDir string, maxBytes int64, maxAge time.Duration, logger *s
 	_ = os.MkdirAll(baseDir, 0o755)
 
 	c := &hlsCache{
-		baseDir:  baseDir,
-		maxBytes: maxBytes,
-		maxAge:   maxAge,
-		index:    make(map[string]map[int]map[string][]cachedSegment),
-		logger:   logger,
+		baseDir:     baseDir,
+		maxBytes:    maxBytes,
+		maxAge:      maxAge,
+		index:       make(map[string]map[int]map[string][]cachedSegment),
+		evictByPath: make(map[string]*evictionEntry),
+		logger:      logger,
 	}
 	c.rebuild()
 	return c
@@ -147,18 +187,33 @@ func (c *hlsCache) rebuild() {
 					if err != nil {
 						continue
 					}
+					segPath := filepath.Join(segDir, segEntry.Name())
 					seg := cachedSegment{
 						StartTime: startT,
 						EndTime:   endT,
-						Path:      filepath.Join(segDir, segEntry.Name()),
+						Path:      segPath,
 						Size:      info.Size(),
 					}
 					c.addToIndex(torrentID, fileIndex, tk, seg)
 					c.totalSize += seg.Size
+
+					// Add to eviction heap.
+					e := &evictionEntry{
+						path:      segPath,
+						mtime:     info.ModTime(),
+						size:      info.Size(),
+						torrentID: torrentID,
+						fileIndex: fileIndex,
+						trackKey:  tk,
+					}
+					c.evictHeap = append(c.evictHeap, e)
+					c.evictByPath[segPath] = e
 				}
 			}
 		}
 	}
+	// Build heap in O(n) after collecting all entries.
+	heap.Init(&c.evictHeap)
 }
 
 // addToIndex inserts a segment into the in-memory index, maintaining sort order.
@@ -228,12 +283,39 @@ func (c *hlsCache) Store(torrentID string, fileIndex, audioTrack, subtitleTrack 
 	c.mu.Lock()
 	c.addToIndex(torrentID, fileIndex, tk, seg)
 	c.totalSize += size
-	needEvict := c.totalSize > c.maxBytes
+
+	// Push to eviction heap.
+	e := &evictionEntry{
+		path:      dstPath,
+		mtime:     time.Now(),
+		size:      size,
+		torrentID: torrentID,
+		fileIndex: fileIndex,
+		trackKey:  tk,
+	}
+	heap.Push(&c.evictHeap, e)
+	c.evictByPath[dstPath] = e
+
+	// Inline heap-based eviction: O(log n) per removed segment.
+	for c.totalSize > c.maxBytes && c.evictHeap.Len() > 0 {
+		oldest := heap.Pop(&c.evictHeap).(*evictionEntry)
+		delete(c.evictByPath, oldest.path)
+		if err := os.Remove(oldest.path); err != nil && !os.IsNotExist(err) {
+			c.logger.Warn("hls cache evict failed",
+				slog.String("path", oldest.path),
+				slog.String("error", err.Error()),
+			)
+			metrics.HLSCacheCleanupErrors.Inc()
+			continue
+		}
+		c.totalSize -= oldest.size
+		c.removeSegmentFromIndex(oldest.torrentID, oldest.fileIndex, oldest.trackKey, oldest.path)
+	}
+	if c.totalSize < 0 {
+		c.totalSize = 0
+	}
 	c.mu.Unlock()
 
-	if needEvict {
-		c.evict()
-	}
 	return nil
 }
 
@@ -300,6 +382,11 @@ func (c *hlsCache) PurgeTorrent(torrentID string) {
 		for _, byTrack := range byFile {
 			for _, seg := range byTrack {
 				purgedSize += seg.Size
+				// Remove from eviction heap.
+				if e, ok := c.evictByPath[seg.Path]; ok {
+					heap.Remove(&c.evictHeap, e.heapIdx)
+					delete(c.evictByPath, seg.Path)
+				}
 			}
 		}
 	}
@@ -385,73 +472,36 @@ func (c *hlsCache) getSegments(torrentID string, fileIndex int, tk string) []cac
 	return byTrack[tk]
 }
 
-// evict removes the oldest segment files until totalSize is under maxBytes.
+// evict removes the oldest segment files until totalSize is under maxBytes
+// and removes segments older than maxAge. Uses the min-heap for O(log n)
+// per evicted segment instead of the previous O(n log n) full-scan approach.
 func (c *hlsCache) evict() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.totalSize <= c.maxBytes {
-		return
-	}
+	cutoff := time.Now().Add(-c.maxAge)
 
-	// Collect all segments with file modification time.
-	type entry struct {
-		torrentID string
-		fileIndex int
-		tk        string
-		segIdx    int
-		mtime     time.Time
-		size      int64
-		path      string
-	}
-	var all []entry
-
-	now := time.Now()
-	for tid, byFile := range c.index {
-		for fi, byTrack := range byFile {
-			for tk, segs := range byTrack {
-				for i, seg := range segs {
-					info, err := os.Stat(seg.Path)
-					mtime := now
-					if err == nil {
-						mtime = info.ModTime()
-					}
-					all = append(all, entry{
-						torrentID: tid,
-						fileIndex: fi,
-						tk:        tk,
-						segIdx:    i,
-						mtime:     mtime,
-						size:      seg.Size,
-						path:      seg.Path,
-					})
-				}
-			}
-		}
-	}
-
-	// Sort by mtime ascending (oldest first).
-	sort.Slice(all, func(i, j int) bool { return all[i].mtime.Before(all[j].mtime) })
-
-	// Also remove segments older than maxAge.
-	cutoff := now.Add(-c.maxAge)
-
-	for _, e := range all {
-		if c.totalSize <= c.maxBytes && e.mtime.After(cutoff) {
+	for c.evictHeap.Len() > 0 {
+		// Peek at the oldest entry.
+		oldest := c.evictHeap[0]
+		overSize := c.totalSize > c.maxBytes
+		overAge := oldest.mtime.Before(cutoff)
+		if !overSize && !overAge {
 			break
 		}
-		if err := os.Remove(e.path); err != nil && !os.IsNotExist(err) {
+
+		heap.Pop(&c.evictHeap)
+		delete(c.evictByPath, oldest.path)
+		if err := os.Remove(oldest.path); err != nil && !os.IsNotExist(err) {
 			c.logger.Warn("hls cache evict failed",
-				slog.String("path", e.path),
+				slog.String("path", oldest.path),
 				slog.String("error", err.Error()),
 			)
 			metrics.HLSCacheCleanupErrors.Inc()
 			continue
 		}
-		c.totalSize -= e.size
-		if segs := c.index[e.torrentID][e.fileIndex][e.tk]; len(segs) > 0 {
-			c.removeSegmentFromIndex(e.torrentID, e.fileIndex, e.tk, e.path)
-		}
+		c.totalSize -= oldest.size
+		c.removeSegmentFromIndex(oldest.torrentID, oldest.fileIndex, oldest.trackKey, oldest.path)
 	}
 
 	if c.totalSize < 0 {

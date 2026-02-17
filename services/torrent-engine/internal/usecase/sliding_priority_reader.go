@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"time"
 
 	"torrentstream/internal/domain"
 	"torrentstream/internal/domain/ports"
@@ -18,12 +19,18 @@ type slidingPriorityReader struct {
 	session   ports.Session
 	file      domain.FileRef
 	window    int64
+	minWindow int64
+	maxWindow int64
 	backtrack int64
 	step      int64
 
-	mu      sync.Mutex
-	pos     int64
-	lastOff int64
+	mu                      sync.Mutex
+	pos                     int64
+	lastOff                 int64
+	bytesReadSinceLastUpdate int64
+	lastUpdateTime          time.Time
+	effectiveBytesPerSec    float64
+	seekBoostUntil          time.Time
 }
 
 func newSlidingPriorityReader(
@@ -47,13 +54,16 @@ func newSlidingPriorityReader(
 	}
 
 	return &slidingPriorityReader{
-		reader:    reader,
-		session:   session,
-		file:      file,
-		window:    window,
-		backtrack: backtrack,
-		step:      step,
-		lastOff:   0,
+		reader:         reader,
+		session:        session,
+		file:           file,
+		window:         window,
+		minWindow:      minPriorityWindowBytes,
+		maxWindow:      maxPriorityWindowBytes,
+		backtrack:      backtrack,
+		step:           step,
+		lastOff:        0,
+		lastUpdateTime: time.Now(),
 	}
 }
 
@@ -74,6 +84,8 @@ func (r *slidingPriorityReader) Read(p []byte) (int, error) {
 	if n > 0 {
 		r.mu.Lock()
 		r.pos += int64(n)
+		r.bytesReadSinceLastUpdate += int64(n)
+		r.adjustWindowLocked()
 		r.updatePriorityWindowLocked(false)
 		r.mu.Unlock()
 	}
@@ -90,6 +102,13 @@ func (r *slidingPriorityReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	r.mu.Lock()
 	r.pos = pos
+	// Post-seek boost: temporarily double the window to reduce stalls.
+	boosted := r.window * 2
+	if boosted > r.maxWindow {
+		boosted = r.maxWindow
+	}
+	r.window = boosted
+	r.seekBoostUntil = time.Now().Add(10 * time.Second)
 	r.updatePriorityWindowLocked(true)
 	r.mu.Unlock()
 	return pos, nil
@@ -97,6 +116,44 @@ func (r *slidingPriorityReader) Seek(offset int64, whence int) (int64, error) {
 
 func (r *slidingPriorityReader) Close() error {
 	return r.reader.Close()
+}
+
+const adaptiveTargetBufferSeconds = 30.0
+
+// adjustWindowLocked recalculates the priority window based on observed
+// read throughput (EMA smoothed). Called on every Read; actual recalculation
+// only happens every 500ms to avoid thrashing.
+func (r *slidingPriorityReader) adjustWindowLocked() {
+	now := time.Now()
+	elapsed := now.Sub(r.lastUpdateTime).Seconds()
+	if elapsed < 0.5 {
+		return
+	}
+
+	instantRate := float64(r.bytesReadSinceLastUpdate) / elapsed
+	if r.effectiveBytesPerSec <= 0 {
+		r.effectiveBytesPerSec = instantRate
+	} else {
+		// Exponential moving average (alpha = 0.3).
+		r.effectiveBytesPerSec = 0.7*r.effectiveBytesPerSec + 0.3*instantRate
+	}
+	r.bytesReadSinceLastUpdate = 0
+	r.lastUpdateTime = now
+
+	// After seek boost expires, allow dynamic adjustment again.
+	if now.Before(r.seekBoostUntil) {
+		return
+	}
+
+	// Target: buffer ~30 seconds of content ahead.
+	dynamicWindow := int64(r.effectiveBytesPerSec * adaptiveTargetBufferSeconds)
+	if dynamicWindow < r.minWindow {
+		dynamicWindow = r.minWindow
+	}
+	if dynamicWindow > r.maxWindow {
+		dynamicWindow = r.maxWindow
+	}
+	r.window = dynamicWindow
 }
 
 func (r *slidingPriorityReader) updatePriorityWindowLocked(force bool) {
