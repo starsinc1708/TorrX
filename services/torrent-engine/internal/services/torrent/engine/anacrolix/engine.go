@@ -248,8 +248,20 @@ func (e *Engine) Open(ctx context.Context, src domain.TorrentSource) (ports.Sess
 		}
 		t = res.t
 	case <-time.After(addMagnetTimeout):
+		// The goroutine may still complete AddMagnet after we return.
+		// Spawn a cleanup goroutine to drop the orphaned torrent.
+		go func() {
+			if res := <-ch; res.t != nil {
+				res.t.Drop()
+			}
+		}()
 		return nil, errors.New("torrent client busy, try again later")
 	case <-ctx.Done():
+		go func() {
+			if res := <-ch; res.t != nil {
+				res.t.Drop()
+			}
+		}()
 		return nil, ctx.Err()
 	}
 

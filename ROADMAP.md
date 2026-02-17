@@ -70,12 +70,9 @@ All P0 bugs have been fixed as of 2026-02-15:
 
 ---
 
-**Remaining P1 bugs (lower priority):**
-
-### Abandoned AddMagnet after timeout
+### ✅ Abandoned AddMagnet after timeout — FIXED
 - **File**: `services/torrent-engine/internal/services/torrent/engine/anacrolix/engine.go`
-- `Open()` (line 190) returns timeout error, but background goroutine may still complete `AddMagnet`. Torrent added to engine without caller knowing.
-- **Fix**: Track pending operations; remove torrent if caller timed out.
+- **Solution**: Added cleanup goroutines on timeout/cancel paths in `Open()`. When the caller times out or cancels, a background goroutine waits for AddMagnet to complete and calls `t.Drop()` if a torrent was added.
 
 ---
 
