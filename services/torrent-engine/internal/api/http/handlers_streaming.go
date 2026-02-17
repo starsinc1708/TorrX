@@ -84,7 +84,13 @@ func (s *Server) handleStreamTorrent(w http.ResponseWriter, r *http.Request, id 
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
 		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
 		w.WriteHeader(http.StatusPartialContent)
-		_, _ = io.CopyN(w, result.Reader, length)
+		if _, err := io.CopyN(w, result.Reader, length); err != nil {
+			s.logger.Debug("stream range copy interrupted",
+				slog.String("torrentId", id),
+				slog.Int("fileIndex", fileIndex),
+				slog.String("error", err.Error()),
+			)
+		}
 		return
 	}
 
@@ -92,7 +98,13 @@ func (s *Server) handleStreamTorrent(w http.ResponseWriter, r *http.Request, id 
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.Copy(w, result.Reader)
+	if _, err := io.Copy(w, result.Reader); err != nil {
+		s.logger.Debug("stream copy interrupted",
+			slog.String("torrentId", id),
+			slog.Int("fileIndex", fileIndex),
+			slog.String("error", err.Error()),
+		)
+	}
 }
 
 func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, tail []string) {

@@ -201,6 +201,7 @@ func main() {
 		apihttp.WithWatchHistory(watchHistoryRepo),
 		apihttp.WithEngine(engine),
 		apihttp.WithPlayerSettings(playerSettings),
+		apihttp.WithAllowedOrigins(cfg.CORSAllowedOrigins),
 	}
 	if cfg.OpenAPIPath != "" {
 		options = append(options, apihttp.WithOpenAPIPath(cfg.OpenAPIPath))

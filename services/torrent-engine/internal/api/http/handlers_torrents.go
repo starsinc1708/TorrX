@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime"
 	"net/http"
 	"path/filepath"
@@ -80,7 +81,7 @@ func (s *Server) handleCreateTorrentJSON(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleCreateTorrentMultipart(w http.ResponseWriter, r *http.Request) {
-	const maxMemory = 32 << 20
+	const maxMemory = 5 << 20 // 5 MB — sufficient for .torrent files
 	if err := r.ParseMultipartForm(maxMemory); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid multipart form")
 		return
@@ -188,6 +189,11 @@ func (s *Server) handleListTorrents(w http.ResponseWriter, r *http.Request) {
 	}
 	if offset < 0 {
 		offset = 0
+	}
+
+	const maxLimit = 1000
+	if limit > maxLimit {
+		limit = maxLimit
 	}
 
 	filter := domain.TorrentFilter{
@@ -565,6 +571,8 @@ func (s *Server) handleBulkDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, bulkResponse{Items: results})
 }
 
+const maxBulkIDs = 100
+
 func decodeBulkRequest(w http.ResponseWriter, r *http.Request) (bulkRequest, bool) {
 	var req bulkRequest
 	decoder := json.NewDecoder(r.Body)
@@ -575,6 +583,11 @@ func decodeBulkRequest(w http.ResponseWriter, r *http.Request) (bulkRequest, boo
 	}
 	if len(req.IDs) == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_request", "ids is required")
+		return bulkRequest{}, false
+	}
+	if len(req.IDs) > maxBulkIDs {
+		writeError(w, http.StatusBadRequest, "invalid_request",
+			fmt.Sprintf("too many ids (max %d)", maxBulkIDs))
 		return bulkRequest{}, false
 	}
 	return req, true

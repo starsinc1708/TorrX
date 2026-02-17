@@ -115,6 +115,7 @@ type Server struct {
 	hlsSettingsCtrl HLSSettingsController
 	player          PlayerSettingsController
 	engine          domainports.Engine
+	allowedOrigins  []string
 	logger          *slog.Logger
 	handler         http.Handler
 	wsHub           *wsHub
@@ -218,6 +219,14 @@ func WithPlayerSettings(ctrl PlayerSettingsController) ServerOption {
 func WithEngine(engine domainports.Engine) ServerOption {
 	return func(s *Server) {
 		s.engine = engine
+	}
+}
+
+// WithAllowedOrigins configures the CORS allowed origins whitelist.
+// When empty (default), any origin is permitted (development mode).
+func WithAllowedOrigins(origins []string) ServerOption {
+	return func(s *Server) {
+		s.allowedOrigins = origins
 	}
 }
 
@@ -386,7 +395,7 @@ func NewServer(create CreateTorrentUseCase, opts ...ServerOption) *Server {
 			return p != "/metrics" && p != "/internal/health/player" && !strings.HasPrefix(p, "/swagger")
 		}),
 	)
-	s.handler = recoveryMiddleware(s.logger, rateLimitMiddleware(100, 200, metricsMiddleware(corsMiddleware(traced))))
+	s.handler = recoveryMiddleware(s.logger, rateLimitMiddleware(100, 200, metricsMiddleware(corsMiddleware(s.allowedOrigins, traced))))
 	return s
 }
 

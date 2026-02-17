@@ -113,32 +113,40 @@ func (b *bufferedStreamReader) Read(p []byte) (int, error) {
 
 	// Wait for data to become available.
 	for b.count == 0 && b.srcErr == nil && !b.closed {
-		// Use a timed wait to avoid indefinite blocking.
-		waitDone := make(chan struct{})
+		// sync.Cond has no native timed wait. Bridge to a channel with a
+		// single goroutine that checks the full predicate so it only
+		// returns when data is truly available (or error/close).
+		condDone := make(chan struct{})
 		go func() {
 			b.mu.Lock()
-			b.cond.Wait()
+			for b.count == 0 && b.srcErr == nil && !b.closed {
+				b.cond.Wait()
+			}
 			b.mu.Unlock()
-			close(waitDone)
+			close(condDone)
 		}()
 		b.mu.Unlock()
 
-		select {
-		case <-waitDone:
-			b.mu.Lock()
-			// Loop will re-check conditions.
-		case <-time.After(streamBufStallWarn):
-			b.mu.Lock()
-			if b.count == 0 && b.srcErr == nil && !b.closed {
+		// Wait for the cond goroutine, logging periodic stall warnings.
+		// Only one goroutine is alive per outer-loop iteration — the
+		// inner loop just resets the timer without spawning more.
+		stallTimer := time.NewTimer(streamBufStallWarn)
+		gotData := false
+		for !gotData {
+			select {
+			case <-condDone:
+				stallTimer.Stop()
+				gotData = true
+			case <-stallTimer.C:
 				b.logger.Warn("stream buffer stall: no data for 30s")
-				// Don't return error — let the caller retry.
-				// FFmpeg handles short reads gracefully.
+				stallTimer.Reset(streamBufStallWarn)
+			case <-b.ctx.Done():
+				stallTimer.Stop()
+				b.mu.Lock()
+				return 0, b.ctx.Err()
 			}
-			// Continue waiting in the loop.
-		case <-b.ctx.Done():
-			b.mu.Lock()
-			return 0, b.ctx.Err()
 		}
+		b.mu.Lock()
 	}
 
 	if b.closed {

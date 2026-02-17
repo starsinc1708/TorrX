@@ -28,7 +28,8 @@ type Config struct {
 	HLSAudioBitrate    string
 	HLSCacheSizeBytes  int64
 	HLSCacheMaxAgeH    int64
-	HLSMemBufSizeBytes int64
+	HLSMemBufSizeBytes   int64
+	CORSAllowedOrigins []string // empty = allow all (dev mode)
 }
 
 func LoadConfig() Config {
@@ -54,8 +55,23 @@ func LoadConfig() Config {
 		HLSAudioBitrate:   getEnv("HLS_AUDIO_BITRATE", "128k"),
 		HLSCacheSizeBytes:  getEnvInt64("HLS_CACHE_SIZE_BYTES", 10<<30),
 		HLSCacheMaxAgeH:    getEnvInt64("HLS_CACHE_MAX_AGE_HOURS", 168),
-		HLSMemBufSizeBytes: getEnvInt64("HLS_MEMBUF_SIZE_BYTES", 256<<20),
+		HLSMemBufSizeBytes:  getEnvInt64("HLS_MEMBUF_SIZE_BYTES", 256<<20),
+		CORSAllowedOrigins: parseCSV(getEnv("CORS_ALLOWED_ORIGINS", "")),
 	}
+}
+
+func parseCSV(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func getEnv(key, fallback string) string {
