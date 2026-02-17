@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/time/rate"
 	"torrentstream/searchservice/internal/domain"
 )
 
@@ -50,6 +51,12 @@ type tmdbResult = struct {
 	MediaType    string  `json:"media_type,omitempty"`
 }
 
+// defaultProviderRPS is the default per-provider request rate (requests per second).
+const defaultProviderRPS = 2.0
+
+// defaultProviderBurst is the default per-provider burst allowance.
+const defaultProviderBurst = 5
+
 type Service struct {
 	providers     map[string]Provider
 	timeout       time.Duration
@@ -63,6 +70,7 @@ type Service struct {
 	tmdb          TMDBClient
 	healthMu      sync.Mutex
 	health        map[string]*providerHealth
+	rateLimiters  map[string]*rate.Limiter
 }
 
 type ServiceOption func(*Service)
@@ -116,13 +124,25 @@ func NewService(providers []Provider, timeout time.Duration, opts ...ServiceOpti
 		timeout = 15 * time.Second
 	}
 
+	limiters := make(map[string]*rate.Limiter, len(registry))
+	seen := make(map[string]struct{})
+	for name := range registry {
+		canonical := strings.ToLower(name)
+		if _, ok := seen[canonical]; ok {
+			continue
+		}
+		seen[canonical] = struct{}{}
+		limiters[canonical] = rate.NewLimiter(rate.Limit(defaultProviderRPS), defaultProviderBurst)
+	}
+
 	svc := &Service{
-		providers: registry,
-		timeout:   timeout,
-		cache:     make(map[string]*cachedSearchResponse),
-		popular:   make(map[string]*popularQuery),
-		warmerCfg: defaultSearchWarmerConfig(),
-		health:    make(map[string]*providerHealth),
+		providers:    registry,
+		timeout:      timeout,
+		cache:        make(map[string]*cachedSearchResponse),
+		popular:      make(map[string]*popularQuery),
+		warmerCfg:    defaultSearchWarmerConfig(),
+		health:       make(map[string]*providerHealth),
+		rateLimiters: limiters,
 	}
 	for _, opt := range opts {
 		opt(svc)
@@ -147,6 +167,14 @@ func providerAliases(name string) []string {
 	default:
 		return nil
 	}
+}
+
+// waitProviderRateLimit blocks until the per-provider rate limiter allows a request.
+func (s *Service) waitProviderRateLimit(ctx context.Context, providerKey string) error {
+	if limiter, ok := s.rateLimiters[providerKey]; ok {
+		return limiter.Wait(ctx)
+	}
+	return nil
 }
 
 func (s *Service) Providers() []domain.ProviderInfo {

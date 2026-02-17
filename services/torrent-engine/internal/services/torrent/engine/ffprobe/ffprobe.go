@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"torrentstream/internal/domain"
 )
@@ -58,7 +59,14 @@ func (p *Prober) ProbeReader(ctx context.Context, reader io.Reader) (domain.Medi
 	}, reader)
 }
 
+const maxProbeTimeout = 30 * time.Second
+
 func (p *Prober) runProbe(ctx context.Context, args []string, stdin io.Reader) (domain.MediaInfo, error) {
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, maxProbeTimeout)
+		defer cancel()
+	}
 	cmd := exec.CommandContext(ctx, p.binary, args...)
 
 	var stdout bytes.Buffer

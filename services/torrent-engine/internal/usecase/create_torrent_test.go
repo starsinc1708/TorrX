@@ -118,6 +118,10 @@ func (r *fakeRepo) Create(ctx context.Context, t domain.TorrentRecord) error {
 
 func (r *fakeRepo) Update(ctx context.Context, t domain.TorrentRecord) error { return nil }
 
+func (r *fakeRepo) UpdateProgress(ctx context.Context, id domain.TorrentID, update domain.ProgressUpdate) error {
+	return nil
+}
+
 func (r *fakeRepo) Get(ctx context.Context, id domain.TorrentID) (domain.TorrentRecord, error) {
 	return domain.TorrentRecord{}, errors.New("not implemented")
 }

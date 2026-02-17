@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -237,7 +238,9 @@ func (s *Service) cacheStore(key string, response domain.SearchResponse, now tim
 
 	// Store in Redis if available
 	if s.redisCache != nil {
-		_ = s.redisCache.Set(context.Background(), key, response, cacheTTL)
+		if err := s.redisCache.Set(context.Background(), key, response, cacheTTL); err != nil {
+			slog.Warn("redis cache set failed", slog.String("key", truncateStr(key, 80)), slog.String("error", err.Error()))
+		}
 	}
 
 	// Also store in memory
@@ -470,6 +473,13 @@ func normalizeProviderNames(providerNames []string) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func truncateStr(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit]
 }
 
 func (s *Service) cacheStoreMemoryOnly(key string, response domain.SearchResponse, now time.Time) {

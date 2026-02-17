@@ -57,8 +57,6 @@ func (s SyncState) sync(ctx context.Context) {
 		recordMap[r.ID] = r
 	}
 
-	now := time.Now().UTC()
-
 	for _, id := range ids {
 		state, err := s.Engine.GetSessionState(ctx, id)
 		if err != nil {
@@ -76,39 +74,49 @@ func (s SyncState) sync(ctx context.Context) {
 			continue
 		}
 
+		doneBytes := sumBytesCompleted(state.Files)
+
+		// Build an atomic progress update using $max for DoneBytes
+		// to avoid race conditions between concurrent sync cycles.
+		update := domain.ProgressUpdate{
+			DoneBytes: doneBytes,
+		}
 		changed := false
 
-		// Update progress bytes (never decrease — paused torrents may report 0).
-		doneBytes := sumBytesCompleted(state.Files)
 		if doneBytes > record.DoneBytes {
-			record.DoneBytes = doneBytes
 			changed = true
 		}
 
-		// Update status.
 		if state.Status != record.Status {
-			record.Status = state.Status
+			update.Status = state.Status
 			changed = true
 		}
 
 		// Update files with per-file progress.
 		if len(state.Files) > 0 && len(state.Files) != len(record.Files) {
-			record.Files = state.Files
-			record.TotalBytes = sumFileLengths(state.Files)
+			update.Files = state.Files
+			update.TotalBytes = sumFileLengths(state.Files)
 			changed = true
 		} else if len(state.Files) > 0 {
+			filesChanged := false
+			merged := make([]domain.FileRef, len(state.Files))
+			copy(merged, state.Files)
 			for i, sf := range state.Files {
 				if i < len(record.Files) && sf.BytesCompleted > record.Files[i].BytesCompleted {
-					record.Files[i].BytesCompleted = sf.BytesCompleted
-					changed = true
+					filesChanged = true
+				} else if i < len(record.Files) {
+					merged[i].BytesCompleted = record.Files[i].BytesCompleted
 				}
+			}
+			if filesChanged {
+				update.Files = merged
+				changed = true
 			}
 		}
 
-		// Update name if it was empty (pending → metadata arrived).
 		if record.Name == "" && len(state.Files) > 0 {
-			record.Name = deriveName(state.Files)
-			record.TotalBytes = sumFileLengths(state.Files)
+			update.Name = deriveName(state.Files)
+			update.TotalBytes = sumFileLengths(state.Files)
 			changed = true
 		}
 
@@ -116,8 +124,11 @@ func (s SyncState) sync(ctx context.Context) {
 			continue
 		}
 
-		record.UpdatedAt = now
-		if err := s.Repo.Update(ctx, record); err != nil {
+		if update.TotalBytes == 0 && record.TotalBytes > 0 {
+			update.TotalBytes = record.TotalBytes
+		}
+
+		if err := s.Repo.UpdateProgress(ctx, id, update); err != nil {
 			s.Logger.Warn("sync: update record failed",
 				slog.String("id", string(id)),
 				slog.String("error", err.Error()))

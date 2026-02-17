@@ -208,6 +208,10 @@ func (f *fakeRepo) Create(ctx context.Context, t domain.TorrentRecord) error { r
 
 func (f *fakeRepo) Update(ctx context.Context, t domain.TorrentRecord) error { return nil }
 
+func (f *fakeRepo) UpdateProgress(ctx context.Context, id domain.TorrentID, update domain.ProgressUpdate) error {
+	return nil
+}
+
 func (f *fakeRepo) Get(ctx context.Context, id domain.TorrentID) (domain.TorrentRecord, error) {
 	f.getCalled++
 	f.lastID = id

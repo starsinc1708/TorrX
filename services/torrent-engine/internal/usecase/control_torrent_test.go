@@ -91,6 +91,10 @@ func (f *fakeControlRepo) Update(ctx context.Context, t domain.TorrentRecord) er
 	return f.updateErr
 }
 
+func (f *fakeControlRepo) UpdateProgress(ctx context.Context, id domain.TorrentID, update domain.ProgressUpdate) error {
+	return nil
+}
+
 func (f *fakeControlRepo) Get(ctx context.Context, id domain.TorrentID) (domain.TorrentRecord, error) {
 	if f.getErr != nil {
 		return domain.TorrentRecord{}, f.getErr

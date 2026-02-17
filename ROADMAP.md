@@ -129,52 +129,48 @@ All P0 bugs have been fixed as of 2026-02-15:
 
 ## P3 — Low: Hardening & Polish
 
-### CORS wildcard
-- **File**: `services/torrent-engine/internal/api/http/server.go`
-- `Access-Control-Allow-Origin: *` with no restrictions.
-- **Fix**: Use origin allowlist or reflect request origin for self-hosted deployments.
+**8 items fixed** (2026-02-17):
 
-### ffprobe without explicit timeout
+### ✅ CORS wildcard — FIXED
+- **File**: `services/torrent-engine/internal/api/http/middleware.go`
+- **Solution**: Reflect request `Origin` header instead of wildcard `*`. Sets `Vary: Origin` for correct caching.
+
+### ✅ ffprobe without explicit timeout — FIXED
 - **File**: `services/torrent-engine/internal/services/torrent/engine/ffprobe/ffprobe.go`
-- `runProbe` (line 61) relies on caller's context for timeout. Some callers don't set a deadline.
-- **Fix**: Wrap with `context.WithTimeout` internally (e.g. 30s max).
+- **Solution**: Added `maxProbeTimeout` (30s). `runProbe` wraps context with `context.WithTimeout` when caller doesn't set a deadline.
 
-### No provider rate limiting
-- **File**: `services/torrent-search/internal/search/aggregator.go`
-- No token bucket / leaky bucket. Risk of IP bans or API key revocation (Jackett/Prowlarr).
-- **Fix**: Per-provider rate limiter (`golang.org/x/time/rate`).
+### ✅ Per-provider rate limiting — FIXED
+- **File**: `services/torrent-search/internal/search/provider.go`, `aggregator.go`
+- **Solution**: Per-provider `rate.Limiter` (2 req/s, burst 5). Applied in both `executePreparedSearch` and `executeStreamSearch` goroutines before calling `provider.Search()`.
+
+### ✅ Redis cache errors logged — FIXED
+- **File**: `services/torrent-search/internal/search/cache.go`
+- **Solution**: Replaced `_ = s.redisCache.Set(...)` with `slog.Warn` on error. Memory cache still works as fallback.
+
+### ✅ Search query length limit — FIXED
+- **File**: `services/torrent-search/internal/api/http/server.go`
+- **Solution**: Added `maxQueryLength = 500`. Rejects queries > 500 chars with HTTP 400 in both `/search` and `/search/stream`.
+
+### ✅ Domain model validation — FIXED
+- **File**: `services/torrent-engine/internal/domain/record.go`
+- **Solution**: Added `Validate() error` to `TorrentRecord`. Checks: non-empty ID, non-negative bytes, `DoneBytes <= TotalBytes`, valid status enum.
+
+### ✅ SyncState race with MongoDB $max — FIXED
+- **Files**: `sync_state.go`, `ports/repository.go`, `repository/mongo/repository.go`
+- **Solution**: Added `UpdateProgress` method using MongoDB `$max` operator for `doneBytes`. Eliminates read-modify-write race. Added `ProgressUpdate` domain type.
+
+### ✅ mapFiles panic logging — FIXED
+- **File**: `services/torrent-engine/internal/services/torrent/engine/anacrolix/engine.go`
+- **Solution**: Added `slog.Error` with stack trace in `recover()` block instead of silently returning nil.
+
+**Remaining P3 items (deferred):**
 
 ### x1337 provider: fragile HTML regex
 - **File**: `services/torrent-search/internal/providers/x1337/provider.go`
 - Regex patterns (line 24-32) assume specific HTML structure. Hardcoded 40-entry scan cap.
 - **Fix**: Use `goquery` for HTML parsing. Make scan cap configurable.
 
-### Redis cache errors swallowed
-- **File**: `services/torrent-search/internal/search/cache.go`
-- `_ = s.redisCache.Set(...)` (line 202). Silent failures leave Redis and in-memory cache inconsistent.
-- **Fix**: Log Redis errors. Consider falling back to memory-only gracefully.
-
-### No query length limit on search API
-- **File**: `services/torrent-search/internal/api/http/server.go`
-- No max length on `q` parameter (line 140). Extremely long query strings can cause issues.
-- **Fix**: Reject queries longer than 500 characters.
-
-### Domain model lacks validation
-- **File**: `services/torrent-engine/internal/domain/record.go`
-- No `Validate()` method. No constraint that `TotalBytes >= DoneBytes`, no status transition guard.
-- **Fix**: Add `Validate() error` to `TorrentRecord`. Enforce invariants at domain boundary.
-
 ### Frontend accessibility
 - **File**: `frontend/src/components/VideoPlayer.tsx`
 - Missing `aria-label` on control buttons, error banner lacks `role="alert"`, seek position not announced.
 - **Fix**: Add ARIA attributes to interactive elements. Use `aria-live` for dynamic status changes.
-
-### SyncState race on concurrent updates
-- **File**: `services/torrent-engine/internal/usecase/sync_state.go`
-- Read-modify-write on `DoneBytes` (line 82) without transaction isolation. Concurrent syncs can overwrite each other.
-- **Fix**: Use MongoDB `$max` operator for `doneBytes` update instead of read-modify-write.
-
-### mapFiles swallows panics silently
-- **File**: `services/torrent-engine/internal/services/torrent/engine/anacrolix/engine.go`
-- `recover()` in `mapFiles` (line 619) returns nil without logging. Hides bugs in anacrolix library.
-- **Fix**: Log panic stack trace before returning nil.

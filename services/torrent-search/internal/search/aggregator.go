@@ -221,6 +221,17 @@ func (s *Service) executePreparedSearch(ctx context.Context, prepared preparedSe
 					return
 				}
 
+				if err := s.waitProviderRateLimit(runCtx, providerKey); err != nil {
+					mu.Lock()
+					statuses[index] = domain.ProviderStatus{
+						Name:  statusName,
+						OK:    false,
+						Error: "rate limit wait cancelled",
+					}
+					mu.Unlock()
+					return
+				}
+
 				providerQuery := queryFor(current)
 				requestLimit := prepared.fetchLimit
 				// Torznab providers may require per-item torrent downloads to derive infohash/magnet.
@@ -754,6 +765,17 @@ func (s *Service) executeStreamSearch(ctx context.Context, prepared preparedSear
 					Name:  statusName,
 					OK:    false,
 					Error: fmt.Sprintf("provider temporarily unhealthy until %s: %s", until.UTC().Format(time.RFC3339), lastErr),
+				}
+				mu.Unlock()
+				return
+			}
+
+			if err := s.waitProviderRateLimit(runCtx, providerKey); err != nil {
+				mu.Lock()
+				statuses[index] = domain.ProviderStatus{
+					Name:  statusName,
+					OK:    false,
+					Error: "rate limit wait cancelled",
 				}
 				mu.Unlock()
 				return

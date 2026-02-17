@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -725,7 +727,11 @@ func mapFiles(t *torrent.Torrent) (mapped []domain.FileRef) {
 		return nil
 	}
 	defer func() {
-		if recover() != nil {
+		if r := recover(); r != nil {
+			slog.Error("mapFiles panic recovered",
+				slog.Any("error", r),
+				slog.String("stack", string(debug.Stack())),
+			)
 			mapped = nil
 		}
 	}()

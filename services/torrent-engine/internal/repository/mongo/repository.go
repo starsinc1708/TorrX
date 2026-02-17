@@ -108,6 +108,57 @@ func (r *Repository) Update(ctx context.Context, t domain.TorrentRecord) error {
 	return nil
 }
 
+func (r *Repository) UpdateProgress(ctx context.Context, id domain.TorrentID, update domain.ProgressUpdate) error {
+	now := time.Now().UTC().Unix()
+	filter := bson.M{"_id": string(id)}
+
+	// Use $max for doneBytes to prevent concurrent syncs from decreasing progress.
+	maxFields := bson.M{"doneBytes": update.DoneBytes}
+	setFields := bson.M{"updatedAt": now}
+
+	if update.Status != "" {
+		setFields["status"] = string(update.Status)
+	}
+	if update.TotalBytes > 0 {
+		setFields["totalBytes"] = update.TotalBytes
+	}
+	if update.Name != "" {
+		setFields["name"] = update.Name
+	}
+
+	// Compute progress for efficient DB sorting.
+	if update.TotalBytes > 0 {
+		progress := float64(update.DoneBytes) / float64(update.TotalBytes)
+		if progress > 1 {
+			progress = 1
+		}
+		setFields["progress"] = progress
+	}
+
+	if len(update.Files) > 0 {
+		files := make([]fileDoc, 0, len(update.Files))
+		for _, f := range update.Files {
+			files = append(files, fileDoc{
+				Index:          f.Index,
+				Path:           f.Path,
+				Length:         f.Length,
+				BytesCompleted: f.BytesCompleted,
+			})
+		}
+		setFields["files"] = files
+	}
+
+	op := bson.M{"$max": maxFields, "$set": setFields}
+	res, err := r.collection.UpdateOne(ctx, filter, op)
+	if err != nil {
+		return err
+	}
+	if res.MatchedCount == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func (r *Repository) UpdateTags(ctx context.Context, id domain.TorrentID, tags []string) error {
 	clean := normalizeTags(tags)
 	res, err := r.collection.UpdateOne(

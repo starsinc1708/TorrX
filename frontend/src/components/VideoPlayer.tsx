@@ -1031,10 +1031,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       previewVideo.src = streamUrl;
       previewVideo.load();
     } else if (Hls.isSupported()) {
+      const hlsMaxBuf = Number(localStorage.getItem('hlsMaxBufferLength')) || 60;
       const previewHls = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
-        backBufferLength: 45,
+        backBufferLength: Math.min(hlsMaxBuf, 30),
         manifestLoadingMaxRetry: 2,
         manifestLoadingRetryDelay: 600,
         levelLoadingMaxRetry: 3,

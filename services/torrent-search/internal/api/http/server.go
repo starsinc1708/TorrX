@@ -58,6 +58,8 @@ type providerAutodetectResult struct {
 	Message  string `json:"message"`
 }
 
+const maxQueryLength = 500
+
 type ServerOption func(*Server)
 
 func WithLogger(logger *slog.Logger) ServerOption {
@@ -139,6 +141,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(query) > maxQueryLength {
+		writeError(w, http.StatusBadRequest, "invalid_request", "query too long (max 500 characters)")
+		return
+	}
 	limit, err := parsePositiveInt(r, "limit", 50)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid limit")
@@ -237,6 +243,10 @@ func (s *Server) handleSearchStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(query) > maxQueryLength {
+		writeError(w, http.StatusBadRequest, "invalid_request", "query too long (max 500 characters)")
+		return
+	}
 	limit, err := parsePositiveInt(r, "limit", 50)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid limit")
