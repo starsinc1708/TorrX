@@ -28,6 +28,7 @@ type Config struct {
 	HLSAudioBitrate    string
 	HLSCacheSizeBytes  int64
 	HLSCacheMaxAgeH    int64
+	HLSMemBufSizeBytes int64
 }
 
 func LoadConfig() Config {
@@ -51,8 +52,9 @@ func LoadConfig() Config {
 		HLSPreset:         getEnv("HLS_PRESET", "veryfast"),
 		HLSCRF:            int(getEnvInt64("HLS_CRF", 23)),
 		HLSAudioBitrate:   getEnv("HLS_AUDIO_BITRATE", "128k"),
-		HLSCacheSizeBytes: getEnvInt64("HLS_CACHE_SIZE_BYTES", 10<<30),
-		HLSCacheMaxAgeH:   getEnvInt64("HLS_CACHE_MAX_AGE_HOURS", 168),
+		HLSCacheSizeBytes:  getEnvInt64("HLS_CACHE_SIZE_BYTES", 10<<30),
+		HLSCacheMaxAgeH:    getEnvInt64("HLS_CACHE_MAX_AGE_HOURS", 168),
+		HLSMemBufSizeBytes: getEnvInt64("HLS_MEMBUF_SIZE_BYTES", 256<<20),
 	}
 }
 

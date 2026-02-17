@@ -90,6 +90,8 @@ export interface StorageSettings {
   mode: string;
   memoryLimitBytes: number;
   spillToDisk: boolean;
+  dataDir?: string;
+  hlsDir?: string;
 }
 
 export interface UpdateStorageSettingsInput {
@@ -100,6 +102,13 @@ export interface EncodingSettings {
   preset: string;
   crf: number;
   audioBitrate: string;
+}
+
+export interface HLSSettings {
+  memBufSizeMB: number;
+  cacheSizeMB: number;
+  cacheMaxAgeHours: number;
+  segmentDuration: number;
 }
 
 export interface PlayerSettings {

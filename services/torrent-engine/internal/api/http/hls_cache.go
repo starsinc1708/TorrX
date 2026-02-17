@@ -323,6 +323,49 @@ func (c *hlsCache) PurgeTorrent(torrentID string) {
 	}
 }
 
+// BaseDir returns the root directory of the disk cache.
+func (c *hlsCache) BaseDir() string {
+	return c.baseDir
+}
+
+// SegmentPath returns the absolute file path for a cached segment.
+func (c *hlsCache) SegmentPath(torrentID string, fileIndex, audioTrack, subtitleTrack int, variant string, startTime, endTime float64) string {
+	tk := trackKey(audioTrack, subtitleTrack, variant)
+	return filepath.Join(c.baseDir, torrentID, strconv.Itoa(fileIndex), tk, segmentFilename(startTime, endTime))
+}
+
+// MaxBytes returns the maximum cache size in bytes.
+func (c *hlsCache) MaxBytes() int64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.maxBytes
+}
+
+// MaxAge returns the maximum segment age.
+func (c *hlsCache) MaxAge() time.Duration {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.maxAge
+}
+
+// SetMaxBytes updates the maximum cache size and triggers eviction if needed.
+func (c *hlsCache) SetMaxBytes(v int64) {
+	c.mu.Lock()
+	c.maxBytes = v
+	needEvict := c.totalSize > c.maxBytes
+	c.mu.Unlock()
+	if needEvict {
+		c.evict()
+	}
+}
+
+// SetMaxAge updates the maximum segment age.
+func (c *hlsCache) SetMaxAge(v time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.maxAge = v
+}
+
 // TotalSize returns the current total cache size in bytes.
 func (c *hlsCache) TotalSize() int64 {
 	c.mu.RLock()

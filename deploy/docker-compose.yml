@@ -7,7 +7,6 @@ services:
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
       - "--api.dashboard=true"
-      - "--api.insecure=true"
       - "--ping=true"
       - "--metrics.prometheus=true"
       - "--metrics.prometheus.addentrypointslabels=true"
@@ -25,7 +24,6 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "8081:8080"
     volumes:
       - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
     networks:
@@ -216,10 +214,15 @@ services:
       TORRENT_STORAGE_MODE: "hybrid"
       TORRENT_MEMORY_LIMIT_BYTES: "1073741824"
       HLS_DIR: "/hls"
+      HLS_MEMBUF_SIZE_BYTES: "268435456"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
       OTEL_SERVICE_NAME: "torrent-engine"
     volumes:
+      # Torrent download data — change host path for custom location:
+      # - /path/on/host:/data
       - torrent_data:/data
+      # HLS transcode working directory:
+      # - /path/on/host:/hls
       - hls_cache:/hls
       - anacrolix_cache:/root/.cache/anacrolix
     depends_on:

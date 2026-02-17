@@ -78,7 +78,7 @@ interface VideoControlsProps {
   streamUrl: string;
 }
 
-export const VideoControls: React.FC<VideoControlsProps> = ({
+export const VideoControls: React.FC<VideoControlsProps> = React.memo(({
   ctrlBtnClassName,
   playing,
   togglePlay,
@@ -381,4 +381,4 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
       </div>
     </div>
   );
-};
+});

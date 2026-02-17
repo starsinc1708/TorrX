@@ -20,7 +20,7 @@ interface VideoOverlaysProps {
   togglePlay: () => void;
 }
 
-export const VideoOverlays: React.FC<VideoOverlaysProps> = ({
+export const VideoOverlays: React.FC<VideoOverlaysProps> = React.memo(({
   screenshotFlash,
   prebufferPhase,
   trackSwitchInProgress,
@@ -116,4 +116,4 @@ export const VideoOverlays: React.FC<VideoOverlaysProps> = ({
       )}
     </>
   );
-};
+});

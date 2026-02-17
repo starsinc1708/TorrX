@@ -52,6 +52,7 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
   const [activeMode, setActiveMode] = useState<'direct' | 'hls'>('direct');
   const [prebufferPhase, setPrebufferPhase] = useState<PrebufferPhase>('idle');
   const [trackSwitchInProgress, setTrackSwitchInProgress] = useState(false);
+  const [mediaInfoToken, setMediaInfoToken] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const probeRetryCountRef = useRef(0);
@@ -245,10 +246,10 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
         }
         setPrebufferPhase('ready');
       } else {
-        if (probeRetryCountRef.current < 3) {
+        if (probeRetryCountRef.current < 5) {
           probeRetryCountRef.current += 1;
           setPrebufferPhase('retrying');
-          const delay = probeRetryCountRef.current * 3000;
+          const delay = Math.min(probeRetryCountRef.current * 3000, 10000);
           await sleep(delay);
           if (controller.signal.aborted) return;
           setStreamRetryToken((t) => t + 1);
@@ -385,7 +386,7 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
         window.clearInterval(timer);
       }
     };
-  }, [selectedTorrent?.id, selectedFileIndex]);
+  }, [selectedTorrent?.id, selectedFileIndex, mediaInfoToken]);
 
   // Reset when torrent changes.
   useEffect(() => {
@@ -642,10 +643,18 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
   );
 
   const retryStreamInitialization = useCallback(() => {
+    // Capture current absolute playback position so the next probe can
+    // seek FFmpeg to the right place instead of re-encoding from 0:00.
+    const video = videoRef.current;
+    if (video && Number.isFinite(video.currentTime) && video.currentTime > 0) {
+      resumePositionRef.current = seekOffset + video.currentTime;
+    }
     setVideoError(null);
     setPrebufferPhase('idle');
+    // Re-fetch mediaInfo so mediaDuration is available after server restart.
+    setMediaInfoToken((prev) => prev + 1);
     setStreamRetryToken((prev) => prev + 1);
-  }, []);
+  }, [seekOffset]);
 
   return {
     availableFiles,

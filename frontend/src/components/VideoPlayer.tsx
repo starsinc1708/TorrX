@@ -125,7 +125,7 @@ type RuntimePlaybackStatus = 'idle' | 'transcoding' | 'buffering' | 'recovering'
 const TIMELINE_PREVIEW_THROTTLE_MS = 140;
 const TIMELINE_PREVIEW_WIDTH = 176;
 const TIMELINE_PREVIEW_QUALITY = 0.72;
-const MAX_AUTO_INIT_RETRIES = 2;
+const MAX_AUTO_INIT_RETRIES = 5;
 
 const normalizePlaybackRate = (rate: number): number => {
   if (!Number.isFinite(rate)) return 1;
@@ -235,6 +235,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const autoInitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoInitRetryCountRef = useRef<Map<string, number>>(new Map());
   const trackFallbackAppliedRef = useRef<Set<string>>(new Set());
+  const stableDurationRef = useRef(0);
   const lastSaveTimeRef = useRef(0);
   const loadTokenRef = useRef(0);
   const handledResumeRequestRef = useRef<number | null>(null);
@@ -707,7 +708,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       clearRuntimeStatus();
     }
 
-    const maxRecoverAttempts = 6;
+    const maxRecoverAttempts = 10;
     const queueHlsRecovery = (
       hls: Hls,
       action: () => void,
@@ -881,10 +882,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       pendingPlayRef.current = shouldAutoPlay;
       // Keep autoplay permission across track switches.
       video.autoplay = shouldAutoPlay;
+      const hlsMaxBuf = Number(localStorage.getItem('hlsMaxBufferLength')) || 60;
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
-        backBufferLength: 120,
+        backBufferLength: Math.min(hlsMaxBuf, 30),
+        maxBufferLength: hlsMaxBuf,
+        maxMaxBufferLength: hlsMaxBuf * 2,
         manifestLoadingMaxRetry: 4,
         manifestLoadingRetryDelay: 800,
         levelLoadingMaxRetry: 8,
@@ -959,10 +963,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
 
+    const hlsMaxBuf = Number(localStorage.getItem('hlsMaxBufferLength')) || 60;
     const hls = new Hls({
       enableWorker: true,
       lowLatencyMode: false,
-      backBufferLength: 120,
+      backBufferLength: Math.min(hlsMaxBuf, 30),
+      maxBufferLength: hlsMaxBuf,
+      maxMaxBufferLength: hlsMaxBuf * 2,
       manifestLoadingMaxRetry: 4,
       manifestLoadingRetryDelay: 800,
       levelLoadingMaxRetry: 8,
@@ -1791,10 +1798,24 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => window.removeEventListener('keydown', onKey);
   }, [togglePlay, skip, toggleMute, toggleFullscreen, takeScreenshot, resetHideTimer]);
 
+  // Cache mediaDuration so the display doesn't fluctuate while HLS is still generating.
+  useEffect(() => {
+    if (mediaDuration > 0) stableDurationRef.current = mediaDuration;
+  }, [mediaDuration]);
+
   // When HLS seek is active, adjust displayed time and duration.
   const displayCurrentTime = useHls && seekOffset > 0 ? seekOffset + currentTime : currentTime;
-  const displayDuration = useHls && mediaDuration > 0 ? mediaDuration : duration;
-  const progressPercent = displayDuration > 0 ? (displayCurrentTime / displayDuration) * 100 : 0;
+  // Prefer full media duration; when unavailable but seekOffset > 0, use seekOffset + local
+  // duration so the progress bar doesn't overflow past 100%.
+  const displayDuration =
+    mediaDuration > 0
+      ? mediaDuration
+      : stableDurationRef.current > 0
+        ? stableDurationRef.current
+        : useHls && seekOffset > 0
+          ? Math.max(seekOffset + duration, seekOffset + 1)
+          : duration;
+  const progressPercent = displayDuration > 0 ? Math.min(displayCurrentTime / displayDuration * 100, 100) : 0;
   const indicatorStatus: RuntimePlaybackStatus | 'seeking' =
     seekStatus !== 'idle' ? seekStatus : runtimeStatus;
   const showStatusIndicator = indicatorStatus !== 'idle' && Boolean(streamUrl);

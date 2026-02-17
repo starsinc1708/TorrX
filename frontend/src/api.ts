@@ -1,6 +1,7 @@
 import type {
   ApiErrorPayload,
   EncodingSettings,
+  HLSSettings,
   FlareSolverrApplyResponse,
   FlareSolverrSettings,
   MediaInfo,
@@ -615,6 +616,22 @@ export const updateEncodingSettings = async (
   input: Partial<EncodingSettings>,
 ): Promise<EncodingSettings> => {
   const response = await fetch(buildUrl('/settings/encoding'), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return handleResponse(response);
+};
+
+export const getHLSSettings = async (): Promise<HLSSettings> => {
+  const response = await fetch(buildUrl('/settings/hls'));
+  return handleResponse(response);
+};
+
+export const updateHLSSettings = async (
+  input: Partial<HLSSettings>,
+): Promise<HLSSettings> => {
+  const response = await fetch(buildUrl('/settings/hls'), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),

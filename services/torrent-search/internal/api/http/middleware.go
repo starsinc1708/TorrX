@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/time/rate"
 	"torrentstream/searchservice/internal/metrics"
 )
 
@@ -158,4 +159,22 @@ func truncate(value string, limit int) string {
 		return value[:limit]
 	}
 	return value[:limit-3] + "..."
+}
+
+// rateLimitMiddleware applies a global token-bucket rate limiter.
+// Requests that exceed the limit receive HTTP 429.
+func rateLimitMiddleware(rps float64, burst int, next http.Handler) http.Handler {
+	limiter := rate.NewLimiter(rate.Limit(rps), burst)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" || r.URL.Path == "/metrics" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !limiter.Allow() {
+			w.Header().Set("Retry-After", "1")
+			writeError(w, http.StatusTooManyRequests, "rate_limited", "too many requests")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

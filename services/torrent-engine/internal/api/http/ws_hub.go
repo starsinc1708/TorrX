@@ -26,6 +26,7 @@ type wsHub struct {
 	broadcast  chan []byte
 	register   chan *wsClient
 	unregister chan *wsClient
+	done       chan struct{}
 	logger     *slog.Logger
 }
 
@@ -35,6 +36,7 @@ func newWSHub(logger *slog.Logger) *wsHub {
 		broadcast:  make(chan []byte, 64),
 		register:   make(chan *wsClient),
 		unregister: make(chan *wsClient),
+		done:       make(chan struct{}),
 		logger:     logger,
 	}
 }
@@ -42,6 +44,18 @@ func newWSHub(logger *slog.Logger) *wsHub {
 func (h *wsHub) run() {
 	for {
 		select {
+		case <-h.done:
+			for client := range h.clients {
+				_ = client.conn.WriteControl(
+					websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseGoingAway, "server shutting down"),
+					time.Now().Add(2*time.Second),
+				)
+				close(client.send)
+				delete(h.clients, client)
+			}
+			h.logger.Debug("ws hub stopped, all clients disconnected")
+			return
 		case client := <-h.register:
 			h.clients[client] = true
 			h.logger.Debug("ws client connected", slog.Int("total", len(h.clients)))
@@ -62,6 +76,11 @@ func (h *wsHub) run() {
 			}
 		}
 	}
+}
+
+// Close signals the hub to stop and disconnect all clients.
+func (h *wsHub) Close() {
+	close(h.done)
 }
 
 func (h *wsHub) clientCount() int {

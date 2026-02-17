@@ -114,7 +114,7 @@ func (s *Server) Handler() http.Handler {
 			return p != "/metrics" && p != "/health"
 		}),
 	)
-	return recoveryMiddleware(s.logger, metricsMiddleware(traced))
+	return recoveryMiddleware(s.logger, rateLimitMiddleware(50, 100, metricsMiddleware(traced)))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

@@ -5,12 +5,14 @@ import {
   applyFlareSolverrSettings,
   getFlareSolverrSettings,
   getEncodingSettings,
+  getHLSSettings,
   getSearchProviderRuntimeConfigs,
   getStorageSettings,
   isApiError,
   listSearchProviders,
   updateSearchProviderRuntimeConfig,
   updateEncodingSettings,
+  updateHLSSettings,
   updateStorageSettings,
 } from '../api';
 import { useToast } from '../app/providers/ToastProvider';
@@ -24,6 +26,7 @@ import { Select } from '../components/ui/select';
 import { Switch } from '../components/ui/switch';
 import type {
   EncodingSettings,
+  HLSSettings,
   FlareSolverrProviderStatus,
   SearchProviderInfo,
   SearchProviderRuntimeConfig,
@@ -84,6 +87,14 @@ const SettingsPage: React.FC = () => {
   const [encodingSaving, setEncodingSaving] = useState(false);
   const [encodingError, setEncodingError] = useState<string | null>(null);
 
+  // Streaming (HLS)
+  const [hlsSettings, setHlsSettings] = useState<HLSSettings | null>(null);
+  const [hlsLoading, setHlsLoading] = useState(false);
+  const [hlsSaving, setHlsSaving] = useState(false);
+  const [hlsError, setHlsError] = useState<string | null>(null);
+  const [hlsForm, setHlsForm] = useState({ memBufSizeMB: '', cacheSizeMB: '', cacheMaxAgeHours: '', segmentDuration: 4 });
+  const [hlsMaxBuffer, setHlsMaxBuffer] = useState(() => Number(localStorage.getItem('hlsMaxBufferLength')) || 60);
+
   // Search sources
   const [searchProviders, setSearchProviders] = useState<SearchProviderInfo[]>([]);
   const [searchEnabledProviders, setSearchEnabledProviders] = useState<string[]>([]);
@@ -129,6 +140,26 @@ const SettingsPage: React.FC = () => {
       else if (error instanceof Error) setEncodingError(error.message);
     } finally {
       setEncodingLoading(false);
+    }
+  }, []);
+
+  const loadHLSSettings = useCallback(async () => {
+    setHlsLoading(true);
+    try {
+      const settings = await getHLSSettings();
+      setHlsSettings(settings);
+      setHlsForm({
+        memBufSizeMB: String(settings.memBufSizeMB),
+        cacheSizeMB: String(settings.cacheSizeMB),
+        cacheMaxAgeHours: String(settings.cacheMaxAgeHours),
+        segmentDuration: settings.segmentDuration,
+      });
+      setHlsError(null);
+    } catch (error) {
+      if (isApiError(error)) setHlsError(`${error.code ?? 'error'}: ${error.message}`);
+      else if (error instanceof Error) setHlsError(error.message);
+    } finally {
+      setHlsLoading(false);
     }
   }, []);
 
@@ -199,10 +230,11 @@ const SettingsPage: React.FC = () => {
   useEffect(() => {
     loadStorage();
     loadEncoding();
+    loadHLSSettings();
     loadSearchProviders();
     loadRuntimeConfigs();
     loadFlareSolverrSettings();
-  }, [loadStorage, loadEncoding, loadSearchProviders, loadRuntimeConfigs, loadFlareSolverrSettings]);
+  }, [loadStorage, loadEncoding, loadHLSSettings, loadSearchProviders, loadRuntimeConfigs, loadFlareSolverrSettings]);
 
   useEffect(() => {
     if (storageSettings) {
@@ -251,6 +283,37 @@ const SettingsPage: React.FC = () => {
       setEncodingSaving(false);
     }
   }, []);
+
+  const handleSaveHLSSettings = async () => {
+    const memBuf = Number(hlsForm.memBufSizeMB);
+    const cache = Number(hlsForm.cacheSizeMB);
+    const maxAge = Number(hlsForm.cacheMaxAgeHours);
+    const segDur = hlsForm.segmentDuration;
+    if (!Number.isFinite(memBuf) || !Number.isFinite(cache) || !Number.isFinite(maxAge)) return;
+    setHlsSaving(true);
+    try {
+      const updated = await updateHLSSettings({
+        memBufSizeMB: Math.floor(memBuf),
+        cacheSizeMB: Math.floor(cache),
+        cacheMaxAgeHours: Math.floor(maxAge),
+        segmentDuration: segDur,
+      });
+      setHlsSettings(updated);
+      setHlsForm({
+        memBufSizeMB: String(updated.memBufSizeMB),
+        cacheSizeMB: String(updated.cacheSizeMB),
+        cacheMaxAgeHours: String(updated.cacheMaxAgeHours),
+        segmentDuration: updated.segmentDuration,
+      });
+      localStorage.setItem('hlsMaxBufferLength', String(hlsMaxBuffer));
+      setHlsError(null);
+    } catch (error) {
+      if (isApiError(error)) setHlsError(`${error.code ?? 'error'}: ${error.message}`);
+      else if (error instanceof Error) setHlsError(error.message);
+    } finally {
+      setHlsSaving(false);
+    }
+  };
 
   const handleToggleSearchProvider = (providerName: string, enabled: boolean) => {
     setSearchEnabledProviders((prev) => {
@@ -792,6 +855,10 @@ const SettingsPage: React.FC = () => {
               <RefreshCw className={cn('h-4 w-4', encodingLoading ? 'animate-spin' : '')} />
               Encoding
             </Button>
+            <Button variant="outline" size="sm" onClick={() => void loadHLSSettings()} disabled={hlsLoading}>
+              <RefreshCw className={cn('h-4 w-4', hlsLoading ? 'animate-spin' : '')} />
+              Streaming
+            </Button>
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -827,6 +894,26 @@ const SettingsPage: React.FC = () => {
               </div>
             </div>
 
+            {(storageSettings?.dataDir || storageSettings?.hlsDir) ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {storageSettings?.dataDir ? (
+                  <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
+                    <div className="text-xs font-medium text-muted-foreground">Data directory</div>
+                    <div className="mt-1 font-mono text-sm">{storageSettings.dataDir}</div>
+                  </div>
+                ) : null}
+                {storageSettings?.hlsDir ? (
+                  <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
+                    <div className="text-xs font-medium text-muted-foreground">HLS directory</div>
+                    <div className="mt-1 font-mono text-sm">{storageSettings.hlsDir}</div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="text-xs text-muted-foreground">
+              Configure paths via <code className="font-mono">TORRENT_DATA_DIR</code> / <code className="font-mono">HLS_DIR</code> env vars or Docker volume mounts.
+            </div>
+
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
               <div className="flex-1 space-y-2">
                 <div className="text-sm font-medium">RAM limit (MB)</div>
@@ -855,6 +942,101 @@ const SettingsPage: React.FC = () => {
               </div>
             ) : null}
           </div>
+          </div>
+
+          <div className="border-t border-border/70 pt-5">
+            <div className="space-y-3">
+              <div className="text-sm font-semibold">Streaming</div>
+              {hlsLoading ? <div className="text-sm text-muted-foreground">Loading...</div> : null}
+
+              {!hlsLoading && hlsSettings ? (
+                <>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">RAM buffer (MB)</div>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={4096}
+                        step={32}
+                        value={hlsForm.memBufSizeMB}
+                        onChange={(e) => setHlsForm((prev) => ({ ...prev, memBufSizeMB: e.target.value }))}
+                        disabled={hlsSaving}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Disk cache (MB)</div>
+                      <Input
+                        type="number"
+                        min={100}
+                        max={102400}
+                        step={512}
+                        value={hlsForm.cacheSizeMB}
+                        onChange={(e) => setHlsForm((prev) => ({ ...prev, cacheSizeMB: e.target.value }))}
+                        disabled={hlsSaving}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Cache lifetime (h)</div>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={8760}
+                        step={1}
+                        value={hlsForm.cacheMaxAgeHours}
+                        onChange={(e) => setHlsForm((prev) => ({ ...prev, cacheMaxAgeHours: e.target.value }))}
+                        disabled={hlsSaving}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Segment duration (s)</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {[2, 4, 6, 8, 10].map((dur) => (
+                          <Button
+                            key={dur}
+                            variant={hlsForm.segmentDuration === dur ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={() => setHlsForm((prev) => ({ ...prev, segmentDuration: dur }))}
+                            disabled={hlsSaving}
+                          >
+                            {dur}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium">Player buffer (s)</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {[15, 30, 60, 120, 300].map((buf) => (
+                        <Button
+                          key={buf}
+                          variant={hlsMaxBuffer === buf ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setHlsMaxBuffer(buf)}
+                          disabled={hlsSaving}
+                        >
+                          {buf}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <Button onClick={() => void handleSaveHLSSettings()} disabled={hlsSaving}>
+                      {hlsSaving ? 'Saving...' : 'Save'}
+                    </Button>
+                  </div>
+                </>
+              ) : null}
+
+              {hlsError ? (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
+                  {hlsError}
+                </div>
+              ) : null}
+            </div>
           </div>
 
           <div className="border-t border-border/70 pt-5">

@@ -78,6 +78,7 @@ func main() {
 	settingsRepo := mongorepo.NewStorageSettingsRepository(mongoClient, cfg.MongoDatabase)
 	watchHistoryRepo := sessionmongo.NewWatchHistoryRepository(mongoClient, cfg.MongoDatabase)
 	encodingSettingsRepo := mongorepo.NewEncodingSettingsRepository(mongoClient, cfg.MongoDatabase)
+	hlsSettingsRepo := mongorepo.NewHLSSettingsRepository(mongoClient, cfg.MongoDatabase)
 	playerSettingsRepo := sessionmongo.NewPlayerSettingsRepository(mongoClient, cfg.MongoDatabase)
 
 	if err := repo.EnsureIndexes(ctx); err != nil {
@@ -96,6 +97,20 @@ func main() {
 		cfg.HLSPreset = enc.Preset
 		cfg.HLSCRF = enc.CRF
 		cfg.HLSAudioBitrate = enc.AudioBitrate
+	}
+
+	if hls, ok, err := hlsSettingsRepo.GetHLSSettings(ctx); err != nil {
+		logger.Warn("hls settings load failed", slog.String("error", err.Error()))
+	} else if ok {
+		if hls.MemBufSizeMB > 0 {
+			cfg.HLSMemBufSizeBytes = int64(hls.MemBufSizeMB) * 1024 * 1024
+		}
+		if hls.CacheSizeMB > 0 {
+			cfg.HLSCacheSizeBytes = int64(hls.CacheSizeMB) * 1024 * 1024
+		}
+		if hls.CacheMaxAgeHours > 0 {
+			cfg.HLSCacheMaxAgeH = int64(hls.CacheMaxAgeHours)
+		}
 	}
 
 	currentTorrentID := domain.TorrentID("")
@@ -168,6 +183,7 @@ func main() {
 		AudioBitrate:      cfg.HLSAudioBitrate,
 		MaxCacheSizeBytes: cfg.HLSCacheSizeBytes,
 		MaxCacheAge:       time.Duration(cfg.HLSCacheMaxAgeH) * time.Hour,
+		MemBufSizeBytes:   cfg.HLSMemBufSizeBytes,
 	}
 
 	options := []apihttp.ServerOption{
@@ -196,6 +212,12 @@ func main() {
 	if hlsEngine := handler.EncodingSettingsEngine(); hlsEngine != nil {
 		encodingMgr := app.NewEncodingSettingsManager(hlsEngine, encodingSettingsRepo)
 		handler.SetEncodingSettings(encodingMgr)
+	}
+
+	// Wire HLS settings manager after server creation (needs HLS engine).
+	if hlsEngine := handler.HLSSettingsEngine(); hlsEngine != nil {
+		hlsMgr := app.NewHLSSettingsManager(hlsEngine, hlsSettingsRepo)
+		handler.SetHLSSettings(hlsMgr)
 	}
 
 	// Periodically update Prometheus gauges from engine state.
@@ -230,6 +252,7 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 
+	handler.Close()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Warn("http shutdown error", slog.String("error", err.Error()))
 	}

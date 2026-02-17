@@ -90,6 +90,36 @@ var (
 		Name:      "peers_connected",
 		Help:      "Total number of peers connected across all sessions.",
 	})
+
+	HLSMemBufSizeBytes = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "engine",
+		Name:      "hls_membuf_size_bytes",
+		Help:      "Current memory usage of the HLS in-memory segment buffer.",
+	})
+
+	HLSMemBufEntries = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "engine",
+		Name:      "hls_membuf_entries",
+		Help:      "Number of segments in the HLS in-memory buffer.",
+	})
+
+	HLSMemBufHitsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "engine",
+		Name:      "hls_membuf_hits_total",
+		Help:      "Total number of HLS in-memory buffer hits.",
+	})
+
+	HLSMemBufMissesTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "engine",
+		Name:      "hls_membuf_misses_total",
+		Help:      "Total number of HLS in-memory buffer misses.",
+	})
+
+	HLSMemBufEvictionsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "engine",
+		Name:      "hls_membuf_evictions_total",
+		Help:      "Total number of HLS in-memory buffer evictions.",
+	})
 )
 
 func Register(reg prometheus.Registerer) {
@@ -108,5 +138,10 @@ func Register(reg prometheus.Registerer) {
 		HLSAutoRestartsTotal,
 		HLSCacheSizeBytes,
 		PeersConnected,
+		HLSMemBufSizeBytes,
+		HLSMemBufEntries,
+		HLSMemBufHitsTotal,
+		HLSMemBufMissesTotal,
+		HLSMemBufEvictionsTotal,
 	)
 }

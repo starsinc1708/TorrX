@@ -3,6 +3,7 @@ package apihttp
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +31,7 @@ type HLSConfig struct {
 	AudioBitrate      string
 	MaxCacheSizeBytes int64
 	MaxCacheAge       time.Duration
+	MemBufSizeBytes   int64
 }
 
 type hlsKey struct {
@@ -55,6 +57,19 @@ type hlsJob struct {
 	restartCount int
 	multiVariant bool             // true when producing multiple quality variants
 	variants     []qualityVariant // populated for multi-variant jobs
+
+	// Cached rewritten playlist (avoids re-parsing on every m3u8 GET).
+	rewrittenMu           sync.RWMutex
+	rewrittenPlaylist     []byte
+	rewrittenPlaylistPath string    // source playlist path that was cached
+	rewrittenPlaylistMod  time.Time // mtime of source when cached
+	rewrittenAudioTrack   int
+	rewrittenSubTrack     int
+
+	// Precomputed cumulative time index for segmentTimeOffset (O(1) lookup).
+	timeIndexMu   sync.RWMutex
+	timeIndex     map[string]float64 // segmentName → absolute start time (seconds)
+	timeIndexSize int                // number of segments already indexed
 }
 
 type codecCacheEntry struct {
@@ -80,10 +95,14 @@ type hlsManager struct {
 	mu                    sync.Mutex
 	jobs                  map[hlsKey]*hlsJob
 	cache                 *hlsCache
+	memBuf                *hlsMemBuffer
 	codecCacheMu          sync.RWMutex
 	codecCache            map[string]*codecCacheEntry // filePath → codec detection results
+	codecCacheDirty       bool                         // true when in-memory cache diverged from disk
+	codecCacheSaveTimer   *time.Timer                  // debounced disk write
 	resolutionCacheMu     sync.RWMutex
 	resolutionCache       map[string]*resolutionCacheEntry // filePath → resolution
+	segmentDuration       int
 	logger                *slog.Logger
 	totalJobStarts        uint64
 	totalJobFailures      uint64
@@ -171,22 +190,136 @@ func newHLSManager(stream StreamTorrentUseCase, cfg HLSConfig, logger *slog.Logg
 
 	cacheDir := filepath.Join(baseDir, "cache")
 	cache := newHLSCache(cacheDir, cfg.MaxCacheSizeBytes, cfg.MaxCacheAge, logger)
+	memBuf := newHLSMemBuffer(cfg.MemBufSizeBytes)
 
-	return &hlsManager{
-		stream:       stream,
-		ffmpegPath:   ffmpegPath,
-		ffprobePath:  ffprobePath,
-		baseDir:      baseDir,
-		dataDir:      dataDir,
-		listenAddr:   strings.TrimSpace(cfg.ListenAddr),
-		preset:       preset,
-		crf:          crf,
-		audioBitrate: audioBitrate,
+	mgr := &hlsManager{
+		stream:          stream,
+		ffmpegPath:      ffmpegPath,
+		ffprobePath:     ffprobePath,
+		baseDir:         baseDir,
+		dataDir:         dataDir,
+		listenAddr:      strings.TrimSpace(cfg.ListenAddr),
+		preset:          preset,
+		crf:             crf,
+		audioBitrate:    audioBitrate,
+		segmentDuration: 4,
 		jobs:            make(map[hlsKey]*hlsJob),
 		cache:           cache,
+		memBuf:          memBuf,
 		codecCache:      make(map[string]*codecCacheEntry),
 		resolutionCache: make(map[string]*resolutionCacheEntry),
 		logger:          logger,
+	}
+	mgr.loadCodecCache()
+	return mgr
+}
+
+// ---- Persistent codec cache ------------------------------------------------
+
+const maxCodecCacheEntries = 2000
+
+// persistedCodecEntry is the JSON-serializable form of a codec cache entry.
+type persistedCodecEntry struct {
+	IsH264 bool `json:"h264"`
+	IsAAC  bool `json:"aac"`
+	Width  int  `json:"w,omitempty"`
+	Height int  `json:"h,omitempty"`
+}
+
+func (m *hlsManager) codecCachePath() string {
+	return filepath.Join(m.baseDir, "codec_cache.json")
+}
+
+// loadCodecCache reads the on-disk codec cache into memory.
+func (m *hlsManager) loadCodecCache() {
+	data, err := os.ReadFile(m.codecCachePath())
+	if err != nil {
+		return // no file yet — not an error
+	}
+	var entries map[string]*persistedCodecEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		m.logger.Warn("failed to parse codec cache", slog.String("err", err.Error()))
+		return
+	}
+
+	m.codecCacheMu.Lock()
+	m.resolutionCacheMu.Lock()
+	for path, e := range entries {
+		m.codecCache[path] = &codecCacheEntry{isH264: e.IsH264, isAAC: e.IsAAC}
+		if e.Width > 0 || e.Height > 0 {
+			m.resolutionCache[path] = &resolutionCacheEntry{width: e.Width, height: e.Height}
+		}
+	}
+	m.resolutionCacheMu.Unlock()
+	m.codecCacheMu.Unlock()
+
+	m.logger.Info("loaded codec cache", slog.Int("entries", len(entries)))
+}
+
+// saveCodecCache writes the in-memory codec+resolution caches to disk atomically.
+func (m *hlsManager) saveCodecCache() {
+	m.codecCacheMu.RLock()
+	m.resolutionCacheMu.RLock()
+
+	entries := make(map[string]*persistedCodecEntry, len(m.codecCache))
+	for path, c := range m.codecCache {
+		e := &persistedCodecEntry{IsH264: c.isH264, IsAAC: c.isAAC}
+		if r, ok := m.resolutionCache[path]; ok {
+			e.Width = r.width
+			e.Height = r.height
+		}
+		entries[path] = e
+	}
+
+	m.resolutionCacheMu.RUnlock()
+	m.codecCacheMu.RUnlock()
+
+	data, err := json.Marshal(entries)
+	if err != nil {
+		m.logger.Warn("failed to marshal codec cache", slog.String("err", err.Error()))
+		return
+	}
+
+	tmp := m.codecCachePath() + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		m.logger.Warn("failed to write codec cache", slog.String("err", err.Error()))
+		return
+	}
+	if err := os.Rename(tmp, m.codecCachePath()); err != nil {
+		m.logger.Warn("failed to rename codec cache", slog.String("err", err.Error()))
+	}
+}
+
+// scheduleCodecCacheSave debounces disk writes — at most one write per 5 seconds.
+func (m *hlsManager) scheduleCodecCacheSave() {
+	m.codecCacheMu.Lock()
+	m.codecCacheDirty = true
+	if m.codecCacheSaveTimer == nil {
+		m.codecCacheSaveTimer = time.AfterFunc(5*time.Second, func() {
+			m.codecCacheMu.Lock()
+			m.codecCacheDirty = false
+			m.codecCacheSaveTimer = nil
+			m.codecCacheMu.Unlock()
+			m.saveCodecCache()
+		})
+	}
+	m.codecCacheMu.Unlock()
+}
+
+// evictCodecCacheIfNeeded trims the codec cache to maxCodecCacheEntries by
+// removing arbitrary entries (codec detection is cheap enough that occasional
+// re-probes are acceptable).
+func (m *hlsManager) evictCodecCacheIfNeeded() {
+	if len(m.codecCache) <= maxCodecCacheEntries {
+		return
+	}
+	excess := len(m.codecCache) - maxCodecCacheEntries
+	for path := range m.codecCache {
+		if excess <= 0 {
+			break
+		}
+		delete(m.codecCache, path)
+		excess--
 	}
 }
 
@@ -219,6 +352,55 @@ func (m *hlsManager) UpdateEncodingSettings(preset string, crf int, audioBitrate
 	}
 	if audioBitrate != "" {
 		m.audioBitrate = audioBitrate
+	}
+}
+
+func (m *hlsManager) SegmentDuration() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.segmentDuration <= 0 {
+		return 4
+	}
+	return m.segmentDuration
+}
+
+func (m *hlsManager) MemBufSizeBytes() int64 {
+	if m.memBuf == nil {
+		return 0
+	}
+	return m.memBuf.MaxBytes()
+}
+
+func (m *hlsManager) CacheSizeBytes() int64 {
+	if m.cache == nil {
+		return 0
+	}
+	return m.cache.MaxBytes()
+}
+
+func (m *hlsManager) CacheMaxAge() time.Duration {
+	if m.cache == nil {
+		return 0
+	}
+	return m.cache.MaxAge()
+}
+
+func (m *hlsManager) UpdateHLSSettings(memBufSize, cacheSizeBytes, cacheMaxAgeHours int64, segmentDuration int) {
+	if m.memBuf != nil && memBufSize > 0 {
+		m.memBuf.Resize(memBufSize)
+	}
+	if m.cache != nil {
+		if cacheSizeBytes > 0 {
+			m.cache.SetMaxBytes(cacheSizeBytes)
+		}
+		if cacheMaxAgeHours > 0 {
+			m.cache.SetMaxAge(time.Duration(cacheMaxAgeHours) * time.Hour)
+		}
+	}
+	if segmentDuration > 0 {
+		m.mu.Lock()
+		m.segmentDuration = segmentDuration
+		m.mu.Unlock()
 	}
 }
 
@@ -360,6 +542,9 @@ func (m *hlsManager) seekJob(id domain.TorrentID, fileIndex, audioTrack, subtitl
 	if oldDir != "" && oldDir != dir {
 		go func(path string, seekSec float64) {
 			m.harvestSegmentsToCache(key, path, seekSec)
+			if m.memBuf != nil {
+				m.memBuf.PurgePrefix(path)
+			}
 			_ = os.RemoveAll(path)
 		}(oldDir, oldSeekSeconds)
 	}
@@ -474,7 +659,12 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	encPreset := m.preset
 	encCRF := m.crf
 	encAudioBitrate := m.audioBitrate
+	segDur := m.segmentDuration
 	m.mu.Unlock()
+	if segDur <= 0 {
+		segDur = 4
+	}
+	segDurStr := strconv.Itoa(segDur)
 
 	// Detect source resolution for multi-variant encoding.
 	isLocalFile := !useReader &&
@@ -518,7 +708,6 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 		} else {
 			args = append(args, "-c:a", "aac", "-b:a", encAudioBitrate, "-ac", "2")
 		}
-		args = append(args, "-copyts", "-start_at_zero")
 		m.logger.Info("hls using stream copy mode", slog.String("input", input))
 	} else if multiVariant {
 		// Build filter_complex: optional subtitle burn → split → per-variant scale.
@@ -537,7 +726,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 			"-c:v", "libx264",
 			"-pix_fmt", "yuv420p",
 			"-preset", encPreset,
-			"-force_key_frames", "expr:gte(t,n_forced*4)",
+			"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segDur),
 		)
 
 		// Per-variant bitrate / CRF settings.
@@ -568,7 +757,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 			"-pix_fmt", "yuv420p",
 			"-preset", encPreset,
 			"-crf", strconv.Itoa(encCRF),
-			"-force_key_frames", "expr:gte(t,n_forced*4)",
+			"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segDur),
 		)
 		if key.subtitleTrack >= 0 {
 			args = append(args,
@@ -591,7 +780,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 		}
 		args = append(args,
 			"-f", "hls",
-			"-hls_time", "4",
+			"-hls_time", segDurStr,
 			"-hls_list_size", "0",
 			"-hls_playlist_type", playlistType,
 			"-hls_flags", flags,
@@ -603,7 +792,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	} else {
 		args = append(args,
 			"-f", "hls",
-			"-hls_time", "4",
+			"-hls_time", segDurStr,
 			"-hls_list_size", "0",
 			"-hls_playlist_type", playlistType,
 			"-hls_flags", flags,
@@ -774,10 +963,10 @@ func newHLSJob(dir string, seekSeconds float64) *hlsJob {
 }
 
 // segmentTimeOffset computes the absolute time offset (in seconds) for the
-// given segment filename by parsing the job's m3u8 playlist and summing
-// EXTINF durations up to that segment. For multi-variant segments (e.g.
-// "v0/seg-00001.ts"), the variant prefix is parsed to locate the correct
-// variant playlist.
+// given segment filename. It maintains a lazily-built cumulative time index
+// per job so that repeated lookups are O(1) instead of O(n).
+// For multi-variant segments (e.g. "v0/seg-00001.ts"), the variant prefix
+// is parsed to locate the correct variant playlist.
 func segmentTimeOffset(job *hlsJob, segmentName string) (float64, bool) {
 	if job == nil {
 		return 0, false
@@ -795,16 +984,43 @@ func segmentTimeOffset(job *hlsJob, segmentName string) (float64, bool) {
 		}
 	}
 
+	// Fast path: check existing index.
+	job.timeIndexMu.RLock()
+	if t, ok := job.timeIndex[parsedSegName]; ok {
+		job.timeIndexMu.RUnlock()
+		return t, true
+	}
+	job.timeIndexMu.RUnlock()
+
+	// Slow path: parse playlist and extend the index.
 	segments, err := parseM3U8Segments(playlist)
 	if err != nil {
 		return 0, false
 	}
-	cumTime := job.seekSeconds
-	for _, seg := range segments {
-		if seg.Filename == parsedSegName {
-			return cumTime, true
+
+	job.timeIndexMu.Lock()
+	defer job.timeIndexMu.Unlock()
+
+	// Only index new segments (playlist is append-only).
+	if len(segments) > job.timeIndexSize {
+		if job.timeIndex == nil {
+			job.timeIndex = make(map[string]float64, len(segments))
 		}
-		cumTime += seg.Duration
+		cumTime := job.seekSeconds
+		for i, seg := range segments {
+			if i < job.timeIndexSize {
+				// Already indexed — just advance cumTime.
+				cumTime += seg.Duration
+				continue
+			}
+			job.timeIndex[seg.Filename] = cumTime
+			cumTime += seg.Duration
+		}
+		job.timeIndexSize = len(segments)
+	}
+
+	if t, ok := job.timeIndex[parsedSegName]; ok {
+		return t, true
 	}
 	return 0, false
 }
@@ -825,6 +1041,9 @@ func (m *hlsManager) cleanupJob(key hlsKey, job *hlsJob) {
 	m.mu.Unlock()
 	if removeDir {
 		m.harvestSegmentsToCache(key, job.dir, job.seekSeconds)
+		if m.memBuf != nil {
+			m.memBuf.PurgePrefix(job.dir)
+		}
 		_ = os.RemoveAll(job.dir)
 	}
 }
@@ -888,6 +1107,14 @@ func (m *hlsManager) harvestSegmentsToCache(key hlsKey, dir string, seekSeconds 
 					slog.String("variant", vi.variant),
 					slog.String("error", err.Error()),
 				)
+			} else if m.memBuf != nil {
+				if raw, readErr := os.ReadFile(srcPath); readErr == nil {
+					cachePath := m.cache.SegmentPath(
+						string(key.id), key.fileIndex, key.audioTrack, key.subtitleTrack,
+						vi.variant, startTime, endTime,
+					)
+					m.memBuf.Put(cachePath, raw)
+				}
 			}
 			cumTime = endTime
 		}
@@ -961,6 +1188,11 @@ func (m *hlsManager) cacheSegmentsLive(job *hlsJob, key hlsKey) {
 							string(key.id), key.fileIndex, key.audioTrack, key.subtitleTrack,
 							vs.variant, startTime, endTime, srcPath,
 						)
+						if m.memBuf != nil {
+							if raw, readErr := os.ReadFile(srcPath); readErr == nil {
+								m.memBuf.Put(srcPath, raw)
+							}
+						}
 					}
 					cumTime = endTime
 				}
@@ -1310,8 +1542,10 @@ func (m *hlsManager) isH264FileWithCache(filePath string) bool {
 		m.codecCache[filePath] = &codecCacheEntry{}
 	}
 	m.codecCache[filePath].isH264 = result
+	m.evictCodecCacheIfNeeded()
 	m.codecCacheMu.Unlock()
 
+	m.scheduleCodecCacheSave()
 	return result
 }
 
@@ -1335,8 +1569,10 @@ func (m *hlsManager) isAACAudioWithCache(filePath string) bool {
 		m.codecCache[filePath] = &codecCacheEntry{}
 	}
 	m.codecCache[filePath].isAAC = result
+	m.evictCodecCacheIfNeeded()
 	m.codecCacheMu.Unlock()
 
+	m.scheduleCodecCacheSave()
 	return result
 }
 
@@ -1444,6 +1680,7 @@ func (m *hlsManager) getVideoResolutionWithCache(filePath string) (int, int) {
 	m.resolutionCache[filePath] = &resolutionCacheEntry{width: w, height: h}
 	m.resolutionCacheMu.Unlock()
 
+	m.scheduleCodecCacheSave()
 	return w, h
 }
 

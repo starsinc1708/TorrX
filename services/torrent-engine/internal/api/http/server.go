@@ -1,6 +1,7 @@
 package apihttp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -73,6 +74,11 @@ type EncodingSettingsController interface {
 	Update(settings app.EncodingSettings) error
 }
 
+type HLSSettingsController interface {
+	Get() app.HLSSettings
+	Update(settings app.HLSSettings) error
+}
+
 type PlayerSettingsController interface {
 	CurrentTorrentID() domain.TorrentID
 	SetCurrentTorrentID(id domain.TorrentID) error
@@ -114,6 +120,7 @@ type Server struct {
 	mediaDataDir    string
 	watchHistory    WatchHistoryStore
 	encoding        EncodingSettingsController
+	hlsSettingsCtrl HLSSettingsController
 	player          PlayerSettingsController
 	engine          domainports.Engine
 	logger          *slog.Logger
@@ -236,6 +243,20 @@ func (s *Server) SetEncodingSettings(ctrl EncodingSettingsController) {
 	s.encoding = ctrl
 }
 
+// HLSSettingsEngine returns the internal HLS manager as an
+// app.HLSSettingsEngine. Returns nil if HLS is not configured.
+func (s *Server) HLSSettingsEngine() app.HLSSettingsEngine {
+	if s.hls == nil {
+		return nil
+	}
+	return s.hls
+}
+
+// SetHLSSettings sets the HLS settings controller after construction.
+func (s *Server) SetHLSSettings(ctrl HLSSettingsController) {
+	s.hlsSettingsCtrl = ctrl
+}
+
 // HLSCacheTotalSize returns the current total size of the HLS segment cache in bytes.
 func (s *Server) HLSCacheTotalSize() int64 {
 	if s.hls == nil || s.hls.cache == nil {
@@ -355,6 +376,7 @@ func NewServer(create CreateTorrentUseCase, opts ...ServerOption) *Server {
 	mux.HandleFunc("/torrents/", s.handleTorrentByID)
 	mux.HandleFunc("/settings/storage", s.handleStorageSettings)
 	mux.HandleFunc("/settings/encoding", s.handleEncodingSettings)
+	mux.HandleFunc("/settings/hls", s.handleHLSSettings)
 	mux.HandleFunc("/settings/player", s.handlePlayerSettings)
 	mux.HandleFunc("/watch-history", s.handleWatchHistory)
 	mux.HandleFunc("/watch-history/", s.handleWatchHistoryByID)
@@ -372,7 +394,7 @@ func NewServer(create CreateTorrentUseCase, opts ...ServerOption) *Server {
 			return p != "/metrics" && p != "/internal/health/player" && !strings.HasPrefix(p, "/swagger")
 		}),
 	)
-	s.handler = recoveryMiddleware(s.logger, metricsMiddleware(corsMiddleware(traced)))
+	s.handler = recoveryMiddleware(s.logger, rateLimitMiddleware(100, 200, metricsMiddleware(corsMiddleware(traced))))
 	return s
 }
 
@@ -402,6 +424,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }
 
+// Close gracefully shuts down the WebSocket hub, disconnecting all clients.
+func (s *Server) Close() {
+	if s.wsHub != nil {
+		s.wsHub.Close()
+	}
+}
+
 func (s *Server) handleTorrents(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
@@ -417,6 +446,8 @@ type storageSettingsResponse struct {
 	Mode             string `json:"mode"`
 	MemoryLimitBytes int64  `json:"memoryLimitBytes"`
 	SpillToDisk      bool   `json:"spillToDisk"`
+	DataDir          string `json:"dataDir,omitempty"`
+	HLSDir           string `json:"hlsDir,omitempty"`
 }
 
 type updateStorageSettingsRequest struct {
@@ -496,10 +527,17 @@ func (s *Server) currentStorageSettings() storageSettingsResponse {
 		limit = s.storage.MemoryLimitBytes()
 		spill = s.storage.SpillToDisk()
 	}
+	dataDir := s.mediaDataDir
+	hlsDir := ""
+	if s.hls != nil {
+		hlsDir = s.hls.baseDir
+	}
 	return storageSettingsResponse{
 		Mode:             mode,
 		MemoryLimitBytes: limit,
 		SpillToDisk:      spill,
+		DataDir:          dataDir,
+		HLSDir:           hlsDir,
 	}
 }
 
@@ -705,6 +743,80 @@ func (s *Server) handleUpdateEncodingSettings(w http.ResponseWriter, r *http.Req
 	}
 
 	writeJSON(w, http.StatusOK, s.encoding.Get())
+}
+
+// HLS settings handlers.
+
+func (s *Server) handleHLSSettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleGetHLSSettings(w, r)
+	case http.MethodPatch, http.MethodPut:
+		s.handleUpdateHLSSettings(w, r)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleGetHLSSettings(w http.ResponseWriter, _ *http.Request) {
+	if s.hlsSettingsCtrl == nil {
+		writeError(w, http.StatusNotImplemented, "not_configured", "hls settings not configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.hlsSettingsCtrl.Get())
+}
+
+func (s *Server) handleUpdateHLSSettings(w http.ResponseWriter, r *http.Request) {
+	if s.hlsSettingsCtrl == nil {
+		writeError(w, http.StatusNotImplemented, "not_configured", "hls settings not configured")
+		return
+	}
+
+	var body app.HLSSettings
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json")
+		return
+	}
+
+	// Merge with current values for partial updates.
+	current := s.hlsSettingsCtrl.Get()
+	if body.MemBufSizeMB == 0 {
+		body.MemBufSizeMB = current.MemBufSizeMB
+	}
+	if body.CacheSizeMB == 0 {
+		body.CacheSizeMB = current.CacheSizeMB
+	}
+	if body.CacheMaxAgeHours == 0 {
+		body.CacheMaxAgeHours = current.CacheMaxAgeHours
+	}
+	if body.SegmentDuration == 0 {
+		body.SegmentDuration = current.SegmentDuration
+	}
+
+	// Validation.
+	if body.MemBufSizeMB < 0 || body.MemBufSizeMB > 4096 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "memBufSizeMB must be 0-4096")
+		return
+	}
+	if body.CacheSizeMB < 100 || body.CacheSizeMB > 102400 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "cacheSizeMB must be 100-102400")
+		return
+	}
+	if body.CacheMaxAgeHours < 1 || body.CacheMaxAgeHours > 8760 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "cacheMaxAgeHours must be 1-8760")
+		return
+	}
+	if body.SegmentDuration < 2 || body.SegmentDuration > 10 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "segmentDuration must be 2-10")
+		return
+	}
+
+	if err := s.hlsSettingsCtrl.Update(body); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to update hls settings")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, s.hlsSettingsCtrl.Get())
 }
 
 func (s *Server) handleCreateTorrent(w http.ResponseWriter, r *http.Request) {
@@ -1106,6 +1218,10 @@ func (s *Server) handleDeleteTorrent(w http.ResponseWriter, r *http.Request, id 
 	if s.hls != nil && s.hls.cache != nil {
 		s.hls.cache.PurgeTorrent(id)
 	}
+	if s.hls != nil && s.hls.memBuf != nil {
+		s.hls.memBuf.PurgePrefix(filepath.Join(s.hls.baseDir, id))
+		s.hls.memBuf.PurgePrefix(filepath.Join(s.hls.cache.BaseDir(), id))
+	}
 
 	s.invalidateMediaProbeCache(domain.TorrentID(id))
 
@@ -1232,6 +1348,10 @@ func (s *Server) handleBulkDelete(w http.ResponseWriter, r *http.Request) {
 		}
 		if s.hls != nil && s.hls.cache != nil {
 			s.hls.cache.PurgeTorrent(id)
+		}
+		if s.hls != nil && s.hls.memBuf != nil {
+			s.hls.memBuf.PurgePrefix(filepath.Join(s.hls.baseDir, id))
+			s.hls.memBuf.PurgePrefix(filepath.Join(s.hls.cache.BaseDir(), id))
 		}
 		s.invalidateMediaProbeCache(domain.TorrentID(id))
 		results = append(results, bulkResultItem{ID: id, OK: true})
@@ -1447,12 +1567,20 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
+
+		if cached := cachedRewrittenPlaylist(job, job.playlist, audioTrack, subtitleTrack); cached != nil {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(cached)
+			return
+		}
+
 		playlistBytes, err := os.ReadFile(job.playlist)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal_error", "playlist unavailable")
 			return
 		}
 		playlistBytes = rewritePlaylistSegmentURLs(playlistBytes, audioTrack, subtitleTrack)
+		storeRewrittenPlaylist(job, job.playlist, audioTrack, subtitleTrack, playlistBytes)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(playlistBytes)
 		return
@@ -1469,12 +1597,20 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
+
+		if cached := cachedRewrittenPlaylist(job, variantPath, audioTrack, subtitleTrack); cached != nil {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(cached)
+			return
+		}
+
 		playlistBytes, readErr := os.ReadFile(variantPath)
 		if readErr != nil {
 			writeError(w, http.StatusInternalServerError, "internal_error", "variant playlist unavailable")
 			return
 		}
 		playlistBytes = rewritePlaylistSegmentURLs(playlistBytes, audioTrack, subtitleTrack)
+		storeRewrittenPlaylist(job, variantPath, audioTrack, subtitleTrack, playlistBytes)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(playlistBytes)
 		return
@@ -1494,15 +1630,44 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 		return
 	}
 
-	// Try serving from job working directory first.
+	// 1. Try in-memory buffer (zero disk I/O).
+	if s.hls.memBuf != nil {
+		if data, ok := s.hls.memBuf.Get(segmentPath); ok {
+			w.Header().Set("Content-Type", "video/MP2T")
+			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+			http.ServeContent(w, r, segmentName, time.Time{}, bytes.NewReader(data))
+			return
+		}
+	}
+
+	// 2. Try serving from job working directory.
 	if _, err := os.Stat(segmentPath); err != nil {
 		// Segment not in job dir — try the HLS cache.
 		if os.IsNotExist(err) && s.hls != nil && s.hls.cache != nil {
 			if timeSec, ok := segmentTimeOffset(job, segmentName); ok {
 				if cached, found := s.hls.cache.Lookup(string(id), fileIndex, audioTrack, subtitleTrack, variant, timeSec); found {
+					// 3a. Check memBuf under cache path.
+					if s.hls.memBuf != nil {
+						if data, memOk := s.hls.memBuf.Get(cached.Path); memOk {
+							w.Header().Set("Content-Type", "video/MP2T")
+							w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+							http.ServeContent(w, r, segmentName, time.Time{}, bytes.NewReader(data))
+							return
+						}
+					}
+					// 3b. Serve from disk cache, async promote to memBuf.
 					w.Header().Set("Content-Type", "video/MP2T")
 					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 					http.ServeFile(w, r, cached.Path)
+					if s.hls.memBuf != nil {
+						go func(p string) {
+							if raw, readErr := os.ReadFile(p); readErr == nil {
+								s.hls.memBuf.Put(p, raw)
+							}
+						}(cached.Path)
+					}
 					return
 				}
 			}
@@ -1518,6 +1683,14 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
 	http.ServeFile(w, r, segmentPath)
+	// Async promote to memBuf so subsequent requests (re-watch, multi-client) hit RAM.
+	if s.hls.memBuf != nil {
+		go func(p string) {
+			if raw, readErr := os.ReadFile(p); readErr == nil {
+				s.hls.memBuf.Put(p, raw)
+			}
+		}(segmentPath)
+	}
 }
 
 func (s *Server) handleHLSSeek(w http.ResponseWriter, r *http.Request, id domain.TorrentID, fileIndex, audioTrack, subtitleTrack int) {
@@ -1538,10 +1711,18 @@ func (s *Server) handleHLSSeek(w http.ResponseWriter, r *http.Request, id domain
 		return
 	}
 
+	// Wait briefly for the job to become ready so we can detect early
+	// errors (e.g. subtitle source unavailable). If FFmpeg is still
+	// starting after the short wait, return success anyway — HLS.js on
+	// the client side will poll the manifest with its built-in retry
+	// logic.  This avoids the previous 30s blocking wait which caused
+	// the frontend to retry the seek endpoint, killing the in-progress
+	// FFmpeg job and restarting it from scratch each time.
 	select {
 	case <-job.ready:
-	case <-time.After(30 * time.Second):
-		writeError(w, http.StatusServiceUnavailable, "stream_unavailable", "hls playlist not ready after seek")
+	case <-time.After(5 * time.Second):
+		// Job still starting — return success; client will poll manifest.
+		writeJSON(w, http.StatusOK, map[string]float64{"seekTime": seekTime})
 		return
 	}
 
@@ -1561,8 +1742,8 @@ func (s *Server) handleHLSSeek(w http.ResponseWriter, r *http.Request, id domain
 		}
 		select {
 		case <-job.ready:
-		case <-time.After(30 * time.Second):
-			writeError(w, http.StatusServiceUnavailable, "stream_unavailable", "hls playlist not ready after seek (subtitle fallback)")
+		case <-time.After(5 * time.Second):
+			writeJSON(w, http.StatusOK, map[string]float64{"seekTime": seekTime})
 			return
 		}
 	}
@@ -2132,6 +2313,42 @@ func rewritePlaylistSegmentURLs(playlist []byte, audioTrack, subtitleTrack int) 
 		}
 	}
 	return []byte(strings.Join(lines, "\n"))
+}
+
+// cachedRewrittenPlaylist returns the cached rewritten playlist if the
+// source file hasn't changed and track parameters match. Returns nil on miss.
+func cachedRewrittenPlaylist(job *hlsJob, playlistPath string, audioTrack, subtitleTrack int) []byte {
+	job.rewrittenMu.RLock()
+	defer job.rewrittenMu.RUnlock()
+
+	if job.rewrittenPlaylist == nil ||
+		job.rewrittenPlaylistPath != playlistPath ||
+		job.rewrittenAudioTrack != audioTrack ||
+		job.rewrittenSubTrack != subtitleTrack {
+		return nil
+	}
+	// Check if the underlying playlist file changed since we cached it.
+	info, err := os.Stat(playlistPath)
+	if err != nil || info.ModTime().After(job.rewrittenPlaylistMod) {
+		return nil
+	}
+	return job.rewrittenPlaylist
+}
+
+// storeRewrittenPlaylist caches the rewritten playlist bytes for future requests.
+func storeRewrittenPlaylist(job *hlsJob, playlistPath string, audioTrack, subtitleTrack int, data []byte) {
+	mod := time.Now()
+	if info, err := os.Stat(playlistPath); err == nil {
+		mod = info.ModTime()
+	}
+
+	job.rewrittenMu.Lock()
+	job.rewrittenPlaylist = data
+	job.rewrittenPlaylistPath = playlistPath
+	job.rewrittenPlaylistMod = mod
+	job.rewrittenAudioTrack = audioTrack
+	job.rewrittenSubTrack = subtitleTrack
+	job.rewrittenMu.Unlock()
 }
 
 func parseStatus(value string) (*domain.TorrentStatus, error) {

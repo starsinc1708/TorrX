@@ -6,13 +6,24 @@ http:
         responseHeaderTimeout: "120s"
         idleConnTimeout: "90s"
 
+  middlewares:
+    security-headers:
+      headers:
+        frameDeny: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        permissionsPolicy: "camera=(), microphone=(), geolocation=()"
+
   routers:
     # --- HTTP routers (port 80) ---
     api:
       entryPoints:
         - web
-      rule: "PathPrefix(`/torrents`) || PathPrefix(`/settings/storage`) || PathPrefix(`/settings/player`) || PathPrefix(`/settings/encoding`) || PathPrefix(`/watch-history`) || PathPrefix(`/swagger`) || PathPrefix(`/internal`) || PathPrefix(`/ws`)"
+      rule: "PathPrefix(`/torrents`) || PathPrefix(`/settings/storage`) || PathPrefix(`/settings/player`) || PathPrefix(`/settings/encoding`) || PathPrefix(`/settings/hls`) || PathPrefix(`/watch-history`) || PathPrefix(`/swagger`) || PathPrefix(`/internal`) || PathPrefix(`/ws`)"
       service: torrentstream-api
+      middlewares:
+        - security-headers
       priority: 200
 
     search:
@@ -20,6 +31,8 @@ http:
         - web
       rule: "PathPrefix(`/search`)"
       service: torrent-search-api
+      middlewares:
+        - security-headers
       priority: 190
 
     jackett:
@@ -41,14 +54,18 @@ http:
         - web
       rule: "PathPrefix(`/`)"
       service: web-client
+      middlewares:
+        - security-headers
       priority: 1
 
     # --- HTTPS routers (port 443, HTTP/2) ---
     api-secure:
       entryPoints:
         - websecure
-      rule: "PathPrefix(`/torrents`) || PathPrefix(`/settings/storage`) || PathPrefix(`/settings/player`) || PathPrefix(`/settings/encoding`) || PathPrefix(`/watch-history`) || PathPrefix(`/swagger`) || PathPrefix(`/internal`) || PathPrefix(`/ws`)"
+      rule: "PathPrefix(`/torrents`) || PathPrefix(`/settings/storage`) || PathPrefix(`/settings/player`) || PathPrefix(`/settings/encoding`) || PathPrefix(`/settings/hls`) || PathPrefix(`/watch-history`) || PathPrefix(`/swagger`) || PathPrefix(`/internal`) || PathPrefix(`/ws`)"
       service: torrentstream-api
+      middlewares:
+        - security-headers
       priority: 200
       tls: {}
 
@@ -57,6 +74,8 @@ http:
         - websecure
       rule: "PathPrefix(`/search`)"
       service: torrent-search-api
+      middlewares:
+        - security-headers
       priority: 190
       tls: {}
 
@@ -65,6 +84,8 @@ http:
         - websecure
       rule: "PathPrefix(`/`)"
       service: web-client
+      middlewares:
+        - security-headers
       priority: 1
       tls: {}
 

@@ -511,4 +511,4 @@ const TorrentList: React.FC<TorrentListProps> = ({
   );
 };
 
-export default TorrentList;
+export default React.memo(TorrentList);

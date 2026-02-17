@@ -259,4 +259,4 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
   );
 };
 
-export default TorrentDetails;
+export default React.memo(TorrentDetails);

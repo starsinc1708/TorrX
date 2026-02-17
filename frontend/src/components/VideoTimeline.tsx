@@ -20,7 +20,7 @@ interface VideoTimelineProps {
   onSeekLeave: () => void;
 }
 
-export const VideoTimeline = forwardRef<HTMLDivElement, VideoTimelineProps>(
+export const VideoTimeline = React.memo(forwardRef<HTMLDivElement, VideoTimelineProps>(
   (
     {
       progressPercent,
@@ -91,6 +91,6 @@ export const VideoTimeline = forwardRef<HTMLDivElement, VideoTimelineProps>(
     </div>
   );
   },
-);
+));
 
 VideoTimeline.displayName = 'VideoTimeline';
