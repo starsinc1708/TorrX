@@ -249,12 +249,17 @@ func (s *Service) executePreparedSearch(ctx context.Context, prepared preparedSe
 					}
 				}
 				providerStartedAt := time.Now()
-				items, searchErr := current.Search(runCtx, domain.SearchRequest{
-					Query:     providerQuery,
-					Limit:     requestLimit,
-					SortBy:    prepared.sortBy,
-					SortOrder: prepared.sortOrder,
-					Profile:   prepared.profile,
+				var items []domain.SearchResult
+				searchErr := RetryWithBackoff(runCtx, DefaultRetryConfig(), func() error {
+					var err error
+					items, err = current.Search(runCtx, domain.SearchRequest{
+						Query:     providerQuery,
+						Limit:     requestLimit,
+						SortBy:    prepared.sortBy,
+						SortOrder: prepared.sortOrder,
+						Profile:   prepared.profile,
+					})
+					return err
 				})
 				s.recordProviderResult(providerKey, providerQuery, searchErr, time.Since(providerStartedAt), time.Now())
 
@@ -796,12 +801,17 @@ func (s *Service) executeStreamSearch(ctx context.Context, prepared preparedSear
 			}
 
 			providerStartedAt := time.Now()
-			items, searchErr := current.Search(runCtx, domain.SearchRequest{
-				Query:     prepared.query,
-				Limit:     requestLimit,
-				SortBy:    prepared.sortBy,
-				SortOrder: prepared.sortOrder,
-				Profile:   prepared.profile,
+			var items []domain.SearchResult
+			searchErr := RetryWithBackoff(runCtx, DefaultRetryConfig(), func() error {
+				var err error
+				items, err = current.Search(runCtx, domain.SearchRequest{
+					Query:     prepared.query,
+					Limit:     requestLimit,
+					SortBy:    prepared.sortBy,
+					SortOrder: prepared.sortOrder,
+					Profile:   prepared.profile,
+				})
+				return err
 			})
 			elapsed := time.Since(providerStartedAt)
 			s.recordProviderResult(providerKey, prepared.query, searchErr, elapsed, time.Now())

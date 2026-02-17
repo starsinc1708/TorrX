@@ -13,7 +13,8 @@ import (
 
 const (
 	providerFailureThreshold = 3
-	providerBlockDuration    = 2 * time.Minute
+	providerBlockBase        = 2 * time.Minute
+	providerBlockMax         = 15 * time.Minute
 )
 
 type providerHealth struct {
@@ -102,9 +103,26 @@ func (s *Service) recordProviderResult(providerName, query string, err error, la
 	metrics.ProviderRequestsTotal.WithLabelValues(name, status).Inc()
 
 	if state.consecutiveFailures >= providerFailureThreshold {
-		state.blockedUntil = now.Add(providerBlockDuration)
+		state.blockedUntil = now.Add(exponentialBlockDuration(state.consecutiveFailures))
 		metrics.ProviderAvailable.WithLabelValues(name).Set(0)
 	}
+}
+
+// exponentialBlockDuration calculates how long to block a provider based on
+// consecutive failures: baseDuration × 2^(failures - threshold), capped at 15min.
+func exponentialBlockDuration(consecutiveFailures int) time.Duration {
+	exponent := consecutiveFailures - providerFailureThreshold
+	if exponent < 0 {
+		exponent = 0
+	}
+	d := providerBlockBase
+	for i := 0; i < exponent; i++ {
+		d *= 2
+		if d > providerBlockMax {
+			return providerBlockMax
+		}
+	}
+	return d
 }
 
 func isTimeoutLikeError(err error) bool {
