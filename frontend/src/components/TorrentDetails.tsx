@@ -137,14 +137,17 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
           ) : null}
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" onClick={onStart}>
-              <Play className="h-4 w-4" />
-              Start
-            </Button>
-            <Button variant="outline" size="sm" onClick={onStop}>
-              <Square className="h-4 w-4" />
-              Stop
-            </Button>
+            {torrent.status === 'active' ? (
+              <Button variant="outline" size="sm" onClick={onStop}>
+                <Square className="h-4 w-4" />
+                Stop
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" onClick={onStart}>
+                <Play className="h-4 w-4" />
+                Start
+              </Button>
+            )}
             <Button variant="destructive" size="sm" onClick={() => onDelete(deleteFiles)}>
               <Trash2 className="h-4 w-4" />
               Delete

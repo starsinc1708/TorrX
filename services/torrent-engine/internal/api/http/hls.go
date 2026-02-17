@@ -868,6 +868,21 @@ func (m *hlsManager) applyRatePolicy(key hlsKey, job *hlsJob) {
 		job.bufferedReader.SetRateLimit(limitBytesPerSec)
 	}
 
+	// Only set the engine-level rate limit when this is the sole job for
+	// the torrent. Multiple concurrent jobs (e.g. different fileIndexes)
+	// would overwrite each other's limits every 5s, causing oscillation.
+	m.mu.RLock()
+	jobCount := 0
+	for k := range m.jobs {
+		if k.id == key.id {
+			jobCount++
+		}
+	}
+	m.mu.RUnlock()
+	if jobCount > 1 {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := m.engine.SetDownloadRateLimit(ctx, key.id, limitBytesPerSec); err != nil {
@@ -908,7 +923,6 @@ func (m *hlsManager) watchJobProgress(key hlsKey, job *hlsJob) {
 			m.mu.RUnlock()
 			return
 		}
-		lastActivity := job.lastActivity
 		restartCount := job.restartCount
 		playlistPath := job.playlist
 		m.mu.RUnlock()
@@ -916,23 +930,27 @@ func (m *hlsManager) watchJobProgress(key hlsKey, job *hlsJob) {
 		// Adjust torrent download rate based on playback state.
 		m.applyRatePolicy(key, job)
 
+		// Track playlist modifications for the initial ready signal,
+		// but do NOT use playlist mtime to reset the stall timer.
+		// FFmpeg can rewrite the .m3u8 periodically without adding
+		// new segments, which would prevent the stall from escalating.
 		if info, err := os.Stat(playlistPath); err == nil {
 			modified := info.ModTime().UTC()
 			if modified.After(lastSeenPlaylistMod) {
 				lastSeenPlaylistMod = modified
-				m.touchJobActivity(key, job)
-				stallWarnLogged = false
-				continue
 			}
 		}
 
-		// Check last segment for stuck encoder.
+		// Check last segment for stuck encoder. Use segment changes
+		// (not playlist mtime) as the authoritative progress signal.
 		if segPath, segSize := findLastSegment(job.dir); segPath != "" {
 			changed := segPath != lastSegPath || segSize != lastSegSize
 			if changed {
 				lastSegPath = segPath
 				lastSegSize = segSize
 				lastSegChangedAt = time.Now()
+				m.touchJobActivity(key, job)
+				stallWarnLogged = false
 			} else if time.Since(lastSegChangedAt) >= 45*time.Second && segSize < 256*1024 {
 				m.logger.Warn("hls watchdog: last segment appears stuck (tiny and unchanged)",
 					slog.String("torrentId", string(key.id)),
@@ -947,7 +965,7 @@ func (m *hlsManager) watchJobProgress(key hlsKey, job *hlsJob) {
 			continue
 		}
 
-		stallDuration := time.Since(lastActivity)
+		stallDuration := time.Since(lastSegChangedAt)
 
 		// Log a warning once when the stall exceeds 30 seconds, so
 		// operators can see that FFmpeg is blocked waiting for data.

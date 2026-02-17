@@ -314,14 +314,17 @@ const TorrentList: React.FC<TorrentListProps> = ({
             <Focus className="h-4 w-4" />
             {isCurrentPriority ? 'Current' : 'Set current'}
           </Button>
-          <Button variant="outline" size="sm" onClick={() => onStart(torrent.id)}>
-            <Play className="h-4 w-4" />
-            Start
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => onStop(torrent.id)}>
-            <Square className="h-4 w-4" />
-            Stop
-          </Button>
+          {status === 'active' ? (
+            <Button variant="outline" size="sm" onClick={() => onStop(torrent.id)}>
+              <Square className="h-4 w-4" />
+              Stop
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm" onClick={() => onStart(torrent.id)}>
+              <Play className="h-4 w-4" />
+              Start
+            </Button>
+          )}
           <Button variant="ghost" size="sm" onClick={() => onOpenDetails(torrent.id)}>
             Details
           </Button>
