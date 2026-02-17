@@ -644,7 +644,7 @@ export const hlsSeek = async (
   fileIndex: number,
   time: number,
   options?: { audioTrack?: number | null; subtitleTrack?: number | null; signal?: AbortSignal },
-): Promise<{ seekTime: number }> => {
+): Promise<{ seekTime: number; seekMode?: string }> => {
   const params = new URLSearchParams();
   params.set('time', String(time));
   if (options?.audioTrack !== undefined && options.audioTrack !== null) {

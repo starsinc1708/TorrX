@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"torrentstream/internal/metrics"
 )
 
 // PlaybackState represents the current state of an HLS encoding job.
@@ -120,6 +122,8 @@ func (c *PlaybackController) Transition(to PlaybackState) error {
 	copy(listeners, c.listeners)
 	c.mu.Unlock()
 
+	metrics.HLSStateTransitionsTotal.WithLabelValues(from.String(), to.String()).Inc()
+
 	for _, fn := range listeners {
 		fn(from, to)
 	}
@@ -140,6 +144,8 @@ func (c *PlaybackController) TransitionWithError(err error) error {
 	listeners := make([]func(from, to PlaybackState), len(c.listeners))
 	copy(listeners, c.listeners)
 	c.mu.Unlock()
+
+	metrics.HLSStateTransitionsTotal.WithLabelValues(from.String(), StateError.String()).Inc()
 
 	for _, fn := range listeners {
 		fn(from, StateError)

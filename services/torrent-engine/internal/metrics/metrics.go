@@ -120,6 +120,38 @@ var (
 		Name:      "hls_membuf_evictions_total",
 		Help:      "Total number of HLS in-memory buffer evictions.",
 	})
+
+	// New HLS component metrics.
+
+	HLSStateTransitionsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "engine",
+		Name:      "hls_state_transitions_total",
+		Help:      "Total HLS playback state transitions by from/to state.",
+	}, []string{"from", "to"})
+
+	HLSSeekModeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "engine",
+		Name:      "hls_seek_mode_total",
+		Help:      "Total HLS seek requests by mode (soft, hard, restart).",
+	}, []string{"mode"})
+
+	HLSBufferResizesTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "engine",
+		Name:      "hls_buffer_resizes_total",
+		Help:      "Total number of adaptive stream buffer resizes.",
+	})
+
+	HLSBufferSizeBytes = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "engine",
+		Name:      "hls_buffer_size_bytes",
+		Help:      "Current adaptive stream buffer size in bytes.",
+	})
+
+	HLSRateLimitBytesPerSec = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "engine",
+		Name:      "hls_rate_limit_bytes_per_sec",
+		Help:      "Current applied download rate limit in bytes per second (0 = unlimited).",
+	})
 )
 
 func Register(reg prometheus.Registerer) {
@@ -143,5 +175,10 @@ func Register(reg prometheus.Registerer) {
 		HLSMemBufHitsTotal,
 		HLSMemBufMissesTotal,
 		HLSMemBufEvictionsTotal,
+		HLSStateTransitionsTotal,
+		HLSSeekModeTotal,
+		HLSBufferResizesTotal,
+		HLSBufferSizeBytes,
+		HLSRateLimitBytesPerSec,
 	)
 }

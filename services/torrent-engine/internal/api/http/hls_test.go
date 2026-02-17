@@ -167,6 +167,110 @@ func TestHLSAutoRestartUpdatesTelemetry(t *testing.T) {
 	}
 }
 
+func TestComputeProfileHash(t *testing.T) {
+	h1 := computeProfileHash("veryfast", 23, "128k", 4)
+	h2 := computeProfileHash("veryfast", 23, "128k", 4)
+	if h1 != h2 {
+		t.Fatalf("expected same hash for same params, got %q vs %q", h1, h2)
+	}
+
+	h3 := computeProfileHash("slow", 23, "128k", 4)
+	if h1 == h3 {
+		t.Fatalf("expected different hash for different preset, got %q", h1)
+	}
+
+	h4 := computeProfileHash("veryfast", 28, "128k", 4)
+	if h1 == h4 {
+		t.Fatalf("expected different hash for different CRF, got %q", h1)
+	}
+
+	if len(h1) != 8 {
+		t.Fatalf("expected 8-char hash, got %d chars: %q", len(h1), h1)
+	}
+}
+
+func TestEnsureJobDirContainsProfileHash(t *testing.T) {
+	preset := "veryfast"
+	crf := 23
+	audioBitrate := "128k"
+	segDur := 4
+
+	expectedHash := computeProfileHash(preset, crf, audioBitrate, segDur)
+
+	dir := t.TempDir()
+	mgr := &hlsManager{
+		baseDir:         dir,
+		preset:          preset,
+		crf:             crf,
+		audioBitrate:    audioBitrate,
+		segmentDuration: segDur,
+		jobs:            make(map[hlsKey]*hlsJob),
+		codecCache:      make(map[string]*codecCacheEntry),
+		resolutionCache: make(map[string]*resolutionCacheEntry),
+		logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	key := hlsKey{id: "test-id", fileIndex: 0, audioTrack: 0, subtitleTrack: -1}
+	jobDir := mgr.buildJobDir(key)
+	if !strings.Contains(jobDir, expectedHash) {
+		t.Fatalf("expected job dir %q to contain profile hash %q", jobDir, expectedHash)
+	}
+}
+
+func TestFindLastSegment(t *testing.T) {
+	dir := t.TempDir()
+
+	// No .ts files → returns empty string.
+	path, size := findLastSegment(dir)
+	if path != "" || size != 0 {
+		t.Fatalf("expected empty result for empty dir, got path=%q size=%d", path, size)
+	}
+
+	// Write two segment files with different mtimes.
+	seg1 := filepath.Join(dir, "seg-00001.ts")
+	seg2 := filepath.Join(dir, "seg-00002.ts")
+	if err := os.WriteFile(seg1, make([]byte, 500*1024), 0644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond) // ensure different mtime
+	if err := os.WriteFile(seg2, make([]byte, 1024*1024), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	path, size = findLastSegment(dir)
+	if path != seg2 {
+		t.Fatalf("expected newest segment %q, got %q", seg2, path)
+	}
+	if size != 1024*1024 {
+		t.Fatalf("expected size 1048576, got %d", size)
+	}
+}
+
+func TestSegmentLimiterAllow(t *testing.T) {
+	lim := newSegmentLimiter(10, 5) // 10 req/s burst=5
+
+	ip := "192.168.1.1"
+	for i := 0; i < 5; i++ {
+		if !lim.Allow(ip) {
+			t.Fatalf("request %d should be allowed within burst", i+1)
+		}
+	}
+	if lim.Allow(ip) {
+		t.Fatalf("request 6 should be denied after burst exhausted")
+	}
+}
+
+func TestSegmentLimiterIsolatesIPs(t *testing.T) {
+	lim := newSegmentLimiter(10, 2)
+
+	lim.Allow("10.0.0.1")
+	lim.Allow("10.0.0.1")
+
+	if !lim.Allow("10.0.0.2") {
+		t.Fatalf("IP B should be allowed when IP A is throttled")
+	}
+}
+
 func TestPlaylistHasEndList(t *testing.T) {
 	withEndList := filepath.Join(t.TempDir(), "with-endlist.m3u8")
 	if err := os.WriteFile(withEndList, []byte("#EXTM3U\n#EXTINF:4,\nseg-0.ts\n#EXT-X-ENDLIST\n"), 0o644); err != nil {

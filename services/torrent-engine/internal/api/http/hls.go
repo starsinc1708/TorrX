@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 
 	"torrentstream/internal/domain"
 	"torrentstream/internal/domain/ports"
@@ -56,6 +59,7 @@ type hlsJob struct {
 	variants     []qualityVariant // populated for multi-variant jobs
 	genRef          *generationRef   // shared generation counter for stale reader detection
 	consumptionRate func() float64   // returns EMA consumer read rate (bytes/sec); nil if unavailable
+	bufferedReader  *bufferedStreamReader // non-nil for pipe sources; used for rate limiting
 
 	// Cached rewritten playlist (avoids re-parsing on every m3u8 GET).
 	rewrittenMu           sync.RWMutex
@@ -104,6 +108,7 @@ type hlsManager struct {
 	codecCacheSaveTimer   *time.Timer                  // debounced disk write
 	resolutionCacheMu     sync.RWMutex
 	resolutionCache       map[string]*resolutionCacheEntry // filePath → resolution
+	segLimiter            *segmentLimiter // per-IP rate limiter for segment requests
 	segmentDuration       int
 	logger                *slog.Logger
 	totalJobStarts        uint64
@@ -213,8 +218,70 @@ func newHLSManager(stream StreamTorrentUseCase, engine ports.Engine, cfg HLSConf
 		resolutionCache: make(map[string]*resolutionCacheEntry),
 		logger:          logger,
 	}
+	mgr.segLimiter = newSegmentLimiter(50, 20) // 50 req/s sustained, burst 20
 	mgr.loadCodecCache()
 	return mgr
+}
+
+// computeProfileHash returns an 8-char hex string that uniquely identifies
+// the encoding configuration. Used to version the transcode cache directory.
+func computeProfileHash(preset string, crf int, audioBitrate string, segDur int) string {
+	h := fnv.New32a()
+	_, _ = fmt.Fprintf(h, "%s:%d:%s:%d", preset, crf, audioBitrate, segDur)
+	return fmt.Sprintf("%08x", h.Sum32())
+}
+
+// buildJobDir constructs the job directory path for a given key using
+// the current encoding profile hash.
+func (m *hlsManager) buildJobDir(key hlsKey) string {
+	m.mu.RLock()
+	preset := m.preset
+	crf := m.crf
+	audioBitrate := m.audioBitrate
+	segDur := m.segmentDuration
+	m.mu.RUnlock()
+
+	if segDur <= 0 {
+		segDur = 4
+	}
+	hash := computeProfileHash(preset, crf, audioBitrate, segDur)
+	dir := filepath.Join(
+		m.baseDir,
+		string(key.id),
+		strconv.Itoa(key.fileIndex),
+		fmt.Sprintf("a%d-s%d-p%s", key.audioTrack, key.subtitleTrack, hash),
+	)
+	if abs, err := filepath.Abs(dir); err == nil {
+		return abs
+	}
+	return dir
+}
+
+// segmentLimiter enforces per-IP rate limits on HLS segment requests.
+type segmentLimiter struct {
+	mu       sync.Mutex
+	limiters map[string]*rate.Limiter
+	r        rate.Limit
+	b        int
+}
+
+func newSegmentLimiter(rps float64, burst int) *segmentLimiter {
+	return &segmentLimiter{
+		limiters: make(map[string]*rate.Limiter),
+		r:        rate.Limit(rps),
+		b:        burst,
+	}
+}
+
+func (l *segmentLimiter) Allow(ip string) bool {
+	l.mu.Lock()
+	lim, ok := l.limiters[ip]
+	if !ok {
+		lim = rate.NewLimiter(l.r, l.b)
+		l.limiters[ip] = lim
+	}
+	l.mu.Unlock()
+	return lim.Allow()
 }
 
 // ---- Persistent codec cache ------------------------------------------------
@@ -421,6 +488,9 @@ func (m *hlsManager) ensureJob(id domain.TorrentID, fileIndex, audioTrack, subti
 		subtitleTrack: subtitleTrack,
 	}
 
+	// Compute directory path before any locking (buildJobDir takes RLock internally).
+	dir := m.buildJobDir(key)
+
 	// Fast path: job already exists (shared lock, non-blocking for concurrent readers).
 	m.mu.RLock()
 	job, ok := m.jobs[key]
@@ -442,17 +512,6 @@ func (m *hlsManager) ensureJob(id domain.TorrentID, fileIndex, audioTrack, subti
 			go m.run(job, key)
 		})
 		return job, nil
-	}
-
-	dir := filepath.Join(
-		m.baseDir,
-		string(id),
-		strconv.Itoa(fileIndex),
-		fmt.Sprintf("a%d-s%d", audioTrack, subtitleTrack),
-	)
-	absDir, err := filepath.Abs(dir)
-	if err == nil {
-		dir = absDir
 	}
 
 	// Check for completed job from a previous run (survived restart via persistent volume).
@@ -532,6 +591,9 @@ func (m *hlsManager) seekJob(id domain.TorrentID, fileIndex, audioTrack, subtitl
 		subtitleTrack: subtitleTrack,
 	}
 
+	// Compute base directory before any locking (buildJobDir takes RLock internally).
+	baseDir := m.buildJobDir(key)
+
 	m.mu.Lock()
 	m.totalSeekRequests++
 	m.lastSeekAt = time.Now().UTC()
@@ -539,8 +601,11 @@ func (m *hlsManager) seekJob(id domain.TorrentID, fileIndex, audioTrack, subtitl
 	metrics.HLSSeekTotal.Inc()
 
 	// Check if soft seek is possible before tearing down the job.
+	seekModeEmitted := false
 	if old, ok := m.jobs[key]; ok {
 		seekMode := m.chooseSeekModeLocked(key, old, seekSeconds, m.segmentDuration)
+		metrics.HLSSeekModeTotal.WithLabelValues(seekMode.String()).Inc()
+		seekModeEmitted = true
 		if seekMode == SeekModeSoft {
 			m.mu.Unlock()
 			m.logger.Info("hls soft seek — no FFmpeg restart",
@@ -567,16 +632,7 @@ func (m *hlsManager) seekJob(id domain.TorrentID, fileIndex, audioTrack, subtitl
 
 	// Use a unique directory per seek so cleanup of previous jobs
 	// can't race and remove files of the newly started ffmpeg process.
-	dir := filepath.Join(
-		m.baseDir,
-		string(id),
-		strconv.Itoa(fileIndex),
-		fmt.Sprintf("a%d-s%d-seek-%d", audioTrack, subtitleTrack, time.Now().UnixNano()),
-	)
-	absDir, err := filepath.Abs(dir)
-	if err == nil {
-		dir = absDir
-	}
+	dir := baseDir + fmt.Sprintf("-seek-%d", time.Now().UnixNano())
 	if err := os.RemoveAll(dir); err != nil {
 		m.mu.Unlock()
 		return nil, SeekModeHard, err
@@ -606,6 +662,11 @@ func (m *hlsManager) seekJob(id domain.TorrentID, fileIndex, audioTrack, subtitl
 	job.startOnce.Do(func() {
 		go m.run(job, key)
 	})
+
+	// Emit metric for hard seeks when no existing job was found to evaluate.
+	if !seekModeEmitted {
+		metrics.HLSSeekModeTotal.WithLabelValues(SeekModeHard.String()).Inc()
+	}
 
 	return job, SeekModeHard, nil
 }
@@ -703,6 +764,8 @@ func (m *hlsManager) cleanupJob(key hlsKey, job *hlsJob) {
 		removeDir = true
 	}
 	m.mu.Unlock()
+	// Reset rate limit so torrent isn't left throttled after stream ends.
+	m.resetRateLimit(key, job)
 	if removeDir {
 		m.harvestSegmentsToCache(key, job.dir, job.seekSeconds)
 		if m.memBuf != nil {
@@ -747,6 +810,22 @@ func (m *hlsManager) markJobCompleted(key hlsKey, job *hlsJob) {
 		job.lastActivity = time.Now().UTC()
 	}
 	m.mu.Unlock()
+	// Reset rate limit so torrent isn't left throttled after encoding completes.
+	m.resetRateLimit(key, job)
+}
+
+// resetRateLimit removes the download rate limit for the torrent so it isn't
+// left throttled after streaming ends.
+func (m *hlsManager) resetRateLimit(key hlsKey, job *hlsJob) {
+	if job != nil && job.bufferedReader != nil {
+		job.bufferedReader.SetRateLimit(0)
+	}
+	if m.engine == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = m.engine.SetDownloadRateLimit(ctx, key.id, 0)
 }
 
 func (m *hlsManager) touchJobActivity(key hlsKey, job *hlsJob) {
@@ -782,6 +861,13 @@ func (m *hlsManager) applyRatePolicy(key hlsKey, job *hlsJob) {
 		limitBytesPerSec = 0
 	}
 
+	metrics.HLSRateLimitBytesPerSec.Set(float64(limitBytesPerSec))
+
+	// Apply rate limit to the buffered reader for local throttling.
+	if job.bufferedReader != nil {
+		job.bufferedReader.SetRateLimit(limitBytesPerSec)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := m.engine.SetDownloadRateLimit(ctx, key.id, limitBytesPerSec); err != nil {
@@ -799,6 +885,9 @@ func (m *hlsManager) watchJobProgress(key hlsKey, job *hlsJob) {
 	defer ticker.Stop()
 	lastSeenPlaylistMod := time.Time{}
 	stallWarnLogged := false
+	lastSegPath := ""
+	lastSegSize := int64(0)
+	lastSegChangedAt := time.Now()
 
 	for range ticker.C {
 		readyClosed := false
@@ -834,6 +923,23 @@ func (m *hlsManager) watchJobProgress(key hlsKey, job *hlsJob) {
 				m.touchJobActivity(key, job)
 				stallWarnLogged = false
 				continue
+			}
+		}
+
+		// Check last segment for stuck encoder.
+		if segPath, segSize := findLastSegment(job.dir); segPath != "" {
+			changed := segPath != lastSegPath || segSize != lastSegSize
+			if changed {
+				lastSegPath = segPath
+				lastSegSize = segSize
+				lastSegChangedAt = time.Now()
+			} else if time.Since(lastSegChangedAt) >= 45*time.Second && segSize < 256*1024 {
+				m.logger.Warn("hls watchdog: last segment appears stuck (tiny and unchanged)",
+					slog.String("torrentId", string(key.id)),
+					slog.String("segPath", lastSegPath),
+					slog.Int64("segSize", lastSegSize),
+					slog.Duration("unchanged", time.Since(lastSegChangedAt)),
+				)
 			}
 		}
 
@@ -1041,6 +1147,31 @@ func (m *hlsManager) shutdown() {
 	if dirty {
 		m.saveCodecCache()
 	}
+}
+
+// findLastSegment returns the path and size of the most recently modified
+// .ts segment file in dir. Returns ("", 0) if no segments exist.
+func findLastSegment(dir string) (path string, size int64) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", 0
+	}
+	var latestMod time.Time
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".ts") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(latestMod) {
+			latestMod = info.ModTime()
+			path = filepath.Join(dir, e.Name())
+			size = info.Size()
+		}
+	}
+	return path, size
 }
 
 func waitForFile(path string, timeout time.Duration) bool {

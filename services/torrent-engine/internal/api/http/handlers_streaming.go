@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -149,6 +150,16 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 	subtitleTrack, err := parseOptionalIntQuery(r.URL.Query().Get("subtitleTrack"), -1)
 	if err != nil || subtitleTrack < -1 {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid subtitleTrack")
+		return
+	}
+
+	// Per-IP rate limiting for HLS segment and playlist requests.
+	clientIP, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if clientIP == "" {
+		clientIP = r.RemoteAddr
+	}
+	if s.hls != nil && s.hls.segLimiter != nil && !s.hls.segLimiter.Allow(clientIP) {
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
 

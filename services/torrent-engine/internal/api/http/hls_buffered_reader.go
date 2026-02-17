@@ -6,7 +6,10 @@ import (
 	"log/slog"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"torrentstream/internal/metrics"
 )
 
 // ---- Buffered stream reader (absorbs torrent download stalls) ---------------
@@ -49,6 +52,9 @@ type bufferedStreamReader struct {
 	bytesConsumed    int64     // total bytes read by consumer since last resize check
 	lastResizeCheck  time.Time // when we last evaluated whether to resize
 	effectiveBitrate float64   // EMA of consumer read rate (bytes/sec)
+
+	// Rate limiting: bytes/sec cap on source reads. 0 = unlimited.
+	rateLimitBPS atomic.Int64
 }
 
 func newBufferedStreamReader(source io.ReadCloser, bufSize int, logger *slog.Logger) *bufferedStreamReader {
@@ -101,6 +107,18 @@ func (b *bufferedStreamReader) fillLoop() {
 			// Data arrived — reset backoff state.
 			backoff = initialBackoff
 			stallSince = time.Time{}
+
+			// Rate limit: sleep proportionally to bytes read.
+			if limit := b.rateLimitBPS.Load(); limit > 0 {
+				sleepDur := time.Duration(float64(n) / float64(limit) * float64(time.Second))
+				if sleepDur > 0 {
+					select {
+					case <-time.After(sleepDur):
+					case <-b.ctx.Done():
+						return
+					}
+				}
+			}
 		}
 		if err != nil {
 			// Non-EOF errors (context cancelled, closed pipe) are terminal.
@@ -344,6 +362,8 @@ func (b *bufferedStreamReader) resizeLocked(newSize int) {
 		slog.Int("to", newSize),
 		slog.Float64("bitrate_mbps", b.effectiveBitrate/1024/1024),
 	)
+	metrics.HLSBufferResizesTotal.Inc()
+	metrics.HLSBufferSizeBytes.Set(float64(newSize))
 }
 
 // Close stops the fill loop and closes the underlying source.
@@ -368,6 +388,16 @@ func (b *bufferedStreamReader) EffectiveBitrate() float64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.effectiveBitrate
+}
+
+// SetRateLimit sets the download rate limit in bytes/sec. Pass 0 to remove.
+func (b *bufferedStreamReader) SetRateLimit(bytesPerSec int64) {
+	b.rateLimitBPS.Store(bytesPerSec)
+}
+
+// RateLimit returns the current rate limit in bytes/sec (0 = unlimited).
+func (b *bufferedStreamReader) RateLimit() int64 {
+	return b.rateLimitBPS.Load()
 }
 
 // memoryPressureHigh returns true when the Go heap exceeds the configured limit.

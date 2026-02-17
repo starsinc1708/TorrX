@@ -51,6 +51,7 @@ type Engine struct {
 	peakCompleted  map[domain.TorrentID]int64  // high-water mark for BytesCompleted per torrent
 	peakBitfield   map[domain.TorrentID][]byte // high-water mark for piece completion bitfield
 	lastAccess     map[domain.TorrentID]time.Time // LRU tracking for session eviction
+	rateLimits     map[domain.TorrentID]int64 // per-torrent download rate limit (bytes/sec); 0 = unlimited
 	maxSessions    int
 	storageMode    string
 	memoryProvider *memory.Provider
@@ -93,6 +94,7 @@ func New(cfg Config) (*Engine, error) {
 		peakCompleted:  make(map[domain.TorrentID]int64),
 		peakBitfield:   make(map[domain.TorrentID][]byte),
 		lastAccess:     make(map[domain.TorrentID]time.Time),
+		rateLimits:     make(map[domain.TorrentID]int64),
 		maxSessions:    cfg.MaxSessions,
 		storageMode:    mode,
 		memoryProvider: provider,
@@ -108,6 +110,7 @@ func NewWithClient(client *torrent.Client) *Engine {
 		peakCompleted: make(map[domain.TorrentID]int64),
 		peakBitfield:  make(map[domain.TorrentID][]byte),
 		lastAccess:    make(map[domain.TorrentID]time.Time),
+		rateLimits:    make(map[domain.TorrentID]int64),
 		storageMode:   "disk",
 	}
 }
@@ -686,17 +689,32 @@ func (e *Engine) SetDownloadRateLimit(ctx context.Context, id domain.TorrentID, 
 	if t == nil {
 		return ErrSessionNotFound
 	}
-	// Anacrolix torrent client supports per-torrent download rate limiting
-	// via SetMaxEstablishedConns modulation. For now, use the client-level
-	// rate limiter if bytesPerSec > 0, or clear it.
-	// Note: anacrolix doesn't expose a per-torrent rate limiter directly.
-	// This is a best-effort approach using the global client config.
-	// A more fine-grained approach could use a token bucket on read.
-	//
-	// For the initial implementation, this is a no-op that logs intent.
-	// Full per-torrent rate limiting requires wrapping the torrent reader
-	// with a rate-limited reader (future enhancement).
+
+	e.mu.Lock()
+	prev := e.rateLimits[id]
+	if bytesPerSec <= 0 {
+		delete(e.rateLimits, id)
+	} else {
+		e.rateLimits[id] = bytesPerSec
+	}
+	e.mu.Unlock()
+
+	if prev != bytesPerSec {
+		slog.Info("download rate limit changed",
+			slog.String("torrentId", string(id)),
+			slog.Int64("prevBytesPerSec", prev),
+			slog.Int64("newBytesPerSec", bytesPerSec),
+		)
+	}
 	return nil
+}
+
+// GetDownloadRateLimit returns the current download rate limit for a torrent
+// in bytes/sec. Returns 0 if no limit is set.
+func (e *Engine) GetDownloadRateLimit(id domain.TorrentID) int64 {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.rateLimits[id]
 }
 
 func (e *Engine) UnfocusAll(ctx context.Context) error {
@@ -746,6 +764,7 @@ func (e *Engine) dropTorrent(id domain.TorrentID, t *torrent.Torrent) error {
 	delete(e.modes, id)
 	delete(e.peakCompleted, id)
 	delete(e.lastAccess, id)
+	delete(e.rateLimits, id)
 	if e.focusedID == id {
 		e.focusedID = ""
 	}

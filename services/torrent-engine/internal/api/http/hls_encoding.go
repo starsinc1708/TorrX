@@ -80,6 +80,11 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	input, pipeReader := dataSource.InputSpec()
 	useReader := pipeReader != nil
 
+	// Wire buffered reader for rate limiting (only available for pipe sources).
+	if ps, ok := dataSource.(*pipeSource); ok {
+		job.bufferedReader = ps.BufferedReader()
+	}
+
 	if key.subtitleTrack >= 0 && subtitleSourcePath == "" {
 		job.err = errSubtitleSourceUnavailable
 		_ = job.ctrl.TransitionWithError(job.err)

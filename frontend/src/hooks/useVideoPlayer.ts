@@ -612,7 +612,10 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
                 });
                 if (controller.signal.aborted) return;
                 setSeekOffset(result.seekTime);
-                setSeekToken(Date.now());
+                if (result.seekMode !== 'soft') {
+                  // Hard seek: new source URL triggers HLS.js reload.
+                  setSeekToken(Date.now());
+                }
                 setVideoError(null);
                 resolve();
                 return;

@@ -10,6 +10,8 @@ import (
 	"torrentstream/internal/usecase"
 )
 
+const quasiCompleteThreshold = 0.95
+
 // MediaDataSource abstracts how media data is provided to FFmpeg.
 type MediaDataSource interface {
 	// InputSpec returns the FFmpeg input argument and an optional pipe reader.
@@ -75,6 +77,11 @@ func (s *pipeSource) Close() error {
 	return s.buffered.Close()
 }
 
+// BufferedReader returns the underlying bufferedStreamReader for rate limiting.
+func (s *pipeSource) BufferedReader() *bufferedStreamReader {
+	return s.buffered
+}
+
 // partialDirectSource reads a partially downloaded file from disk while
 // keeping the torrent reader open to continue downloading.
 type partialDirectSource struct {
@@ -99,6 +106,11 @@ func (m *hlsManager) newDataSource(result usecase.StreamResult, job *hlsJob, key
 	fileComplete := result.File.Length <= 0 ||
 		(result.File.BytesCompleted > 0 && result.File.BytesCompleted >= result.File.Length)
 
+	isQuasiComplete := !fileComplete &&
+		result.File.Length > 0 &&
+		result.File.BytesCompleted > 0 &&
+		float64(result.File.BytesCompleted)/float64(result.File.Length) >= quasiCompleteThreshold
+
 	subtitleSourcePath := ""
 
 	if m.dataDir != "" {
@@ -106,10 +118,11 @@ func (m *hlsManager) newDataSource(result usecase.StreamResult, job *hlsJob, key
 		if pathErr == nil {
 			if info, statErr := os.Stat(candidatePath); statErr == nil && !info.IsDir() {
 				subtitleSourcePath = candidatePath
-				if fileComplete {
-					// Fully downloaded — direct file read.
+				if fileComplete || isQuasiComplete {
+					// Fully downloaded (or quasi-complete) — direct file read.
 					m.logger.Info("hls using directFileSource",
 						slog.String("path", candidatePath),
+						slog.Bool("quasiComplete", isQuasiComplete),
 					)
 					return &directFileSource{path: candidatePath, reader: result.Reader}, subtitleSourcePath
 				}
