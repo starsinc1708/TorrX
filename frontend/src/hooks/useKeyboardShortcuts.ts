@@ -7,6 +7,7 @@ interface KeyboardShortcutHandlers {
   onToggleMute: () => void;
   onToggleFullscreen: () => void;
   onTakeScreenshot: () => void;
+  onHandled?: () => void;
 }
 
 /**
@@ -21,6 +22,7 @@ export function useKeyboardShortcuts(handlers: KeyboardShortcutHandlers) {
     onToggleMute,
     onToggleFullscreen,
     onTakeScreenshot,
+    onHandled,
   } = handlers;
 
   useEffect(() => {
@@ -30,6 +32,7 @@ export function useKeyboardShortcuts(handlers: KeyboardShortcutHandlers) {
         return;
       }
 
+      let handled = true;
       switch (e.key) {
         case ' ':
         case 'k':
@@ -57,12 +60,15 @@ export function useKeyboardShortcuts(handlers: KeyboardShortcutHandlers) {
           e.preventDefault();
           onTakeScreenshot();
           break;
+        default:
+          handled = false;
       }
+      if (handled) onHandled?.();
     };
 
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('keydown', onKey);
     };
-  }, [onPlayPause, onSeekBackward, onSeekForward, onToggleMute, onToggleFullscreen, onTakeScreenshot]);
+  }, [onPlayPause, onSeekBackward, onSeekForward, onToggleMute, onToggleFullscreen, onTakeScreenshot, onHandled]);
 }

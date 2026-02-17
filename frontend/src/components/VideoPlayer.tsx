@@ -8,11 +8,15 @@ import {
 import type { FileRef, MediaTrack, PlayerHealth, SessionState } from '../types';
 import type { PrebufferPhase } from '../hooks/useVideoPlayer';
 import { formatBytes, formatTime } from '../utils';
-import { saveWatchPosition } from '../api';
-import { upsertTorrentWatchState } from '../watchState';
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
+import { useWatchPositionSave } from '../hooks/useWatchPositionSave';
+import { useFullscreen } from '../hooks/useFullscreen';
+import { useScreenshot } from '../hooks/useScreenshot';
+import { useAutoHideControls } from '../hooks/useAutoHideControls';
+import { useTimelinePreview } from '../hooks/useTimelinePreview';
 import { cn } from '../lib/cn';
 import { Button } from './ui/button';
-import { VideoTimeline, type TimelinePreviewState } from './VideoTimeline';
+import { VideoTimeline } from './VideoTimeline';
 import { VideoOverlays } from './VideoOverlays';
 import { VideoControls } from './VideoControls';
 
@@ -98,9 +102,6 @@ const sourceKeyFromStreamUrl = (streamUrl: string): string => {
 
 type RuntimePlaybackStatus = 'idle' | 'transcoding' | 'buffering' | 'recovering' | 'error';
 
-const TIMELINE_PREVIEW_THROTTLE_MS = 140;
-const TIMELINE_PREVIEW_WIDTH = 176;
-const TIMELINE_PREVIEW_QUALITY = 0.72;
 const MAX_AUTO_INIT_RETRIES = 5;
 
 const normalizePlaybackRate = (rate: number): number => {
@@ -154,9 +155,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [bufferedTimelineRanges, setBufferedTimelineRanges] = useState<Array<{ start: number; end: number }>>([]);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
-  const [showControls, setShowControls] = useState(true);
-  const [cursorHidden, setCursorHidden] = useState(false);
-  const [screenshotFlash, setScreenshotFlash] = useState(false);
   const [seeking, setSeeking] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
@@ -171,32 +169,28 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   }>>([]);
   const [currentQualityLevel, setCurrentQualityLevel] = useState(-1);
   const [actualPlayingLevel, setActualPlayingLevel] = useState(-1);
-  const [isFullscreen, setIsFullscreen] = useState(false);
   const [hlsError, setHlsError] = useState<string | null>(null);
   const [seekStatus, setSeekStatus] = useState<'idle' | 'seeking' | 'buffering' | 'error'>('idle');
   const [seekStatusText, setSeekStatusText] = useState('');
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimePlaybackStatus>('idle');
   const [runtimeStatusText, setRuntimeStatusText] = useState('');
-  const [timelinePreview, setTimelinePreview] = useState<TimelinePreviewState>({
-    visible: false,
-    leftPercent: 0,
-    time: 0,
-    frame: null,
-    loading: false,
-  });
-  const playingRef = useRef(false);
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const progressRef = useRef<HTMLDivElement>(null);
+  const { timelinePreview, updateTimelinePreview, handleSeekLeave } = useTimelinePreview({
+    streamUrl,
+    useHls,
+    seekOffset,
+    mediaDuration,
+    duration,
+    progressRef,
+  });
   const containerRef = useRef<HTMLDivElement>(null);
+  const { isFullscreen, toggleFullscreen, getFullscreenElement } = useFullscreen(containerRef);
+  const { screenshotFlash, takeScreenshot } = useScreenshot(videoRef);
+  const { showControls, cursorHidden, resetHideTimer } = useAutoHideControls({
+    playing,
+    menuOpen: settingsOpen || speedMenuOpen || qualityMenuOpen,
+  });
   const hlsRef = useRef<Hls | null>(null);
-  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
-  const previewHlsRef = useRef<Hls | null>(null);
-  const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const previewSeekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const previewPendingTimeRef = useRef<number | null>(null);
-  const previewRequestTokenRef = useRef(0);
-  const previewReadyRef = useRef(false);
-  const previewLastTimeRef = useRef<number | null>(null);
   const pendingPlayRef = useRef(false);
   const savedTimeRef = useRef<number | null>(null);
   const pendingSeekTargetRef = useRef<number | null>(null);
@@ -212,12 +206,24 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const autoInitRetryCountRef = useRef<Map<string, number>>(new Map());
   const trackFallbackAppliedRef = useRef<Set<string>>(new Set());
   const [stableDuration, setStableDuration] = useState(0);
-  const lastSaveTimeRef = useRef(0);
   const loadTokenRef = useRef(0);
   const handledResumeRequestRef = useRef<number | null>(null);
   const previousSelectedFileIndexRef = useRef<number | null>(null);
   const forcedResumeTargetRef = useRef<{ fileIndex: number; position: number } | null>(null);
   const prevTrackSwitchRef = useRef(false);
+
+  const getVideoCurrentTime = useCallback(() => videoRef.current?.currentTime ?? 0, [videoRef]);
+  const getVideoDuration = useCallback(() => videoRef.current?.duration ?? 0, [videoRef]);
+
+  useWatchPositionSave(getVideoCurrentTime, getVideoDuration, {
+    torrentId,
+    fileIndex: selectedFileIndex,
+    torrentName: torrentName ?? undefined,
+    filePath: selectedFile?.path,
+    seekOffset,
+    mediaDuration,
+    enabled: !!streamUrl,
+  });
 
   useEffect(() => {
     const nextRate = normalizePlaybackRate(initialPlaybackRate);
@@ -290,180 +296,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     }
     return 0;
-  }, []);
-
-  const resolveTimelineTargetFromClientX = useCallback(
-    (clientX: number): { ratio: number; absoluteTime: number; localTime: number } | null => {
-      const bar = progressRef.current;
-      if (!bar) return null;
-      const rect = bar.getBoundingClientRect();
-      if (rect.width <= 0) return null;
-      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      const effectiveDuration = useHls && mediaDuration > 0 ? mediaDuration : duration;
-      const absoluteTime = ratio * (effectiveDuration || 0);
-      const localTime = useHls && seekOffset > 0 ? absoluteTime - seekOffset : absoluteTime;
-      return { ratio, absoluteTime, localTime };
-    },
-    [useHls, mediaDuration, duration, seekOffset],
-  );
-
-  const capturePreviewFrame = useCallback(
-    async (absoluteTime: number) => {
-      const previewVideo = previewVideoRef.current;
-      if (!previewVideo || !previewReadyRef.current || !streamUrl) {
-        setTimelinePreview((prev) => (prev.visible ? { ...prev, loading: false } : prev));
-        return;
-      }
-
-      let targetLocalTime = useHls && seekOffset > 0 ? absoluteTime - seekOffset : absoluteTime;
-      if (!Number.isFinite(targetLocalTime) || targetLocalTime < 0) {
-        setTimelinePreview((prev) => (prev.visible ? { ...prev, loading: false } : prev));
-        return;
-      }
-
-      if (Number.isFinite(previewVideo.duration) && previewVideo.duration > 0) {
-        targetLocalTime = Math.min(targetLocalTime, Math.max(0, previewVideo.duration - 0.04));
-      }
-
-      if (
-        previewLastTimeRef.current !== null &&
-        Math.abs(previewLastTimeRef.current - targetLocalTime) < 0.15
-      ) {
-        setTimelinePreview((prev) => (prev.visible ? { ...prev, loading: false } : prev));
-        return;
-      }
-
-      const requestToken = previewRequestTokenRef.current + 1;
-      previewRequestTokenRef.current = requestToken;
-      setTimelinePreview((prev) => (prev.visible ? { ...prev, loading: true } : prev));
-
-      const frame = await new Promise<string | null>((resolve) => {
-        let settled = false;
-        const timeout = window.setTimeout(() => finalize(null), 900);
-
-        const finalize = (result: string | null) => {
-          if (settled) return;
-          settled = true;
-          window.clearTimeout(timeout);
-          previewVideo.removeEventListener('seeked', onSeeked);
-          previewVideo.removeEventListener('error', onError);
-          resolve(result);
-        };
-
-        const onError = () => finalize(null);
-        const onSeeked = () => {
-          try {
-            const width = previewVideo.videoWidth;
-            const height = previewVideo.videoHeight;
-            if (!width || !height) {
-              finalize(null);
-              return;
-            }
-
-            let canvas = previewCanvasRef.current;
-            if (!canvas) {
-              canvas = document.createElement('canvas');
-              previewCanvasRef.current = canvas;
-            }
-
-            const previewWidth = TIMELINE_PREVIEW_WIDTH;
-            const previewHeight = Math.max(1, Math.round((previewWidth * height) / width));
-            canvas.width = previewWidth;
-            canvas.height = previewHeight;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) {
-              finalize(null);
-              return;
-            }
-
-            ctx.drawImage(previewVideo, 0, 0, previewWidth, previewHeight);
-            finalize(canvas.toDataURL('image/jpeg', TIMELINE_PREVIEW_QUALITY));
-          } catch {
-            finalize(null);
-          }
-        };
-
-        previewVideo.addEventListener('seeked', onSeeked, { once: true });
-        previewVideo.addEventListener('error', onError, { once: true });
-        try {
-          previewVideo.currentTime = targetLocalTime;
-        } catch {
-          finalize(null);
-        }
-      });
-
-      if (previewRequestTokenRef.current !== requestToken) {
-        return;
-      }
-
-      if (frame) {
-        previewLastTimeRef.current = targetLocalTime;
-      }
-      setTimelinePreview((prev) =>
-        prev.visible
-          ? {
-              ...prev,
-              frame: frame ?? prev.frame,
-              loading: false,
-            }
-          : prev,
-      );
-    },
-    [useHls, seekOffset, streamUrl],
-  );
-
-  const schedulePreviewFrameCapture = useCallback(
-    (absoluteTime: number) => {
-      previewPendingTimeRef.current = absoluteTime;
-      if (previewSeekTimerRef.current) return;
-      previewSeekTimerRef.current = window.setTimeout(() => {
-        previewSeekTimerRef.current = null;
-        const target = previewPendingTimeRef.current;
-        previewPendingTimeRef.current = null;
-        if (typeof target === 'number') {
-          void capturePreviewFrame(target);
-        }
-      }, TIMELINE_PREVIEW_THROTTLE_MS);
-    },
-    [capturePreviewFrame],
-  );
-
-  const updateTimelinePreview = useCallback(
-    (clientX: number) => {
-      const target = resolveTimelineTargetFromClientX(clientX);
-      if (!target) return null;
-      setTimelinePreview((prev) => ({
-        ...prev,
-        visible: true,
-        leftPercent: target.ratio * 100,
-        time: target.absoluteTime,
-      }));
-      schedulePreviewFrameCapture(target.absoluteTime);
-      return target;
-    },
-    [resolveTimelineTargetFromClientX, schedulePreviewFrameCapture],
-  );
-
-  const disposeTimelinePreviewSource = useCallback(() => {
-    previewRequestTokenRef.current += 1;
-    previewReadyRef.current = false;
-    previewLastTimeRef.current = null;
-    previewPendingTimeRef.current = null;
-    if (previewSeekTimerRef.current) {
-      window.clearTimeout(previewSeekTimerRef.current);
-      previewSeekTimerRef.current = null;
-    }
-    if (previewHlsRef.current) {
-      previewHlsRef.current.destroy();
-      previewHlsRef.current = null;
-    }
-    if (previewVideoRef.current) {
-      const previewVideo = previewVideoRef.current;
-      previewVideo.pause();
-      previewVideo.removeAttribute('src');
-      previewVideo.load();
-      previewVideoRef.current = null;
-    }
   }, []);
 
   const resolveBufferedTimelineRanges = useCallback((video: HTMLVideoElement): Array<{ start: number; end: number }> => {
@@ -992,86 +824,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     trackSwitchInProgress,
   ]);
 
-  useEffect(() => {
-    disposeTimelinePreviewSource();
-    setTimelinePreview({
-      visible: false,
-      leftPercent: 0,
-      time: 0,
-      frame: null,
-      loading: false,
-    });
-
-    if (!streamUrl) {
-      return;
-    }
-
-    const previewVideo = document.createElement('video');
-    previewVideo.preload = 'metadata';
-    previewVideo.muted = true;
-    previewVideo.playsInline = true;
-    previewVideo.crossOrigin = 'anonymous';
-    previewVideoRef.current = previewVideo;
-
-    const onLoadedMetadata = () => {
-      previewReadyRef.current = true;
-    };
-    const onCanPlay = () => {
-      previewReadyRef.current = true;
-    };
-    const onError = () => {
-      previewReadyRef.current = false;
-    };
-
-    previewVideo.addEventListener('loadedmetadata', onLoadedMetadata);
-    previewVideo.addEventListener('canplay', onCanPlay);
-    previewVideo.addEventListener('error', onError);
-
-    if (!useHls || previewVideo.canPlayType('application/vnd.apple.mpegurl')) {
-      previewVideo.src = streamUrl;
-      previewVideo.load();
-    } else if (Hls.isSupported()) {
-      const hlsMaxBuf = Number(localStorage.getItem('hlsMaxBufferLength')) || 60;
-      const previewHls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: false,
-        backBufferLength: Math.min(hlsMaxBuf, 30),
-        manifestLoadingMaxRetry: 2,
-        manifestLoadingRetryDelay: 600,
-        levelLoadingMaxRetry: 3,
-        levelLoadingRetryDelay: 700,
-        fragLoadingMaxRetry: 3,
-        fragLoadingRetryDelay: 700,
-      });
-      previewHlsRef.current = previewHls;
-      previewHls.on(Hls.Events.MANIFEST_PARSED, onCanPlay);
-      previewHls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          previewReadyRef.current = false;
-        }
-      });
-      previewHls.loadSource(streamUrl);
-      previewHls.attachMedia(previewVideo);
-    } else {
-      previewVideo.src = streamUrl;
-      previewVideo.load();
-    }
-
-    return () => {
-      previewVideo.removeEventListener('loadedmetadata', onLoadedMetadata);
-      previewVideo.removeEventListener('canplay', onCanPlay);
-      previewVideo.removeEventListener('error', onError);
-      disposeTimelinePreviewSource();
-    };
-  }, [streamUrl, useHls, disposeTimelinePreviewSource]);
-
   // Reset player state only on file change, not on track switch.
   useEffect(() => {
     if (savedTimeRef.current === null) {
       setPlaying(false);
       setCurrentTime(0);
       setDuration(0);
-      setShowControls(true);
       setSeeking(false);
     }
     setSettingsOpen(false);
@@ -1189,38 +947,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         sourcePositionMapRef.current.set(sourceKey, video.currentTime);
       }
 
-      // Periodic save to backend (throttled every 5 seconds).
-      if (
-        torrentId &&
-        selectedFileIndex !== null &&
-        Number.isFinite(video.currentTime) &&
-        video.currentTime > 0 &&
-        Number.isFinite(video.duration) &&
-        video.duration > 0
-      ) {
-        const now = Date.now();
-        if (now - lastSaveTimeRef.current >= 5000) {
-          lastSaveTimeRef.current = now;
-          const absPosition = seekOffset + video.currentTime;
-          const absDuration = mediaDuration > 0 ? mediaDuration : video.duration;
-          saveWatchPosition(
-            torrentId,
-            selectedFileIndex,
-            absPosition,
-            absDuration,
-            torrentName ?? undefined,
-            selectedFile?.path,
-          ).catch(() => {});
-          upsertTorrentWatchState({
-            torrentId,
-            fileIndex: selectedFileIndex,
-            position: absPosition,
-            duration: absDuration,
-            torrentName: torrentName ?? undefined,
-            filePath: selectedFile?.path,
-          });
-        }
-      }
     };
     const onDurationChange = () => {
       const effectiveDuration = resolveMediaDuration(video);
@@ -1267,52 +993,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     streamUrl,
     seeking,
     attemptRestoreSeek,
-    torrentId,
-    selectedFileIndex,
-    torrentName,
-    selectedFile,
-    seekOffset,
-    mediaDuration,
     resolveMediaDuration,
     syncBufferedTimelineRanges,
     clearRuntimeStatus,
     onPlaybackRateChange,
   ]);
-
-  // Save final position on unmount or file change.
-  useEffect(() => {
-    return () => {
-      const video = videoRef.current;
-      if (
-        torrentId &&
-        selectedFileIndex !== null &&
-        video &&
-        Number.isFinite(video.currentTime) &&
-        video.currentTime > 0 &&
-        Number.isFinite(video.duration) &&
-        video.duration > 0
-      ) {
-        const absPos = seekOffset + video.currentTime;
-        const absDur = mediaDuration > 0 ? mediaDuration : video.duration;
-        saveWatchPosition(
-          torrentId,
-          selectedFileIndex,
-          absPos,
-          absDur,
-          torrentName ?? undefined,
-          selectedFile?.path,
-        ).catch(() => {});
-        upsertTorrentWatchState({
-          torrentId,
-          fileIndex: selectedFileIndex,
-          position: absPos,
-          duration: absDur,
-          torrentName: torrentName ?? undefined,
-          filePath: selectedFile?.path,
-        });
-      }
-    };
-  }, [torrentId, selectedFileIndex, torrentName, selectedFile, videoRef]);
 
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
@@ -1325,48 +1010,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       pendingPlayRef.current = false;
     }
   }, [videoRef, tryPlay]);
-
-  const getFullscreenElement = useCallback((): Element | null => {
-    const d = document as any;
-    return (
-      document.fullscreenElement ??
-      d.webkitFullscreenElement ??
-      d.mozFullScreenElement ??
-      d.msFullscreenElement ??
-      null
-    );
-  }, []);
-
-  const toggleFullscreen = useCallback(() => {
-    const d = document as any;
-    const el = getFullscreenElement();
-    if (el) {
-      const exit =
-        document.exitFullscreen ?? d.webkitExitFullscreen ?? d.mozCancelFullScreen ?? d.msExitFullscreen;
-      if (typeof exit === 'function') exit.call(document);
-      return;
-    }
-
-    const container = containerRef.current as any;
-    if (!container) return;
-    const req =
-      container.requestFullscreen ??
-      container.webkitRequestFullscreen ??
-      container.mozRequestFullScreen ??
-      container.msRequestFullscreen;
-    if (typeof req === 'function') req.call(container);
-  }, [getFullscreenElement]);
-
-  useEffect(() => {
-    const update = () => setIsFullscreen(Boolean(getFullscreenElement()));
-    update();
-    document.addEventListener('fullscreenchange', update);
-    document.addEventListener('webkitfullscreenchange' as any, update);
-    return () => {
-      document.removeEventListener('fullscreenchange', update);
-      document.removeEventListener('webkitfullscreenchange' as any, update);
-    };
-  }, [getFullscreenElement]);
 
   useEffect(() => {
     if (autoInitRetryTimerRef.current) {
@@ -1633,95 +1276,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     [seeking, updateTimelinePreview],
   );
 
-  const handleSeekLeave = useCallback(() => {
-    if (previewSeekTimerRef.current) {
-      window.clearTimeout(previewSeekTimerRef.current);
-      previewSeekTimerRef.current = null;
-    }
-    previewPendingTimeRef.current = null;
-    setTimelinePreview((prev) => ({
-      ...prev,
-      visible: false,
-      loading: false,
-    }));
-  }, []);
-
-  const takeScreenshot = useCallback(async () => {
-    const video = videoRef.current;
-    if (!video) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    try {
-      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
-      if (blob) {
-        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-      }
-    } catch {
-      const link = document.createElement('a');
-      link.href = canvas.toDataURL('image/png');
-      link.download = `screenshot-${Date.now()}.png`;
-      link.click();
-    }
-
-    setScreenshotFlash(true);
-    setTimeout(() => setScreenshotFlash(false), 400);
-  }, [videoRef]);
-
-  // Keep playingRef in sync so timeouts read current value.
-  useEffect(() => { playingRef.current = playing; }, [playing]);
-
-  // Auto-hide controls.
-  const resetHideTimer = useCallback(() => {
-    setShowControls(true);
-    setCursorHidden(false);
-    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    if (settingsOpen || speedMenuOpen || qualityMenuOpen) return;
-    hideTimerRef.current = setTimeout(() => {
-      if (playingRef.current) {
-        setShowControls(false);
-        setCursorHidden(true);
-      }
-    }, 3000);
-  }, [settingsOpen, speedMenuOpen, qualityMenuOpen]);
-
-  useEffect(() => {
-    if (!playing) {
-      setShowControls(true);
-      setCursorHidden(false);
-      if (hideTimerRef.current) {
-        clearTimeout(hideTimerRef.current);
-        hideTimerRef.current = undefined;
-      }
-      return;
-    }
-    resetHideTimer();
-  }, [playing, resetHideTimer]);
-
-  useEffect(() => {
-    if (settingsOpen || speedMenuOpen || qualityMenuOpen) {
-      setShowControls(true);
-      setCursorHidden(false);
-      if (hideTimerRef.current) {
-        clearTimeout(hideTimerRef.current);
-        hideTimerRef.current = undefined;
-      }
-      return;
-    }
-    if (playing) {
-      resetHideTimer();
-    }
-  }, [settingsOpen, speedMenuOpen, qualityMenuOpen, playing, resetHideTimer]);
-
   useEffect(() => {
     return () => {
-      if (hideTimerRef.current) {
-        clearTimeout(hideTimerRef.current);
-      }
       if (hlsRetryTimerRef.current) {
         clearTimeout(hlsRetryTimerRef.current);
         hlsRetryTimerRef.current = null;
@@ -1730,50 +1286,18 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         clearTimeout(autoInitRetryTimerRef.current);
         autoInitRetryTimerRef.current = null;
       }
-      disposeTimelinePreviewSource();
     };
-  }, [disposeTimelinePreviewSource]);
+  }, []);
 
-  // Keyboard shortcuts.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      let handled = true;
-      switch (e.key) {
-        case ' ':
-        case 'k':
-          e.preventDefault();
-          togglePlay();
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          skip(-10);
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          skip(10);
-          break;
-        case 'm':
-          e.preventDefault();
-          toggleMute();
-          break;
-        case 'f':
-        case 'F':
-          e.preventDefault();
-          toggleFullscreen();
-          break;
-        case 's':
-          e.preventDefault();
-          takeScreenshot();
-          break;
-        default:
-          handled = false;
-      }
-      if (handled) resetHideTimer();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [togglePlay, skip, toggleMute, toggleFullscreen, takeScreenshot, resetHideTimer]);
+  useKeyboardShortcuts({
+    onPlayPause: togglePlay,
+    onSeekBackward: () => skip(-10),
+    onSeekForward: () => skip(10),
+    onToggleMute: toggleMute,
+    onToggleFullscreen: toggleFullscreen,
+    onTakeScreenshot: takeScreenshot,
+    onHandled: resetHideTimer,
+  });
 
   // Cache mediaDuration so the display doesn't fluctuate while HLS is still generating.
   useEffect(() => {
@@ -1907,9 +1431,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   )}
                   onMouseMove={resetHideTimer}
                   onMouseLeave={() => {
-                    setCursorHidden(false);
-                    if (settingsOpen || speedMenuOpen) return;
-                    if (playing) resetHideTimer();
+                    resetHideTimer();
                   }}
                 >
                   <div className="relative min-h-0 flex-1">

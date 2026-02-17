@@ -7,6 +7,8 @@ interface UseWatchPositionSaveOptions {
   fileIndex: number | null;
   torrentName?: string;
   filePath?: string;
+  seekOffset?: number;
+  mediaDuration?: number;
   enabled: boolean;
   saveIntervalMs?: number;
 }
@@ -14,27 +16,42 @@ interface UseWatchPositionSaveOptions {
 /**
  * Autosaves watch position every 5 seconds while playing.
  * Also saves on unmount and when file changes.
+ *
+ * When `seekOffset` is provided the saved position is shifted to absolute
+ * time (seekOffset + currentTime) and `mediaDuration` is preferred over
+ * the raw video element duration.
  */
 export function useWatchPositionSave(
   getCurrentTime: () => number,
   getDuration: () => number,
   options: UseWatchPositionSaveOptions,
 ) {
-  const { torrentId, fileIndex, torrentName, filePath, enabled, saveIntervalMs = 5000 } = options;
+  const {
+    torrentId,
+    fileIndex,
+    torrentName,
+    filePath,
+    seekOffset = 0,
+    mediaDuration = 0,
+    enabled,
+    saveIntervalMs = 5000,
+  } = options;
   const lastSaveTimeRef = useRef(0);
   const saveIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const savePosition = useCallback(
     async (position: number, duration: number) => {
       if (!torrentId || fileIndex === null) return;
+      const absPosition = seekOffset + position;
+      const absDuration = mediaDuration > 0 ? mediaDuration : duration;
 
       try {
-        await saveWatchPosition(torrentId, fileIndex, position, duration, torrentName, filePath);
+        await saveWatchPosition(torrentId, fileIndex, absPosition, absDuration, torrentName, filePath);
         upsertTorrentWatchState({
           torrentId,
           fileIndex,
-          position,
-          duration,
+          position: absPosition,
+          duration: absDuration,
           torrentName,
           filePath,
         });
@@ -42,7 +59,7 @@ export function useWatchPositionSave(
         // Ignore save errors
       }
     },
-    [torrentId, fileIndex, torrentName, filePath],
+    [torrentId, fileIndex, torrentName, filePath, seekOffset, mediaDuration],
   );
 
   const trySave = useCallback(() => {
@@ -92,5 +109,5 @@ export function useWatchPositionSave(
     };
   }, [torrentId, fileIndex, getCurrentTime, getDuration, savePosition]);
 
-  return { savePosition };
+  return { savePosition, trySave };
 }
