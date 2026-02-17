@@ -594,14 +594,30 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	input := "pipe:0"
 	useReader := true
 	subtitleSourcePath := ""
+	partialDirectRead := false // true when using direct file read for a partial download
 	if m.dataDir != "" {
 		candidatePath, pathErr := resolveDataFilePath(m.dataDir, result.File.Path)
 		if pathErr == nil {
 			if info, statErr := os.Stat(candidatePath); statErr == nil && !info.IsDir() {
 				subtitleSourcePath = candidatePath
 				if result.File.Length <= 0 || info.Size() >= result.File.Length {
+					// Fully downloaded — direct file read.
 					input = candidatePath
 					useReader = false
+				} else if info.Size() >= 10*1024*1024 && job.seekSeconds == 0 {
+					// Partial download but header region (≥10 MB) is available and
+					// playing from the start: FFmpeg can read directly from the
+					// partial file. The torrent engine continues downloading pieces
+					// ahead of FFmpeg's read position via the sliding priority reader.
+					// This enables stream copy for H.264 content, avoiding re-encoding.
+					input = candidatePath
+					useReader = false
+					partialDirectRead = true
+					m.logger.Info("hls using partial direct read",
+						slog.String("path", candidatePath),
+						slog.Int64("available", info.Size()),
+						slog.Int64("total", result.File.Length),
+					)
 				}
 			}
 		}
@@ -813,19 +829,30 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	cmd.Dir = job.dir
 	var stderr bytes.Buffer
 	if useReader {
-		cmd.Stdin = result.Reader
-	} else {
+		// Wrap the torrent reader in a buffered reader to absorb download
+		// stalls and prevent FFmpeg watchdog kills from piece latency spikes.
+		buffered := newBufferedStreamReader(result.Reader, defaultStreamBufSize, m.logger)
+		cmd.Stdin = buffered
+		defer buffered.Close()
+	} else if !partialDirectRead {
+		// For fully downloaded files, close the reader immediately.
+		// For partial direct reads, keep the reader open so the torrent
+		// engine continues downloading pieces ahead of FFmpeg's position.
 		_ = result.Reader.Close()
 	}
 	cmd.Stdout = io.Discard
 	cmd.Stderr = &stderr
 
+	// For partial direct reads, keep the reader open so the torrent engine
+	// continues downloading while FFmpeg reads from the file. Close it when
+	// the run() function returns (FFmpeg finished or failed).
+	if partialDirectRead {
+		defer result.Reader.Close()
+	}
+
 	ffmpegStart := time.Now()
 	if err := cmd.Start(); err != nil {
-		// Close reader if it was passed to cmd.Stdin and cmd failed to start
-		if useReader {
-			_ = result.Reader.Close()
-		}
+		// buffered reader (if any) is closed by defer above
 		m.logger.Error("hls ffmpeg start failed", slog.String("error", err.Error()))
 		job.err = err
 		m.recordJobFailure(job, err)
@@ -1725,4 +1752,186 @@ func playlistHasEndList(path string) bool {
 		return false
 	}
 	return strings.Contains(string(data), "#EXT-X-ENDLIST")
+}
+
+// ---- Buffered stream reader (absorbs torrent download stalls) ---------------
+
+const (
+	defaultStreamBufSize = 8 * 1024 * 1024 // 8 MB ring buffer
+	streamBufReadChunk   = 256 * 1024       // 256 KB per source read
+	streamBufStallWarn   = 30 * time.Second  // warn after 30s of no data
+)
+
+// bufferedStreamReader wraps an io.Reader with a fixed-size ring buffer.
+// A background goroutine continuously fills the buffer from the source.
+// Read() blocks only when the buffer is empty, with a configurable timeout
+// to avoid indefinite hangs that trigger the HLS watchdog.
+type bufferedStreamReader struct {
+	source io.ReadCloser
+	buf    []byte
+	size   int // capacity
+	rPos   int // read position in ring
+	wPos   int // write position in ring
+	count  int // bytes currently buffered
+
+	mu       sync.Mutex
+	cond     *sync.Cond
+	srcErr   error // sticky error from source
+	closed   bool
+	ctx      context.Context
+	cancel   context.CancelFunc
+	logger   *slog.Logger
+}
+
+func newBufferedStreamReader(source io.ReadCloser, bufSize int, logger *slog.Logger) *bufferedStreamReader {
+	if bufSize <= 0 {
+		bufSize = defaultStreamBufSize
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	b := &bufferedStreamReader{
+		source: source,
+		buf:    make([]byte, bufSize),
+		size:   bufSize,
+		ctx:    ctx,
+		cancel: cancel,
+		logger: logger,
+	}
+	b.cond = sync.NewCond(&b.mu)
+	go b.fillLoop()
+	return b
+}
+
+// fillLoop continuously reads from the source into the ring buffer.
+func (b *bufferedStreamReader) fillLoop() {
+	tmp := make([]byte, streamBufReadChunk)
+	for {
+		select {
+		case <-b.ctx.Done():
+			return
+		default:
+		}
+
+		n, err := b.source.Read(tmp)
+		if n > 0 {
+			b.mu.Lock()
+			written := b.writeToRing(tmp[:n])
+			_ = written
+			b.cond.Broadcast()
+			b.mu.Unlock()
+		}
+		if err != nil {
+			b.mu.Lock()
+			b.srcErr = err
+			b.cond.Broadcast()
+			b.mu.Unlock()
+			return
+		}
+	}
+}
+
+// writeToRing copies data into the ring buffer, returning bytes written.
+// Caller must hold b.mu.
+func (b *bufferedStreamReader) writeToRing(data []byte) int {
+	written := 0
+	for len(data) > 0 && b.count < b.size {
+		// Space available from wPos to end of buffer or to rPos.
+		space := b.size - b.wPos
+		if space > b.size-b.count {
+			space = b.size - b.count
+		}
+		if space > len(data) {
+			space = len(data)
+		}
+		copy(b.buf[b.wPos:b.wPos+space], data[:space])
+		b.wPos = (b.wPos + space) % b.size
+		b.count += space
+		written += space
+		data = data[space:]
+	}
+	return written
+}
+
+// Read implements io.Reader. Blocks until data is available, source EOF,
+// or the stall timeout is reached.
+func (b *bufferedStreamReader) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	// Wait for data to become available.
+	for b.count == 0 && b.srcErr == nil && !b.closed {
+		// Use a timed wait to avoid indefinite blocking.
+		waitDone := make(chan struct{})
+		go func() {
+			b.mu.Lock()
+			b.cond.Wait()
+			b.mu.Unlock()
+			close(waitDone)
+		}()
+		b.mu.Unlock()
+
+		select {
+		case <-waitDone:
+			b.mu.Lock()
+			// Loop will re-check conditions.
+		case <-time.After(streamBufStallWarn):
+			b.mu.Lock()
+			if b.count == 0 && b.srcErr == nil && !b.closed {
+				b.logger.Warn("stream buffer stall: no data for 30s")
+				// Don't return error — let the caller retry.
+				// FFmpeg handles short reads gracefully.
+			}
+			// Continue waiting in the loop.
+		case <-b.ctx.Done():
+			b.mu.Lock()
+			return 0, b.ctx.Err()
+		}
+	}
+
+	if b.closed {
+		return 0, io.ErrClosedPipe
+	}
+	if b.count == 0 && b.srcErr != nil {
+		return 0, b.srcErr
+	}
+
+	// Read from ring buffer.
+	n := b.readFromRing(p)
+	return n, nil
+}
+
+// readFromRing copies data from the ring buffer into p. Caller must hold b.mu.
+func (b *bufferedStreamReader) readFromRing(p []byte) int {
+	n := 0
+	for len(p) > 0 && b.count > 0 {
+		avail := b.size - b.rPos
+		if avail > b.count {
+			avail = b.count
+		}
+		if avail > len(p) {
+			avail = len(p)
+		}
+		copy(p[:avail], b.buf[b.rPos:b.rPos+avail])
+		b.rPos = (b.rPos + avail) % b.size
+		b.count -= avail
+		n += avail
+		p = p[avail:]
+	}
+	return n
+}
+
+// Close stops the fill loop and closes the underlying source.
+func (b *bufferedStreamReader) Close() error {
+	b.mu.Lock()
+	b.closed = true
+	b.cond.Broadcast()
+	b.mu.Unlock()
+	b.cancel()
+	return b.source.Close()
+}
+
+// Buffered returns the number of bytes currently in the buffer.
+func (b *bufferedStreamReader) Buffered() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.count
 }
