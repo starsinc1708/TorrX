@@ -1028,29 +1028,40 @@ func (m *hlsManager) applyRatePolicy(key hlsKey, job *hlsJob) {
 	state := job.ctrl.State()
 	rate := rateFn()
 
-	var limitBytesPerSec int64
+	// Compute TWO separate rate limits:
+	// 1) pipeLimit — controls how fast the buffered reader feeds FFmpeg.
+	//    Keeps FFmpeg from racing far ahead of the download frontier.
+	// 2) dlLimit — controls how fast the torrent downloads pieces.
+	//    Must be much higher so pieces are ready when FFmpeg needs them.
+	var pipeLimit, dlLimit int64
 	switch state {
 	case StatePlaying:
-		limitBytesPerSec = int64(rate * 1.5)
+		pipeLimit = int64(rate * 1.5)
+		dlLimit = int64(rate * 5.0) // 5× consumption rate: download well ahead of FFmpeg
 	case StateStalled:
-		limitBytesPerSec = int64(rate * 2.0)
+		pipeLimit = int64(rate * 2.0)
+		dlLimit = 0 // unlimited: recover from stall as fast as possible
 	default:
 		// Buffering, Seeking, Completed, Idle, Error, Starting, Restarting: unlimited
-		limitBytesPerSec = 0
+		pipeLimit = 0
+		dlLimit = 0
 	}
 
-	// Floor: never throttle below 512 KB/s. Low-bitrate content can cause the
-	// rate limiter to starve the torrent, stalling playback.
-	const minSafeRateBPS int64 = 512 * 1024
-	if limitBytesPerSec > 0 && limitBytesPerSec < minSafeRateBPS {
-		limitBytesPerSec = minSafeRateBPS
+	// Floor: never throttle below 2 MB/s. Low-bitrate content or EMA lag
+	// can cause starvation if the floor is too low.
+	const minSafeRateBPS int64 = 2 * 1024 * 1024
+	if pipeLimit > 0 && pipeLimit < minSafeRateBPS {
+		pipeLimit = minSafeRateBPS
+	}
+	if dlLimit > 0 && dlLimit < minSafeRateBPS {
+		dlLimit = minSafeRateBPS
 	}
 
-	metrics.HLSRateLimitBytesPerSec.Set(float64(limitBytesPerSec))
+	metrics.HLSRateLimitBytesPerSec.Set(float64(dlLimit))
 
-	// Apply rate limit to the buffered reader for local throttling.
+	// Apply pipe rate limit to the buffered reader for local throttling.
 	if job.bufferedReader != nil {
-		job.bufferedReader.SetRateLimit(limitBytesPerSec)
+		job.bufferedReader.SetRateLimit(pipeLimit)
 	}
 
 	// Only set the engine-level rate limit when this is the sole job for
@@ -1070,10 +1081,10 @@ func (m *hlsManager) applyRatePolicy(key hlsKey, job *hlsJob) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if err := m.engine.SetDownloadRateLimit(ctx, key.id, limitBytesPerSec); err != nil {
+	if err := m.engine.SetDownloadRateLimit(ctx, key.id, dlLimit); err != nil {
 		m.logger.Warn("failed to set download rate limit",
 			slog.String("torrentId", string(key.id)),
-			slog.Int64("limitBytesPerSec", limitBytesPerSec),
+			slog.Int64("limitBytesPerSec", dlLimit),
 			slog.String("state", state.String()),
 			slog.String("error", err.Error()),
 		)
