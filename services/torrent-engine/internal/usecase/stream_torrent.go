@@ -107,7 +107,7 @@ func (uc *StreamTorrent) Execute(ctx context.Context, id domain.TorrentID, fileI
 		readahead = defaultStreamReadahead
 	}
 	priorityWindow := streamPriorityWindow(readahead, file.Length)
-	session.SetPiecePriority(file, domain.Range{Off: 0, Length: priorityWindow}, domain.PriorityHigh)
+	applyStartupGradient(session, file, priorityWindow)
 
 	// Preload file tail for container headers (MP4 moov atoms, MKV SeekHead/Cues).
 	// Players commonly seek to the file end first to read container metadata.
@@ -143,4 +143,48 @@ func (uc *StreamTorrent) Execute(ctx context.Context, id domain.TorrentID, fileI
 		File:            file,
 		ConsumptionRate: spr.EffectiveBytesPerSec,
 	}, nil
+}
+
+// applyStartupGradient sets a graduated priority on the initial window instead
+// of a flat PriorityHigh. The first 4 MB gets PriorityHigh so those pieces
+// arrive fastest, then graduated bands so the torrent client focuses on the
+// most urgent bytes first.
+func applyStartupGradient(session ports.Session, file domain.FileRef, window int64) {
+	const (
+		startupHighBand int64 = 4 << 20 // 4 MB
+		startupNextBand int64 = 4 << 20 // 4 MB
+	)
+	remaining := window
+
+	h := startupHighBand
+	if h > remaining {
+		h = remaining
+	}
+	session.SetPiecePriority(file, domain.Range{Off: 0, Length: h}, domain.PriorityHigh)
+	remaining -= h
+
+	if remaining > 0 {
+		n := startupNextBand
+		if n > remaining {
+			n = remaining
+		}
+		session.SetPiecePriority(file, domain.Range{Off: h, Length: n}, domain.PriorityNext)
+		remaining -= n
+	}
+	if remaining > 0 {
+		ra := remaining / 4
+		if ra < startupHighBand {
+			ra = remaining
+		}
+		if ra > remaining {
+			ra = remaining
+		}
+		off := h + startupNextBand
+		session.SetPiecePriority(file, domain.Range{Off: off, Length: ra}, domain.PriorityReadahead)
+		remaining -= ra
+	}
+	if remaining > 0 {
+		off := window - remaining
+		session.SetPiecePriority(file, domain.Range{Off: off, Length: remaining}, domain.PriorityNormal)
+	}
 }

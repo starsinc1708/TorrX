@@ -29,6 +29,7 @@ type Config struct {
 	HLSCacheSizeBytes  int64
 	HLSCacheMaxAgeH    int64
 	HLSMemBufSizeBytes   int64
+	HLSSegmentDuration   int
 	CORSAllowedOrigins []string // empty = allow all (dev mode)
 }
 
@@ -56,6 +57,7 @@ func LoadConfig() Config {
 		HLSCacheSizeBytes:  getEnvInt64("HLS_CACHE_SIZE_BYTES", 10<<30),
 		HLSCacheMaxAgeH:    getEnvInt64("HLS_CACHE_MAX_AGE_HOURS", 168),
 		HLSMemBufSizeBytes:  getEnvInt64("HLS_MEMBUF_SIZE_BYTES", 256<<20),
+		HLSSegmentDuration:  int(getEnvInt64("HLS_SEGMENT_DURATION", 2)),
 		CORSAllowedOrigins: parseCSV(getEnv("CORS_ALLOWED_ORIGINS", "")),
 	}
 }

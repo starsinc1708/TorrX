@@ -1095,7 +1095,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const requestServerSeek = useCallback(
     async (absoluteTarget: number, forceResume = false) => {
       const video = videoRef.current;
-      const shouldResume = forceResume || Boolean(video && !video.paused);
+      // Include video.ended: when the video played past mediaDuration and stopped
+      // naturally, the user still expects seeking to resume playback.
+      const shouldResume = forceResume || Boolean(video && (!video.paused || video.ended));
       shouldResumeAfterHlsSeekRef.current = shouldResume;
       pendingPlayRef.current = shouldResume;
       setSeekStatus('seeking');
@@ -1173,7 +1175,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       if (useHls && mediaDuration > 0) {
         const absoluteTarget = seekOffset + video.currentTime + delta;
-        const clamped = Math.max(0, Math.min(mediaDuration, absoluteTarget));
+        // Upper-bound: if video played past mediaDuration, use actual position
+        // as the ceiling so skip-back from a past-end position works correctly.
+        const upperBound = Math.max(mediaDuration, seekOffset + video.currentTime);
+        const clamped = Math.max(0, Math.min(upperBound, absoluteTarget));
         const localTarget = clamped - seekOffset;
         const seekableEnd = resolveHlsSeekableEnd(video);
         if (localTarget >= 0 && localTarget <= seekableEnd + 0.25) {
@@ -1244,6 +1249,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if (!target) return;
       const { ratio, absoluteTime, localTime } = target;
 
+      // If the video ended naturally (played past mediaDuration), resume playback
+      // after the seek — the user clicking the timeline implies intent to play.
+      // If the video was manually paused (paused and not ended), stay paused.
+      const shouldAutoPlay = !video.paused || video.ended;
+
       // When using HLS with known media duration, seek in absolute time.
       if (useHls && mediaDuration > 0) {
         const seekableEnd = resolveHlsSeekableEnd(video);
@@ -1252,6 +1262,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (localTime >= 0 && localTime <= seekableEnd + 0.25) {
           video.currentTime = localTime;
           setCurrentTime(localTime);
+          if (shouldAutoPlay) void video.play().catch(() => {});
         } else {
           // Seek outside current HLS buffer - request server-side seek.
           void requestServerSeek(absoluteTime);
@@ -1262,6 +1273,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       video.currentTime = ratio * (video.duration || 0);
       setCurrentTime(video.currentTime);
+      if (shouldAutoPlay) void video.play().catch(() => {});
       setSeeking(false);
     },
     [videoRef, useHls, mediaDuration, requestServerSeek, resolveHlsSeekableEnd, updateTimelinePreview],
@@ -1309,7 +1321,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const displayCurrentTime = useHls && seekOffset > 0 ? seekOffset + currentTime : currentTime;
   // Prefer full media duration; when unavailable but seekOffset > 0, use seekOffset + local
   // duration so the progress bar doesn't overflow past 100%.
-  const displayDuration =
+  const rawDisplayDuration =
     mediaDuration > 0
       ? mediaDuration
       : stableDuration > 0
@@ -1317,6 +1329,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         : useHls && seekOffset > 0
           ? Math.max(seekOffset + duration, seekOffset + 1)
           : duration;
+  // Extend displayDuration to cover the actual played position when the video
+  // runs past its reported mediaDuration (e.g. FFprobe underestimated VBR content).
+  const displayDuration = Math.max(rawDisplayDuration, displayCurrentTime);
   const progressPercent = displayDuration > 0 ? Math.min(displayCurrentTime / displayDuration * 100, 100) : 0;
   const indicatorStatus: RuntimePlaybackStatus | 'seeking' =
     seekStatus !== 'idle' ? seekStatus : runtimeStatus;

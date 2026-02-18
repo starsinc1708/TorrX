@@ -178,6 +178,7 @@ func main() {
 		MaxCacheSizeBytes: cfg.HLSCacheSizeBytes,
 		MaxCacheAge:       time.Duration(cfg.HLSCacheMaxAgeH) * time.Hour,
 		MemBufSizeBytes:   cfg.HLSMemBufSizeBytes,
+		SegmentDuration:   cfg.HLSSegmentDuration,
 	}
 
 	options := []apihttp.ServerOption{

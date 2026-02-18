@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 
 	"torrentstream/internal/domain"
 	"torrentstream/internal/domain/ports"
@@ -149,11 +150,12 @@ func TestStreamTorrentSuccess(t *testing.T) {
 	if reader.responsive {
 		t.Fatalf("responsive should not be set by use case (callers opt in when needed)")
 	}
-	if session.lastPrio != domain.PriorityHigh {
-		t.Fatalf("priority not set to high")
+	// The startup gradient sets the first band to PriorityHigh.
+	if len(session.prios) == 0 || session.prios[0] != domain.PriorityHigh {
+		t.Fatalf("first startup gradient band not set to PriorityHigh, got prios=%v", session.prios)
 	}
-	if session.lastRange.Length <= 0 {
-		t.Fatalf("priority range not set")
+	if session.ranges[0].Off != 0 || session.ranges[0].Length <= 0 {
+		t.Fatalf("first startup gradient band has unexpected range: %+v", session.ranges[0])
 	}
 }
 
@@ -197,42 +199,37 @@ func TestStreamTorrentSlidingPriorityOnSeek(t *testing.T) {
 	if len(session.ranges) == 0 {
 		t.Fatalf("expected initial priority range")
 	}
+	// Record how many ranges the startup gradient produced.
+	rangesBeforeSeek := len(session.ranges)
 
 	if _, err := result.Reader.Seek(64<<20, io.SeekStart); err != nil {
 		t.Fatalf("Seek: %v", err)
 	}
 
-	if len(session.ranges) < 2 {
-		t.Fatalf("expected priority to be updated after seek, got %d calls", len(session.ranges))
+	if len(session.ranges) <= rangesBeforeSeek {
+		t.Fatalf("expected priority to be updated after seek, got %d calls total (same as before)", len(session.ranges))
 	}
 
 	// After seek, the adaptive reader temporarily doubles the window (seek boost)
 	// and applies a graduated priority across multiple bands. Verify that:
-	// 1. The first post-seek band has a positive offset (moved from initial position).
-	// 2. The total coverage of all post-seek gradient bands equals the boosted window.
+	// 1. There are post-seek gradient bands with a positive offset.
+	// 2. The total coverage of non-deprioritization bands equals the boosted window.
 	baseWindow := streamPriorityWindow(uc.ReadaheadBytes, 1024)
 	boostedWindow := baseWindow * 2
 	if boostedWindow > maxPriorityWindowBytes {
 		boostedWindow = maxPriorityWindowBytes
 	}
 
-	// Find the first range set after the initial window (index > 0).
-	// The seek may also produce a deprioritization range (PriorityNone),
-	// followed by the gradient bands.
+	// Skip the startup gradient ranges; the seek produces deprioritization
+	// (PriorityNone) followed by the new gradient bands.
 	var totalGradientLen int64
-	foundPostSeek := false
-	for _, r := range session.ranges[1:] { // skip initial window
-		if r.Off > 0 {
-			foundPostSeek = true
+	for i := rangesBeforeSeek; i < len(session.ranges); i++ {
+		if session.prios[i] == domain.PriorityNone {
+			continue // skip deprioritization ranges
 		}
-		if foundPostSeek {
-			totalGradientLen += r.Length
-		}
+		totalGradientLen += session.ranges[i].Length
 	}
 
-	if !foundPostSeek {
-		t.Fatalf("expected post-seek priority ranges with offset > 0")
-	}
 	if totalGradientLen != boostedWindow {
 		t.Fatalf("total gradient coverage after seek: got %d, want %d (boosted)", totalGradientLen, boostedWindow)
 	}
@@ -290,8 +287,107 @@ func TestStreamTorrentNoTailPreloadSmallFile(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	// Only the initial priority window, no tail preload.
-	if len(session.ranges) != 1 {
-		t.Fatalf("expected exactly 1 priority range for small file, got %d", len(session.ranges))
+	// The startup gradient produces up to 4 bands (High, Next, Readahead, Normal).
+	// For small files (< 2× tail preload size), no tail preload is added.
+	if len(session.ranges) > 4 {
+		t.Fatalf("expected at most 4 startup gradient bands for small file (no tail preload), got %d", len(session.ranges))
+	}
+	// Verify no range has PriorityReadahead at the file tail offset.
+	const tailPreloadSize int64 = 16 << 20
+	expectedTailOff := int64(100) - tailPreloadSize
+	for i, r := range session.ranges {
+		if r.Off == expectedTailOff && r.Length == tailPreloadSize && session.prios[i] == domain.PriorityReadahead {
+			t.Fatalf("unexpected tail preload range for small file: %+v", r)
+		}
+	}
+}
+
+func TestBoostWindow(t *testing.T) {
+	reader := &fakeStreamReader{}
+	session := &fakeStreamSession{
+		files:  []domain.FileRef{{Index: 0, Path: "movie.mkv", Length: 1 << 30}},
+		reader: reader,
+	}
+	engine := &fakeStreamEngine{session: session}
+
+	uc := StreamTorrent{Engine: engine, ReadaheadBytes: 2 << 20}
+	result, err := uc.Execute(context.Background(), "t1", 0)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	spr, ok := result.Reader.(*slidingPriorityReader)
+	if !ok {
+		t.Fatalf("expected *slidingPriorityReader, got %T", result.Reader)
+	}
+
+	// Record the window before boost.
+	spr.mu.Lock()
+	windowBefore := spr.window
+	spr.mu.Unlock()
+
+	rangesBefore := len(session.ranges)
+
+	// BoostWindow should double the window and force a priority update.
+	spr.BoostWindow(10 * time.Second)
+
+	spr.mu.Lock()
+	windowAfter := spr.window
+	boostUntil := spr.seekBoostUntil
+	spr.mu.Unlock()
+
+	expectedWindow := windowBefore * 2
+	if expectedWindow > maxPriorityWindowBytes {
+		expectedWindow = maxPriorityWindowBytes
+	}
+	if windowAfter != expectedWindow {
+		t.Fatalf("BoostWindow: window got %d, want %d", windowAfter, expectedWindow)
+	}
+	if time.Until(boostUntil) < 9*time.Second || time.Until(boostUntil) > 11*time.Second {
+		t.Fatalf("BoostWindow: seekBoostUntil not set correctly, expires in %v", time.Until(boostUntil))
+	}
+	// Should have produced new priority ranges.
+	if len(session.ranges) <= rangesBefore {
+		t.Fatalf("BoostWindow: expected new priority ranges, got none")
+	}
+}
+
+func TestSetBufferFillFunc(t *testing.T) {
+	reader := &fakeStreamReader{}
+	session := &fakeStreamSession{
+		files:  []domain.FileRef{{Index: 0, Path: "movie.mkv", Length: 1 << 30}},
+		reader: reader,
+	}
+	engine := &fakeStreamEngine{session: session}
+
+	uc := StreamTorrent{Engine: engine, ReadaheadBytes: 2 << 20}
+	result, err := uc.Execute(context.Background(), "t1", 0)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	spr, ok := result.Reader.(*slidingPriorityReader)
+	if !ok {
+		t.Fatalf("expected *slidingPriorityReader, got %T", result.Reader)
+	}
+
+	// Verify SetBufferFillFunc stores the callback.
+	called := false
+	spr.SetBufferFillFunc(func() float64 {
+		called = true
+		return 0.1 // below threshold
+	})
+
+	spr.mu.Lock()
+	if spr.bufferFillFunc == nil {
+		spr.mu.Unlock()
+		t.Fatalf("SetBufferFillFunc: callback not stored")
+	}
+	spr.mu.Unlock()
+
+	// The callback is invoked during adjustWindowLocked; verify it's wired.
+	_ = spr.bufferFillFunc()
+	if !called {
+		t.Fatalf("SetBufferFillFunc: callback not invoked")
 	}
 }

@@ -388,6 +388,18 @@ func (b *bufferedStreamReader) Buffered() int {
 	return b.count
 }
 
+// FillRatio returns the fraction of the ring buffer that is currently occupied
+// (0.0 = empty, 1.0 = full). Used as a feedback signal for the sliding
+// priority reader to boost its window when downstream FFmpeg is starving.
+func (b *bufferedStreamReader) FillRatio() float64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.size <= 0 {
+		return 0
+	}
+	return float64(b.count) / float64(b.size)
+}
+
 // EffectiveBitrate returns the EMA-smoothed consumer read rate in bytes/sec.
 func (b *bufferedStreamReader) EffectiveBitrate() float64 {
 	b.mu.Lock()
@@ -403,6 +415,28 @@ func (b *bufferedStreamReader) SetRateLimit(bytesPerSec int64) {
 // RateLimit returns the current rate limit in bytes/sec (0 = unlimited).
 func (b *bufferedStreamReader) RateLimit() int64 {
 	return b.rateLimitBPS.Load()
+}
+
+// Prebuffer blocks until at least minBytes are buffered, the source errors,
+// the reader is closed, the context is cancelled, or the timeout fires.
+// Timeout is best-effort: if it fires, nil is returned so FFmpeg starts with
+// whatever data is available. Only ctx cancellation returns an error.
+func (b *bufferedStreamReader) Prebuffer(ctx context.Context, minBytes int, timeout time.Duration) error {
+	deadline := time.After(timeout)
+	b.mu.Lock()
+	for b.count < minBytes && b.srcErr == nil && !b.closed {
+		b.mu.Unlock()
+		select {
+		case <-b.dataCh:
+		case <-deadline:
+			return nil // best-effort: start FFmpeg with whatever we have
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		b.mu.Lock()
+	}
+	b.mu.Unlock()
+	return nil
 }
 
 // memoryPressureHigh returns true when the Go heap exceeds the configured limit.

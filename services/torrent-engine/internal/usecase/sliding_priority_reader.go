@@ -25,6 +25,14 @@ const (
 	// file that is never deprioritized. Container formats (MP4 moov, MKV
 	// SeekHead/Cues) store seek indices at file boundaries.
 	fileBoundaryProtection int64 = 8 << 20 // 8 MB
+
+	// bufferLowFillThreshold triggers a priority boost when the downstream
+	// buffered reader's fill ratio drops below this level.
+	bufferLowFillThreshold = 0.3
+
+	// boostedGradientHighBand is the expanded High band used during a
+	// buffer-low boost (3× normal gradientHighBand).
+	boostedGradientHighBand int64 = 6 << 20 // 6 MB
 )
 
 type slidingPriorityReader struct {
@@ -46,6 +54,8 @@ type slidingPriorityReader struct {
 	lastUpdateTime           time.Time
 	effectiveBytesPerSec     float64
 	seekBoostUntil           time.Time
+	bufferFillFunc           func() float64 // downstream buffer fill ratio callback; nil when unwired
+	bufferBoostUntil         time.Time      // active buffer-low boost expiry
 
 	// Dormancy support: idle readers are put to sleep when multiple readers
 	// exist for the same torrent, freeing bandwidth for the active reader.
@@ -108,28 +118,60 @@ func (r *slidingPriorityReader) SetResponsive() {
 	r.reader.SetResponsive()
 }
 
+// SetBufferFillFunc registers a callback that returns the downstream buffer's
+// fill ratio (0.0–1.0). When the ratio drops below bufferLowFillThreshold,
+// the priority window is temporarily doubled to accelerate piece downloads.
+func (r *slidingPriorityReader) SetBufferFillFunc(fn func() float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.bufferFillFunc = fn
+}
+
+// BoostWindow temporarily doubles the priority window for the given duration.
+// Used by the HLS watchdog escalation ladder to increase piece download
+// urgency before resorting to an FFmpeg restart.
+func (r *slidingPriorityReader) BoostWindow(d time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	boosted := r.window * 2
+	if boosted > r.maxWindow {
+		boosted = r.maxWindow
+	}
+	r.window = boosted
+	r.seekBoostUntil = time.Now().Add(d)
+	r.updatePriorityWindowLocked(true)
+}
+
 func (r *slidingPriorityReader) Read(p []byte) (int, error) {
 	n, err := r.reader.Read(p)
+
+	// Always update lastAccess, even when n == 0 (waiting for pieces in
+	// responsive mode). The fillLoop goroutine retries Read() with exponential
+	// backoff while pieces are being downloaded. If we only update lastAccess
+	// when n > 0, the dormancy system incorrectly identifies an
+	// actively-waiting reader as idle and deprioritizes its pieces — causing a
+	// self-reinforcing download deadlock when multiple files are open for the
+	// same torrent.
+	now := time.Now()
+	r.mu.Lock()
+	r.lastAccess = now
 	if n > 0 {
-		now := time.Now()
-		r.mu.Lock()
 		r.pos += int64(n)
-		r.lastAccess = now
 		r.bytesReadSinceLastUpdate += int64(n)
 		if r.dormant {
 			r.exitDormancyLocked()
 		}
 		r.adjustWindowLocked()
 		r.updatePriorityWindowLocked(false)
-		checkDormancy := r.registry != nil && now.Sub(r.lastDormancyCheck) > 5*time.Second
-		if checkDormancy {
-			r.lastDormancyCheck = now
-		}
-		r.mu.Unlock()
+	}
+	checkDormancy := r.registry != nil && now.Sub(r.lastDormancyCheck) > 5*time.Second
+	if checkDormancy {
+		r.lastDormancyCheck = now
+	}
+	r.mu.Unlock()
 
-		if checkDormancy {
-			r.registry.enforceDormancy(r.torrentID, r)
-		}
+	if checkDormancy {
+		r.registry.enforceDormancy(r.torrentID, r)
 	}
 	if err != nil {
 		return n, err
@@ -216,6 +258,22 @@ func (r *slidingPriorityReader) adjustWindowLocked() {
 		return
 	}
 
+	// Buffer-low boost: when the downstream ring buffer is starving,
+	// temporarily double the priority window to accelerate piece downloads.
+	if r.bufferFillFunc != nil {
+		fill := r.bufferFillFunc()
+		if fill < bufferLowFillThreshold && now.After(r.bufferBoostUntil) {
+			boosted := r.window * 2
+			if boosted > r.maxWindow {
+				boosted = r.maxWindow
+			}
+			r.window = boosted
+			r.bufferBoostUntil = now.Add(5 * time.Second)
+			r.updatePriorityWindowLocked(true)
+			return
+		}
+	}
+
 	// Target: buffer ~30 seconds of content ahead.
 	dynamicWindow := int64(r.effectiveBytesPerSec * adaptiveTargetBufferSeconds)
 	if dynamicWindow < r.minWindow {
@@ -276,7 +334,11 @@ func (r *slidingPriorityReader) applyGradientPriority(off int64) {
 	remaining := r.window
 
 	// Band 1: PriorityHigh (immediate need)
+	// Use expanded high band during buffer-low boost for faster recovery.
 	highLen := gradientHighBand
+	if time.Now().Before(r.bufferBoostUntil) {
+		highLen = boostedGradientHighBand
+	}
 	if highLen > remaining {
 		highLen = remaining
 	}
