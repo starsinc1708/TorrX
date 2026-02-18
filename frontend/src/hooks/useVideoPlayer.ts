@@ -182,7 +182,7 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
 
       // HLS probe with resume-during-probe optimization.
       let probeSeekOffset: number | undefined;
-      if (resumePos !== null && resumePos > 0) {
+      if (resumePos !== null && resumePos > 0 && fileComplete) {
         try {
           const audio = audioTrack ?? findDefaultAudioTrack(mediaInfo);
           const result = await hlsSeek(torrentId, fileIndex, resumePos, {
