@@ -1,6 +1,7 @@
 package apihttp
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"torrentstream/internal/metrics"
@@ -100,21 +102,44 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	playlistType := "event"
 	flags := "append_list+independent_segments"
 
+	// For pipe sources (incomplete torrent), use a smaller probe window
+	// so FFmpeg starts encoding sooner instead of waiting for 10 MB of
+	// sequential data through slow piece-by-piece delivery.
+	// Use FFmpeg's default probesize (5 MB) to avoid codec detection failures
+	// that occur when format metadata is spread across the first few MB.
+	analyzeDuration := "20000000" // 20s — generous for seekable file/HTTP inputs
+	probeSize := "10000000"       // 10 MB
+	if useReader {
+		analyzeDuration = "5000000" // 5s — FFmpeg default; sufficient for stream detection
+		probeSize = "5000000"       // 5 MB — FFmpeg default; safe for all container formats
+	}
+
 	args := []string{
 		"-hide_banner",
 		"-loglevel", "error",
+		// -progress must be a global option — place it before any input/output
+		// so FFmpeg cannot misinterpret pipe:1 as a second output file.
+		"-progress", "pipe:1",
 		"-fflags", "+genpts+discardcorrupt",
 		"-err_detect", "ignore_err",
-		"-analyzeduration", "20000000",
-		"-probesize", "10000000",
+		"-analyzeduration", analyzeDuration,
+		"-probesize", probeSize,
 		"-avoid_negative_ts", "make_zero",
 	}
 
+	// Place -ss before -i for fast input-seeking on all source types.
+	// For HTTP sources, FFmpeg uses HTTP range requests for container-level
+	// seeking. For pipe sources (seekSeconds=0 initial play), no -ss is added.
 	if job.seekSeconds > 0 {
 		args = append(args, "-ss", strconv.FormatFloat(job.seekSeconds, 'f', 3, 64))
 	}
 
-	// HTTP input: add reconnect flags for resilience.
+	// HTTP input: reconnect on dropped connection during streaming.
+	// Do NOT add -reconnect_at_eof: for partially-downloaded files the HTTP
+	// server closes the connection at the download boundary (not at the declared
+	// Content-Length). With -reconnect_at_eof FFmpeg would restart from byte 0,
+	// ignoring the already-consumed -ss, and produce segments from the beginning
+	// of the file instead of the seek position — causing silent/frozen video.
 	if strings.HasPrefix(input, "http://") || strings.HasPrefix(input, "https://") {
 		args = append(args, "-reconnect", "1", "-reconnect_streamed", "1")
 	}
@@ -289,11 +314,23 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	if pipeReader != nil {
 		cmd.Stdin = pipeReader
 	}
-	cmd.Stdout = io.Discard
+	// Capture FFmpeg progress output via stdout pipe.
+	progressR, progressW, progressPipeErr := os.Pipe()
+	if progressPipeErr != nil {
+		cmd.Stdout = io.Discard
+	} else {
+		cmd.Stdout = progressW
+	}
 	cmd.Stderr = &stderr
 
 	ffmpegStart := time.Now()
 	if err := cmd.Start(); err != nil {
+		if progressR != nil {
+			progressR.Close()
+		}
+		if progressW != nil {
+			progressW.Close()
+		}
 		// buffered reader (if any) is closed by defer above
 		m.logger.Error("hls ffmpeg start failed", slog.String("error", err.Error()))
 		job.err = err
@@ -302,6 +339,13 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 		job.signalReady()
 		m.cleanupJob(key, job)
 		return
+	}
+	// Close write end of progress pipe in parent; start parsing goroutine.
+	if progressW != nil {
+		progressW.Close()
+	}
+	if progressR != nil {
+		go parseFFmpegProgress(progressR, job)
 	}
 	m.markJobRunning(key, job)
 	go m.watchJobProgress(key, job)
@@ -731,4 +775,20 @@ func playlistHasEndList(path string) bool {
 		return false
 	}
 	return strings.Contains(string(data), "#EXT-X-ENDLIST")
+}
+
+// parseFFmpegProgress reads FFmpeg -progress output from r and stores the
+// latest out_time_us value in job.ffmpegProgressUs (atomic). The goroutine
+// exits when r is closed (FFmpeg process exits).
+func parseFFmpegProgress(r *os.File, job *hlsJob) {
+	defer r.Close()
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "out_time_us=") {
+			if us, err := strconv.ParseInt(strings.TrimPrefix(line, "out_time_us="), 10, 64); err == nil {
+				atomic.StoreInt64(&job.ffmpegProgressUs, us)
+			}
+		}
+	}
 }

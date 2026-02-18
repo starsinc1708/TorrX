@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -58,8 +59,9 @@ type hlsJob struct {
 	multiVariant bool             // true when producing multiple quality variants
 	variants     []qualityVariant // populated for multi-variant jobs
 	genRef          *generationRef   // shared generation counter for stale reader detection
-	consumptionRate func() float64   // returns EMA consumer read rate (bytes/sec); nil if unavailable
-	bufferedReader  *bufferedStreamReader // non-nil for pipe sources; used for rate limiting
+	consumptionRate  func() float64         // returns EMA consumer read rate (bytes/sec); nil if unavailable
+	bufferedReader   *bufferedStreamReader // non-nil for pipe sources; used for rate limiting
+	ffmpegProgressUs int64                 // atomic: last FFmpeg out_time in microseconds
 
 	// Cached rewritten playlist (avoids re-parsing on every m3u8 GET).
 	rewrittenMu           sync.RWMutex
@@ -109,6 +111,7 @@ type hlsManager struct {
 	resolutionCacheMu     sync.RWMutex
 	resolutionCache       map[string]*resolutionCacheEntry // filePath → resolution
 	segLimiter            *segmentLimiter // per-IP rate limiter for segment requests
+	lastHardSeek          map[hlsKey]time.Time // anti-seek-storm: last hard seek per key
 	segmentDuration       int
 	logger                *slog.Logger
 	totalJobStarts        uint64
@@ -212,6 +215,7 @@ func newHLSManager(stream StreamTorrentUseCase, engine ports.Engine, cfg HLSConf
 		audioBitrate:    audioBitrate,
 		segmentDuration: 4,
 		jobs:            make(map[hlsKey]*hlsJob),
+		lastHardSeek:    make(map[hlsKey]time.Time),
 		cache:           cache,
 		memBuf:          memBuf,
 		codecCache:      make(map[string]*codecCacheEntry),
@@ -258,30 +262,71 @@ func (m *hlsManager) buildJobDir(key hlsKey) string {
 }
 
 // segmentLimiter enforces per-IP rate limits on HLS segment requests.
+// Stale entries are evicted periodically to prevent unbounded memory growth.
 type segmentLimiter struct {
 	mu       sync.Mutex
-	limiters map[string]*rate.Limiter
+	limiters map[string]*limiterEntry
 	r        rate.Limit
 	b        int
+	stopCh   chan struct{}
+}
+
+type limiterEntry struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
 }
 
 func newSegmentLimiter(rps float64, burst int) *segmentLimiter {
-	return &segmentLimiter{
-		limiters: make(map[string]*rate.Limiter),
+	l := &segmentLimiter{
+		limiters: make(map[string]*limiterEntry),
 		r:        rate.Limit(rps),
 		b:        burst,
+		stopCh:   make(chan struct{}),
 	}
+	go l.cleanupLoop()
+	return l
 }
 
 func (l *segmentLimiter) Allow(ip string) bool {
+	now := time.Now()
 	l.mu.Lock()
-	lim, ok := l.limiters[ip]
+	entry, ok := l.limiters[ip]
 	if !ok {
-		lim = rate.NewLimiter(l.r, l.b)
-		l.limiters[ip] = lim
+		entry = &limiterEntry{limiter: rate.NewLimiter(l.r, l.b)}
+		l.limiters[ip] = entry
+	}
+	entry.lastSeen = now
+	l.mu.Unlock()
+	return entry.limiter.Allow()
+}
+
+// cleanupLoop evicts IPs that haven't been seen for 10 minutes.
+func (l *segmentLimiter) cleanupLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			l.evictStale(10 * time.Minute)
+		case <-l.stopCh:
+			return
+		}
+	}
+}
+
+func (l *segmentLimiter) evictStale(maxAge time.Duration) {
+	cutoff := time.Now().Add(-maxAge)
+	l.mu.Lock()
+	for ip, entry := range l.limiters {
+		if entry.lastSeen.Before(cutoff) {
+			delete(l.limiters, ip)
+		}
 	}
 	l.mu.Unlock()
-	return lim.Allow()
+}
+
+func (l *segmentLimiter) Stop() {
+	close(l.stopCh)
 }
 
 // ---- Persistent codec cache ------------------------------------------------
@@ -393,6 +438,41 @@ func (m *hlsManager) evictCodecCacheIfNeeded() {
 		delete(m.codecCache, path)
 		excess--
 	}
+}
+
+// profileHash returns the current encoding profile hash.
+func (m *hlsManager) profileHash() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	segDur := m.segmentDuration
+	if segDur <= 0 {
+		segDur = 4
+	}
+	return computeProfileHash(m.preset, m.crf, m.audioBitrate, segDur)
+}
+
+// cacheVariant qualifies a variant name with the encoding profile hash
+// so that cached segments are separated by encoding settings.
+func (m *hlsManager) cacheVariant(variant string) string {
+	ph := m.profileHash()
+	if variant != "" {
+		return variant + "-" + ph
+	}
+	return ph
+}
+
+// cacheVariantLocked is the lock-free variant of cacheVariant for use when
+// the caller already holds m.mu.
+func (m *hlsManager) cacheVariantLocked(variant string) string {
+	segDur := m.segmentDuration
+	if segDur <= 0 {
+		segDur = 4
+	}
+	ph := computeProfileHash(m.preset, m.crf, m.audioBitrate, segDur)
+	if variant != "" {
+		return variant + "-" + ph
+	}
+	return ph
 }
 
 func (m *hlsManager) EncodingPreset() string {
@@ -594,25 +674,53 @@ func (m *hlsManager) seekJob(id domain.TorrentID, fileIndex, audioTrack, subtitl
 	// Compute base directory before any locking (buildJobDir takes RLock internally).
 	baseDir := m.buildJobDir(key)
 
+	// Pre-compute seek mode WITHOUT holding the write lock.
+	// chooseSeekModeLocked calls m.cache.LookupRange which acquires c.mu.RLock.
+	// Performing this while m.mu is write-locked creates a lock-chain deadlock:
+	//   seekJob holds m.mu.Lock → LookupRange waits for c.mu.RLock
+	//   → Store eviction holds c.mu.Lock during os.Remove → deadlock.
+	// We snapshot the current job under m.mu.RLock, release it, compute the mode
+	// (including the cache lookup), then re-acquire m.mu.Lock for the mutation.
+	m.mu.RLock()
+	preLockOld, preLockHasOld := m.jobs[key]
+	preLockSegDur := m.segmentDuration
+	m.mu.RUnlock()
+
+	var preLockMode SeekMode = SeekModeHard
+	if preLockHasOld {
+		// c.mu.RLock is acquired inside chooseSeekModeLocked; no m.mu held here.
+		preLockMode = m.chooseSeekModeLocked(key, preLockOld, seekSeconds, preLockSegDur)
+	}
+
 	m.mu.Lock()
 	m.totalSeekRequests++
 	m.lastSeekAt = time.Now().UTC()
 	m.lastSeekTarget = seekSeconds
 	metrics.HLSSeekTotal.Inc()
 
-	// Check if soft seek is possible before tearing down the job.
+	// Use the pre-computed seek mode, verifying the job hasn't changed since we
+	// released m.mu.RLock. If the job was replaced by another goroutine in the
+	// interim, fall back to hard seek (conservative but correct).
 	seekModeEmitted := false
 	if old, ok := m.jobs[key]; ok {
-		seekMode := m.chooseSeekModeLocked(key, old, seekSeconds, m.segmentDuration)
+		var seekMode SeekMode
+		if old == preLockOld {
+			// Same job instance — pre-computed mode is still valid.
+			seekMode = preLockMode
+		} else {
+			// Job was replaced between read-lock and write-lock — be conservative.
+			seekMode = SeekModeHard
+		}
 		metrics.HLSSeekModeTotal.WithLabelValues(seekMode.String()).Inc()
 		seekModeEmitted = true
-		if seekMode == SeekModeSoft {
+		if seekMode == SeekModeCache || seekMode == SeekModeSoft {
 			m.mu.Unlock()
-			m.logger.Info("hls soft seek — no FFmpeg restart",
+			m.logger.Info("hls seek — no FFmpeg restart",
 				slog.String("torrentId", string(id)),
 				slog.Float64("targetSec", seekSeconds),
+				slog.String("seekMode", seekMode.String()),
 			)
-			return old, SeekModeSoft, nil
+			return old, seekMode, nil
 		}
 	}
 
@@ -627,8 +735,21 @@ func (m *hlsManager) seekJob(id domain.TorrentID, fileIndex, audioTrack, subtitl
 		if old.cancel != nil {
 			old.cancel()
 		}
+		// Immediately reset rate limit so the torrent isn't left throttled
+		// while the old job is cleaned up asynchronously.
+		m.resetRateLimit(key, old)
 		oldDir = old.dir
 	}
+
+	// Anti-seek-storm: log when two hard seeks happen within 150ms.
+	now := time.Now()
+	if prev, ok := m.lastHardSeek[key]; ok && now.Sub(prev) < 150*time.Millisecond {
+		m.logger.Debug("hls seek storm detected: rapid consecutive hard seeks",
+			slog.String("torrentId", string(id)),
+			slog.Duration("interval", now.Sub(prev)),
+		)
+	}
+	m.lastHardSeek[key] = now
 
 	// Use a unique directory per seek so cleanup of previous jobs
 	// can't race and remove files of the newly started ffmpeg process.
@@ -903,6 +1024,9 @@ func (m *hlsManager) watchJobProgress(key hlsKey, job *hlsJob) {
 	lastSegPath := ""
 	lastSegSize := int64(0)
 	lastSegChangedAt := time.Now()
+	// FFmpeg -progress tracking for within-segment stall detection.
+	var lastProgressUs int64
+	lastProgressChangeAt := time.Now()
 
 	for range ticker.C {
 		readyClosed := false
@@ -961,9 +1085,22 @@ func (m *hlsManager) watchJobProgress(key hlsKey, job *hlsJob) {
 			}
 		}
 
+		// Track FFmpeg encoding progress (out_time_us from -progress pipe:1).
+		// If progress advances, FFmpeg is alive even if no new segment file appeared.
+		currentProgressUs := atomic.LoadInt64(&job.ffmpegProgressUs)
+		if currentProgressUs > 0 {
+			if currentProgressUs != lastProgressUs {
+				lastProgressUs = currentProgressUs
+				lastProgressChangeAt = time.Now()
+			}
+		}
+
 		if !readyClosed {
 			continue
 		}
+
+		segStalled := time.Since(lastSegChangedAt) >= hlsWatchdogStallThreshold
+		progressStalled := lastProgressUs > 0 && time.Since(lastProgressChangeAt) >= hlsWatchdogStallThreshold
 
 		stallDuration := time.Since(lastSegChangedAt)
 
@@ -974,11 +1111,12 @@ func (m *hlsManager) watchJobProgress(key hlsKey, job *hlsJob) {
 				slog.String("torrentId", string(key.id)),
 				slog.Int("fileIndex", key.fileIndex),
 				slog.Duration("stalled", stallDuration),
+				slog.Int64("ffmpegProgressUs", currentProgressUs),
 			)
 			stallWarnLogged = true
 		}
 
-		if stallDuration < hlsWatchdogStallThreshold {
+		if !segStalled && !progressStalled {
 			continue
 		}
 		if restartCount >= hlsMaxAutoRestarts {
@@ -1144,6 +1282,9 @@ func (m *hlsManager) healthSnapshot() hlsHealthSnapshot {
 // shutdown cancels all active HLS jobs, saves the codec cache, and stops
 // background timers. Called during graceful server shutdown.
 func (m *hlsManager) shutdown() {
+	if m.segLimiter != nil {
+		m.segLimiter.Stop()
+	}
 	m.mu.Lock()
 	for key, job := range m.jobs {
 		if job.cancel != nil {
@@ -1176,7 +1317,32 @@ func findLastSegment(dir string) (path string, size int64) {
 	}
 	var latestMod time.Time
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".ts") {
+		if e.IsDir() {
+			// Check variant subdirectories (v0/, v1/, ...) for multi-variant jobs.
+			if len(e.Name()) >= 2 && e.Name()[0] == 'v' {
+				subDir := filepath.Join(dir, e.Name())
+				subEntries, subErr := os.ReadDir(subDir)
+				if subErr != nil {
+					continue
+				}
+				for _, se := range subEntries {
+					if se.IsDir() || !strings.HasSuffix(se.Name(), ".ts") {
+						continue
+					}
+					info, infoErr := se.Info()
+					if infoErr != nil {
+						continue
+					}
+					if info.ModTime().After(latestMod) {
+						latestMod = info.ModTime()
+						path = filepath.Join(subDir, se.Name())
+						size = info.Size()
+					}
+				}
+			}
+			continue
+		}
+		if !strings.HasSuffix(e.Name(), ".ts") {
 			continue
 		}
 		info, err := e.Info()

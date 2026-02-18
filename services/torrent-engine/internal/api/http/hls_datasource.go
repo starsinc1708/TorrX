@@ -126,24 +126,39 @@ func (m *hlsManager) newDataSource(result usecase.StreamResult, job *hlsJob, key
 					)
 					return &directFileSource{path: candidatePath, reader: result.Reader}, subtitleSourcePath
 				}
-				if info.Size() >= 10*1024*1024 && info.Size() < result.File.Length && job.seekSeconds == 0 {
+				if info.Size() >= 10*1024*1024 && info.Size() < result.File.Length {
 					// Partial download AND the physical file is shorter than declared
-					// (non-preallocating storage). Header region is available and we are
-					// playing from the start: FFmpeg can read directly.
-					m.logger.Info("hls using partialDirectSource",
-						slog.String("path", candidatePath),
-						slog.Int64("available", info.Size()),
-						slog.Int64("total", result.File.Length),
-					)
-					return &partialDirectSource{path: candidatePath, reader: result.Reader}, subtitleSourcePath
+					// (non-preallocating storage). Header region is available.
+					seekOK := job.seekSeconds == 0
+					if !seekOK {
+						// For seeks, estimate if the target byte offset falls within
+						// available data so FFmpeg can use fast input-seeking on a
+						// real file instead of slow output-seeking through a pipe.
+						_, _, dur := m.getVideoResolutionWithDuration(candidatePath)
+						if dur > 0 {
+							estByte := estimateByteOffset(job.seekSeconds, dur, result.File.Length)
+							seekOK = estByte >= 0 && estByte < int64(float64(info.Size())*0.9)
+						}
+					}
+					if seekOK {
+						m.logger.Info("hls using partialDirectSource",
+							slog.String("path", candidatePath),
+							slog.Int64("available", info.Size()),
+							slog.Int64("total", result.File.Length),
+							slog.Float64("seekSeconds", job.seekSeconds),
+						)
+						return &partialDirectSource{path: candidatePath, reader: result.Reader}, subtitleSourcePath
+					}
 				}
 			}
 		}
 	}
 
-	// When seeking a fully-downloaded file that is not on disk (e.g. memory
-	// storage), use the internal HTTP stream endpoint.
-	if job.seekSeconds > 0 && fileComplete && m.listenAddr != "" {
+	// When seeking and the file is not served directly from disk, use the
+	// internal HTTP stream endpoint so FFmpeg can use HTTP range requests
+	// (container-level seeking). This avoids output-seeking through the
+	// entire file from byte 0, which is infeasible for partial downloads.
+	if job.seekSeconds > 0 && m.listenAddr != "" {
 		host := m.listenAddr
 		if strings.HasPrefix(host, ":") {
 			host = "127.0.0.1" + host

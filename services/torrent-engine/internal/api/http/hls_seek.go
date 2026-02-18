@@ -9,12 +9,13 @@ import (
 type SeekMode int
 
 const (
-	SeekModeSoft    SeekMode = iota // Same job, let HLS.js seek within existing segments
+	SeekModeCache   SeekMode = iota // Fully served from cache, no FFmpeg interaction
+	SeekModeSoft                    // Same job, let HLS.js seek within existing segments
 	SeekModeHard                    // New FFmpeg job from new byte offset
 	SeekModeRestart                 // Full restart (codec change, track switch)
 )
 
-var seekModeNames = [...]string{"soft", "hard", "restart"}
+var seekModeNames = [...]string{"cache", "soft", "hard", "restart"}
 
 func (m SeekMode) String() string {
 	if int(m) < len(seekModeNames) {
@@ -47,17 +48,8 @@ func (m *hlsManager) chooseSeekModeLocked(key hlsKey, job *hlsJob, targetSec flo
 	distance := targetSec - currentSec
 	absDistance := math.Abs(distance)
 
-	// Soft seek: very small distance that HLS.js can handle within existing segments.
-	if absDistance < 2*segDur {
-		m.logger.Debug("hls seek: soft (small distance)",
-			slog.Float64("distance", distance),
-			slog.Float64("threshold", 2*segDur),
-		)
-		return SeekModeSoft
-	}
-
-	// Soft seek from cache: check if cached segments cover the target position.
-	if m.cache != nil && absDistance < 60.0 {
+	// 1. Cache seek: check if cached segments cover the target position (any distance).
+	if m.cache != nil {
 		variant := ""
 		if job.multiVariant {
 			variant = "v0" // check primary variant
@@ -65,23 +57,31 @@ func (m *hlsManager) chooseSeekModeLocked(key hlsKey, job *hlsJob, targetSec flo
 		cached := m.cache.LookupRange(
 			string(key.id), key.fileIndex,
 			key.audioTrack, key.subtitleTrack,
-			variant, targetSec,
+			m.cacheVariantLocked(variant), targetSec,
 		)
 		if len(cached) > 0 {
-			// Check if cached segments cover at least 2 segment durations from target.
 			coverageEnd := cached[len(cached)-1].EndTime
 			if coverageEnd-targetSec >= 2*segDur {
-				m.logger.Debug("hls seek: soft (cache coverage)",
+				m.logger.Debug("hls seek: cache (full coverage)",
 					slog.Float64("target", targetSec),
 					slog.Float64("cacheEnd", coverageEnd),
 					slog.Int("cachedSegments", len(cached)),
 				)
-				return SeekModeSoft
+				return SeekModeCache
 			}
 		}
 	}
 
-	// All other cases: hard seek (kill FFmpeg, restart at new position).
+	// 2. Soft seek: medium distance that HLS.js can handle within existing segments.
+	if absDistance < 20.0 {
+		m.logger.Debug("hls seek: soft (small distance)",
+			slog.Float64("distance", distance),
+			slog.Float64("threshold", 20.0),
+		)
+		return SeekModeSoft
+	}
+
+	// 3. Hard seek: kill FFmpeg, restart at new position.
 	m.logger.Debug("hls seek: hard",
 		slog.Float64("target", targetSec),
 		slog.Float64("distance", distance),

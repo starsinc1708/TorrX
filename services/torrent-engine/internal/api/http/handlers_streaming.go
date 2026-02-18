@@ -340,7 +340,7 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 		// Segment not in job dir — try the HLS cache.
 		if os.IsNotExist(err) && s.hls != nil && s.hls.cache != nil {
 			if timeSec, ok := segmentTimeOffset(job, segmentName); ok {
-				if cached, found := s.hls.cache.Lookup(string(id), fileIndex, audioTrack, subtitleTrack, variant, timeSec); found {
+				if cached, found := s.hls.cache.Lookup(string(id), fileIndex, audioTrack, subtitleTrack, s.hls.cacheVariant(variant), timeSec); found {
 					// 3a. Check memBuf under cache path.
 					if s.hls.memBuf != nil {
 						if data, memOk := s.hls.memBuf.Get(cached.Path); memOk {
@@ -413,8 +413,8 @@ func (s *Server) handleHLSSeek(w http.ResponseWriter, r *http.Request, id domain
 		return
 	}
 
-	// Soft seek: no FFmpeg restart needed, return immediately.
-	if seekMode == SeekModeSoft {
+	// Cache or soft seek: no FFmpeg restart needed, return immediately.
+	if seekMode == SeekModeCache || seekMode == SeekModeSoft {
 		writeJSON(w, http.StatusOK, seekResponse{
 			SeekTime: seekTime,
 			SeekMode: seekMode.String(),

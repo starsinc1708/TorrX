@@ -15,6 +15,8 @@ type focusedPieceRange struct {
 
 func mapPriority(prio domain.Priority) torrent.PiecePriority {
 	switch prio {
+	case domain.PriorityNone:
+		return torrent.PiecePriorityNone
 	case domain.PriorityHigh:
 		return torrent.PiecePriorityNow
 	case domain.PriorityNormal:

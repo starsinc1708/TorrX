@@ -83,7 +83,7 @@ func newBufferedStreamReader(source io.ReadCloser, bufSize int, logger *slog.Log
 func (b *bufferedStreamReader) fillLoop() {
 	const (
 		initialBackoff   = 10 * time.Millisecond
-		maxBackoff       = 500 * time.Millisecond
+		maxBackoff       = 200 * time.Millisecond // keep low to reduce latency when pieces arrive
 		maxStallDuration = 3 * time.Minute
 	)
 

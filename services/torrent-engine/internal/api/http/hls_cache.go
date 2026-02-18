@@ -296,25 +296,34 @@ func (c *hlsCache) Store(torrentID string, fileIndex, audioTrack, subtitleTrack 
 	heap.Push(&c.evictHeap, e)
 	c.evictByPath[dstPath] = e
 
-	// Inline heap-based eviction: O(log n) per removed segment.
+	// Collect eviction candidates under the lock (index/heap ops only).
+	// File deletion happens after releasing the lock so that c.mu is not held
+	// during potentially-slow os.Remove calls. This prevents a lock-chain
+	// deadlock where a goroutine blocked in LookupRange (waiting for c.mu.RLock)
+	// holds m.mu.Lock, starving all other HLS operations.
+	var toEvict []*evictionEntry
 	for c.totalSize > c.maxBytes && c.evictHeap.Len() > 0 {
 		oldest := heap.Pop(&c.evictHeap).(*evictionEntry)
 		delete(c.evictByPath, oldest.path)
+		c.totalSize -= oldest.size
+		c.removeSegmentFromIndex(oldest.torrentID, oldest.fileIndex, oldest.trackKey, oldest.path)
+		toEvict = append(toEvict, oldest)
+	}
+	if c.totalSize < 0 {
+		c.totalSize = 0
+	}
+	c.mu.Unlock()
+
+	// Delete evicted files without holding the cache lock.
+	for _, oldest := range toEvict {
 		if err := os.Remove(oldest.path); err != nil && !os.IsNotExist(err) {
 			c.logger.Warn("hls cache evict failed",
 				slog.String("path", oldest.path),
 				slog.String("error", err.Error()),
 			)
 			metrics.HLSCacheCleanupErrors.Inc()
-			continue
 		}
-		c.totalSize -= oldest.size
-		c.removeSegmentFromIndex(oldest.torrentID, oldest.fileIndex, oldest.trackKey, oldest.path)
 	}
-	if c.totalSize < 0 {
-		c.totalSize = 0
-	}
-	c.mu.Unlock()
 
 	return nil
 }

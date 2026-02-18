@@ -49,6 +49,7 @@ func (m *hlsManager) harvestSegmentsToCache(key hlsKey, dir string, seekSeconds 
 		if err != nil {
 			continue
 		}
+		cacheV := m.cacheVariant(vi.variant)
 		cumTime := seekSeconds
 		for _, seg := range segments {
 			startTime := cumTime
@@ -60,7 +61,7 @@ func (m *hlsManager) harvestSegmentsToCache(key hlsKey, dir string, seekSeconds 
 			}
 			if err := m.cache.Store(
 				string(key.id), key.fileIndex, key.audioTrack, key.subtitleTrack,
-				vi.variant, startTime, endTime, srcPath,
+				cacheV, startTime, endTime, srcPath,
 			); err != nil {
 				m.logger.Warn("hls cache store failed",
 					slog.String("segment", seg.Filename),
@@ -71,7 +72,7 @@ func (m *hlsManager) harvestSegmentsToCache(key hlsKey, dir string, seekSeconds 
 				if raw, readErr := os.ReadFile(srcPath); readErr == nil {
 					cachePath := m.cache.SegmentPath(
 						string(key.id), key.fileIndex, key.audioTrack, key.subtitleTrack,
-						vi.variant, startTime, endTime,
+						cacheV, startTime, endTime,
 					)
 					m.memBuf.Put(cachePath, raw)
 				}
@@ -134,6 +135,7 @@ func (m *hlsManager) cacheSegmentsLive(job *hlsJob, key hlsKey) {
 				if err != nil || len(segments) <= vs.cached {
 					continue
 				}
+				cacheV := m.cacheVariant(vs.variant)
 				cumTime := job.seekSeconds
 				for i := 0; i < vs.cached && i < len(segments); i++ {
 					cumTime += segments[i].Duration
@@ -146,7 +148,7 @@ func (m *hlsManager) cacheSegmentsLive(job *hlsJob, key hlsKey) {
 					if _, statErr := os.Stat(srcPath); statErr == nil {
 						_ = m.cache.Store(
 							string(key.id), key.fileIndex, key.audioTrack, key.subtitleTrack,
-							vs.variant, startTime, endTime, srcPath,
+							cacheV, startTime, endTime, srcPath,
 						)
 						if m.memBuf != nil {
 							if raw, readErr := os.ReadFile(srcPath); readErr == nil {

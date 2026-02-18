@@ -27,6 +27,8 @@ type slidingPriorityReader struct {
 	mu                      sync.Mutex
 	pos                     int64
 	lastOff                 int64
+	prevOff                 int64
+	prevWindow              int64
 	bytesReadSinceLastUpdate int64
 	lastUpdateTime          time.Time
 	effectiveBytesPerSec    float64
@@ -172,11 +174,36 @@ func (r *slidingPriorityReader) updatePriorityWindowLocked(force bool) {
 		}
 	}
 
+	// Deprioritize the non-overlapping portion of the previous window
+	// so stale pieces don't compete for bandwidth.
+	if r.prevWindow > 0 {
+		prevEnd := r.prevOff + r.prevWindow
+		newStart := off
+		newEnd := off + r.window
+		if prevEnd <= newStart || r.prevOff >= newEnd {
+			// Old window entirely outside new window — reset all of it.
+			r.session.SetPiecePriority(
+				r.file,
+				domain.Range{Off: r.prevOff, Length: r.prevWindow},
+				domain.PriorityNone,
+			)
+		} else if r.prevOff < newStart {
+			// Old window partially overlaps — reset only the prefix before new start.
+			r.session.SetPiecePriority(
+				r.file,
+				domain.Range{Off: r.prevOff, Length: newStart - r.prevOff},
+				domain.PriorityNone,
+			)
+		}
+	}
+
 	r.session.SetPiecePriority(
 		r.file,
 		domain.Range{Off: off, Length: r.window},
 		domain.PriorityHigh,
 	)
+	r.prevOff = off
+	r.prevWindow = r.window
 	r.lastOff = off
 }
 
