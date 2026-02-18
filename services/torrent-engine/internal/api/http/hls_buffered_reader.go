@@ -41,8 +41,8 @@ type bufferedStreamReader struct {
 	count  int // bytes currently buffered
 
 	mu       sync.Mutex
-	cond     *sync.Cond
-	srcErr   error // sticky error from source
+	dataCh   chan struct{} // signaled (non-blocking send) when data/error/close arrives
+	srcErr   error         // sticky error from source
 	closed   bool
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -66,14 +66,23 @@ func newBufferedStreamReader(source io.ReadCloser, bufSize int, logger *slog.Log
 		source:          source,
 		buf:             make([]byte, bufSize),
 		size:            bufSize,
+		dataCh:          make(chan struct{}, 1),
 		ctx:             ctx,
 		cancel:          cancel,
 		logger:          logger,
 		lastResizeCheck: time.Now(),
 	}
-	b.cond = sync.NewCond(&b.mu)
 	go b.fillLoop()
 	return b
+}
+
+// signal performs a non-blocking send on dataCh to wake up a waiting Read().
+// Caller must hold b.mu.
+func (b *bufferedStreamReader) signal() {
+	select {
+	case b.dataCh <- struct{}{}:
+	default:
+	}
 }
 
 // fillLoop continuously reads from the source into the ring buffer.
@@ -102,7 +111,7 @@ func (b *bufferedStreamReader) fillLoop() {
 		if n > 0 {
 			b.mu.Lock()
 			b.writeToRing(tmp[:n])
-			b.cond.Broadcast()
+			b.signal()
 			b.mu.Unlock()
 			// Data arrived — reset backoff state.
 			backoff = initialBackoff
@@ -125,7 +134,7 @@ func (b *bufferedStreamReader) fillLoop() {
 			if err != io.EOF {
 				b.mu.Lock()
 				b.srcErr = err
-				b.cond.Broadcast()
+				b.signal()
 				b.mu.Unlock()
 				return
 			}
@@ -141,7 +150,7 @@ func (b *bufferedStreamReader) fillLoop() {
 					slog.Duration("stalled", time.Since(stallSince)))
 				b.mu.Lock()
 				b.srcErr = io.EOF
-				b.cond.Broadcast()
+				b.signal()
 				b.mu.Unlock()
 				return
 			}
@@ -182,43 +191,35 @@ func (b *bufferedStreamReader) writeToRing(data []byte) int {
 }
 
 // Read implements io.Reader. Blocks until data is available, source EOF,
-// or the stall timeout is reached.
+// or the context is cancelled.
 func (b *bufferedStreamReader) Read(p []byte) (int, error) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 
-	// Wait for data to become available.
+	// Fast path: data already available.
+	if b.count > 0 {
+		n := b.readFromRing(p)
+		b.bytesConsumed += int64(n)
+		b.maybeResizeLocked()
+		b.mu.Unlock()
+		return n, nil
+	}
+
+	// Wait for data using channel-based signaling (no goroutine leak risk).
 	for b.count == 0 && b.srcErr == nil && !b.closed {
-		// sync.Cond has no native timed wait. Bridge to a channel with a
-		// single goroutine that checks the full predicate so it only
-		// returns when data is truly available (or error/close).
-		condDone := make(chan struct{})
-		go func() {
-			b.mu.Lock()
-			for b.count == 0 && b.srcErr == nil && !b.closed {
-				b.cond.Wait()
-			}
-			b.mu.Unlock()
-			close(condDone)
-		}()
 		b.mu.Unlock()
 
-		// Wait for the cond goroutine, logging periodic stall warnings.
-		// Only one goroutine is alive per outer-loop iteration — the
-		// inner loop just resets the timer without spawning more.
 		stallTimer := time.NewTimer(streamBufStallWarn)
-		gotData := false
-		for !gotData {
+		waiting := true
+		for waiting {
 			select {
-			case <-condDone:
+			case <-b.dataCh:
 				stallTimer.Stop()
-				gotData = true
+				waiting = false
 			case <-stallTimer.C:
 				b.logger.Warn("stream buffer stall: no data for 30s")
 				stallTimer.Reset(streamBufStallWarn)
 			case <-b.ctx.Done():
 				stallTimer.Stop()
-				b.mu.Lock()
 				return 0, b.ctx.Err()
 			}
 		}
@@ -226,10 +227,13 @@ func (b *bufferedStreamReader) Read(p []byte) (int, error) {
 	}
 
 	if b.closed {
+		b.mu.Unlock()
 		return 0, io.ErrClosedPipe
 	}
 	if b.count == 0 && b.srcErr != nil {
-		return 0, b.srcErr
+		err := b.srcErr
+		b.mu.Unlock()
+		return 0, err
 	}
 
 	// Read from ring buffer.
@@ -238,6 +242,7 @@ func (b *bufferedStreamReader) Read(p []byte) (int, error) {
 	// Track consumer throughput for adaptive sizing.
 	b.bytesConsumed += int64(n)
 	b.maybeResizeLocked()
+	b.mu.Unlock()
 
 	return n, nil
 }
@@ -370,7 +375,7 @@ func (b *bufferedStreamReader) resizeLocked(newSize int) {
 func (b *bufferedStreamReader) Close() error {
 	b.mu.Lock()
 	b.closed = true
-	b.cond.Broadcast()
+	b.signal()
 	b.mu.Unlock()
 	b.cancel()
 	return b.source.Close()

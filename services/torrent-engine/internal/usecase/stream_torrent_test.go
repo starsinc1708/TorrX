@@ -203,17 +203,35 @@ func TestStreamTorrentSlidingPriorityOnSeek(t *testing.T) {
 	if len(session.ranges) < 2 {
 		t.Fatalf("expected priority to be updated after seek, got %d calls", len(session.ranges))
 	}
-	last := session.ranges[len(session.ranges)-1]
-	if last.Off <= 0 {
-		t.Fatalf("expected sliding priority offset > 0, got %d", last.Off)
-	}
-	// After seek, the adaptive reader temporarily doubles the window (seek boost).
+
+	// After seek, the adaptive reader temporarily doubles the window (seek boost)
+	// and applies a graduated priority across multiple bands. Verify that:
+	// 1. The first post-seek band has a positive offset (moved from initial position).
+	// 2. The total coverage of all post-seek gradient bands equals the boosted window.
 	baseWindow := streamPriorityWindow(uc.ReadaheadBytes, 1024)
 	boostedWindow := baseWindow * 2
 	if boostedWindow > maxPriorityWindowBytes {
 		boostedWindow = maxPriorityWindowBytes
 	}
-	if last.Length != boostedWindow {
-		t.Fatalf("unexpected priority window length after seek: got %d, want %d (boosted)", last.Length, boostedWindow)
+
+	// Find the first range set after the initial window (index > 0).
+	// The seek may also produce a deprioritization range (PriorityNone),
+	// followed by the gradient bands.
+	var totalGradientLen int64
+	foundPostSeek := false
+	for _, r := range session.ranges[1:] { // skip initial window
+		if r.Off > 0 {
+			foundPostSeek = true
+		}
+		if foundPostSeek {
+			totalGradientLen += r.Length
+		}
+	}
+
+	if !foundPostSeek {
+		t.Fatalf("expected post-seek priority ranges with offset > 0")
+	}
+	if totalGradientLen != boostedWindow {
+		t.Fatalf("total gradient coverage after seek: got %d, want %d (boosted)", totalGradientLen, boostedWindow)
 	}
 }

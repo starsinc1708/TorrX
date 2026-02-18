@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -79,8 +80,9 @@ type hlsJob struct {
 }
 
 type codecCacheEntry struct {
-	isH264 bool
-	isAAC  bool
+	isH264     bool
+	isAAC      bool
+	lastAccess time.Time // LRU tracking for eviction
 }
 
 type resolutionCacheEntry struct {
@@ -424,19 +426,25 @@ func (m *hlsManager) scheduleCodecCacheSave() {
 }
 
 // evictCodecCacheIfNeeded trims the codec cache to maxCodecCacheEntries by
-// removing arbitrary entries (codec detection is cheap enough that occasional
-// re-probes are acceptable).
+// removing least-recently-accessed entries first (LRU).
 func (m *hlsManager) evictCodecCacheIfNeeded() {
 	if len(m.codecCache) <= maxCodecCacheEntries {
 		return
 	}
+	type pathTime struct {
+		path string
+		t    time.Time
+	}
+	entries := make([]pathTime, 0, len(m.codecCache))
+	for p, e := range m.codecCache {
+		entries = append(entries, pathTime{path: p, t: e.lastAccess})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].t.Before(entries[j].t)
+	})
 	excess := len(m.codecCache) - maxCodecCacheEntries
-	for path := range m.codecCache {
-		if excess <= 0 {
-			break
-		}
-		delete(m.codecCache, path)
-		excess--
+	for i := 0; i < excess && i < len(entries); i++ {
+		delete(m.codecCache, entries[i].path)
 	}
 }
 
@@ -770,14 +778,31 @@ func (m *hlsManager) seekJob(id domain.TorrentID, fileIndex, audioTrack, subtitl
 	metrics.HLSActiveJobs.Set(float64(len(m.jobs)))
 	m.mu.Unlock()
 
+	// Pre-warm torrent data at the target position for faster FFmpeg startup.
+	m.preSeekPriorityBoost(key, seekSeconds)
+
 	if oldDir != "" && oldDir != dir {
-		go func(path string, seekSec float64) {
-			m.harvestSegmentsToCache(key, path, seekSec)
+		// Synchronous harvest with timeout so cached segments are available
+		// immediately for the new job's cache check.
+		harvestDone := make(chan struct{})
+		go func() {
+			m.harvestSegmentsToCache(key, oldDir, oldSeekSeconds)
+			close(harvestDone)
+		}()
+		select {
+		case <-harvestDone:
+		case <-time.After(3 * time.Second):
+			m.logger.Warn("hls seek: harvest timeout, continuing with partial cache")
+		}
+		// Async cleanup: wait for harvest to finish (if it hasn't yet),
+		// then purge membuf and remove the old directory.
+		go func(path string) {
+			<-harvestDone
 			if m.memBuf != nil {
 				m.memBuf.PurgePrefix(path)
 			}
 			_ = os.RemoveAll(path)
-		}(oldDir, oldSeekSeconds)
+		}(oldDir)
 	}
 
 	job.startOnce.Do(func() {
@@ -1277,6 +1302,24 @@ func (m *hlsManager) healthSnapshot() hlsHealthSnapshot {
 		s.LastAutoRestartAt = &ts
 	}
 	return s
+}
+
+// preloadFileEnds boosts the priority of the last 16 MB of the media file.
+// Container formats (MKV, MP4) store seek indices at the tail, so preloading
+// this region enables faster FFmpeg startup on initial play.
+func (m *hlsManager) preloadFileEnds(key hlsKey, file domain.FileRef) {
+	if m.engine == nil || file.Length <= 0 {
+		return
+	}
+	const tailSize int64 = 16 << 20
+	tailStart := file.Length - tailSize
+	if tailStart < 0 {
+		tailStart = 0
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = m.engine.SetPiecePriority(ctx, key.id, file,
+		domain.Range{Off: tailStart, Length: tailSize}, domain.PriorityNormal)
 }
 
 // shutdown cancels all active HLS jobs, saves the codec cache, and stops

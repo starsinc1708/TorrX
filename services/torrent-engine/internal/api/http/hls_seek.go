@@ -1,9 +1,29 @@
 package apihttp
 
 import (
+	"context"
 	"log/slog"
 	"math"
+	"sync/atomic"
+	"time"
+
+	"torrentstream/internal/domain"
 )
+
+// estimatedRestartCostSec is the approximate time (in seconds) for a hard seek:
+// FFmpeg kill + torrent data seek + ffprobe + first segment encode.
+const estimatedRestartCostSec = 12.0
+
+// ffmpegEncodedTimeSec returns the absolute time (in seconds from file start)
+// that FFmpeg has encoded up to, based on the job's seek offset plus the
+// FFmpeg -progress out_time_us value.
+func ffmpegEncodedTimeSec(job *hlsJob) float64 {
+	progressUs := atomic.LoadInt64(&job.ffmpegProgressUs)
+	if progressUs <= 0 {
+		return job.seekSeconds
+	}
+	return job.seekSeconds + float64(progressUs)/1e6
+}
 
 // SeekMode describes how a seek request should be handled.
 type SeekMode int
@@ -72,21 +92,86 @@ func (m *hlsManager) chooseSeekModeLocked(key hlsKey, job *hlsJob, targetSec flo
 		}
 	}
 
-	// 2. Soft seek: medium distance that HLS.js can handle within existing segments.
-	if absDistance < 20.0 {
-		m.logger.Debug("hls seek: soft (small distance)",
+	// 2. Minimum soft band: target within 2×segDur of job.seekSeconds.
+	//    Covers small backward seeks where HLS.js still has segments buffered.
+	if absDistance < 2*segDur {
+		m.logger.Debug("hls seek: soft (minimum band)",
 			slog.Float64("distance", distance),
-			slog.Float64("threshold", 20.0),
+			slog.Float64("threshold", 2*segDur),
 		)
 		return SeekModeSoft
 	}
 
-	// 3. Hard seek: kill FFmpeg, restart at new position.
+	// 3. Progress-aware forward soft: if FFmpeg has already encoded past
+	//    the target, or the gap is small enough that waiting beats restarting.
+	if distance > 0 {
+		encoded := ffmpegEncodedTimeSec(job)
+		gap := targetSec - encoded
+		if gap < estimatedRestartCostSec {
+			m.logger.Debug("hls seek: soft (progress-aware forward)",
+				slog.Float64("target", targetSec),
+				slog.Float64("encoded", encoded),
+				slog.Float64("gap", gap),
+			)
+			return SeekModeSoft
+		}
+	}
+
+	// 4. Hard seek: kill FFmpeg, restart at new position.
 	m.logger.Debug("hls seek: hard",
 		slog.Float64("target", targetSec),
 		slog.Float64("distance", distance),
 	)
 	return SeekModeHard
+}
+
+// preSeekPriorityBoost boosts piece priority at the estimated byte region
+// for the seek target so torrent data is available when FFmpeg starts probing.
+func (m *hlsManager) preSeekPriorityBoost(key hlsKey, seekSeconds float64) {
+	if m.engine == nil || m.dataDir == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	state, err := m.engine.GetSessionState(ctx, key.id)
+	if err != nil || key.fileIndex >= len(state.Files) {
+		return
+	}
+	file := state.Files[key.fileIndex]
+	if file.Length <= 0 {
+		return
+	}
+
+	// Get cached duration via resolved file path.
+	candidatePath, pathErr := resolveDataFilePath(m.dataDir, file.Path)
+	if pathErr != nil {
+		return
+	}
+	_, _, dur := m.getVideoResolutionWithDuration(candidatePath)
+	if dur <= 0 {
+		return
+	}
+
+	estByte := estimateByteOffset(seekSeconds, dur, file.Length)
+	if estByte < 0 {
+		return
+	}
+
+	const boostWindow = 16 << 20 // 16 MB
+	start := estByte - boostWindow/2
+	if start < 0 {
+		start = 0
+	}
+	_ = m.engine.SetPiecePriority(ctx, key.id, file,
+		domain.Range{Off: start, Length: boostWindow}, domain.PriorityHigh)
+
+	m.logger.Debug("pre-seek priority boost",
+		slog.String("torrentId", string(key.id)),
+		slog.Float64("seekSeconds", seekSeconds),
+		slog.Int64("estByte", estByte),
+		slog.Int64("start", start),
+	)
 }
 
 // estimateByteOffset estimates the byte position for a given time offset

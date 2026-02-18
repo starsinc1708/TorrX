@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -35,7 +36,8 @@ type Config struct {
 	StorageMode      string
 	MemoryLimitBytes int64
 	MemorySpillDir   string
-	MaxSessions      int // 0 = unlimited
+	MaxSessions      int           // 0 = unlimited
+	IdleTimeout      time.Duration // auto-stop sessions idle longer than this; 0 = disabled
 }
 
 type Engine struct {
@@ -53,8 +55,10 @@ type Engine struct {
 	lastAccess     map[domain.TorrentID]time.Time // LRU tracking for session eviction
 	rateLimits     map[domain.TorrentID]int64 // per-torrent download rate limit (bytes/sec); 0 = unlimited
 	maxSessions    int
+	idleTimeout    time.Duration
 	storageMode    string
 	memoryProvider *memory.Provider
+	reaperCancel   context.CancelFunc
 }
 
 func New(cfg Config) (*Engine, error) {
@@ -86,7 +90,7 @@ func New(cfg Config) (*Engine, error) {
 		return nil, err
 	}
 
-	return &Engine{
+	e := &Engine{
 		client:         client,
 		sessions:       make(map[domain.TorrentID]*torrent.Torrent),
 		modes:          make(map[domain.TorrentID]domain.SessionMode),
@@ -96,9 +100,18 @@ func New(cfg Config) (*Engine, error) {
 		lastAccess:     make(map[domain.TorrentID]time.Time),
 		rateLimits:     make(map[domain.TorrentID]int64),
 		maxSessions:    cfg.MaxSessions,
+		idleTimeout:    cfg.IdleTimeout,
 		storageMode:    mode,
 		memoryProvider: provider,
-	}, nil
+	}
+
+	if e.idleTimeout > 0 {
+		ctx, cancel := context.WithCancel(context.Background())
+		e.reaperCancel = cancel
+		go e.idleReaper(ctx)
+	}
+
+	return e, nil
 }
 
 func NewWithClient(client *torrent.Client) *Engine {
@@ -360,7 +373,9 @@ func (e *Engine) waitForInfo(t *torrent.Torrent, id domain.TorrentID) {
 			delete(e.sessions, id)
 			delete(e.modes, id)
 			delete(e.peakCompleted, id)
+			delete(e.peakBitfield, id)
 			delete(e.lastAccess, id)
+			delete(e.rateLimits, id)
 		}
 		e.mu.Unlock()
 		e.forgetSpeed(id)
@@ -394,6 +409,9 @@ func (e *Engine) waitForInfo(t *torrent.Torrent, id domain.TorrentID) {
 }
 
 func (e *Engine) Close() error {
+	if e.reaperCancel != nil {
+		e.reaperCancel()
+	}
 	if e.client == nil {
 		return nil
 	}
@@ -402,6 +420,54 @@ func (e *Engine) Close() error {
 		return errList[0]
 	}
 	return nil
+}
+
+// idleReaper periodically scans sessions and stops those that have been idle
+// (no reader access) longer than idleTimeout. Focused sessions are never
+// reaped. This prevents resource accumulation from abandoned sessions.
+func (e *Engine) idleReaper(ctx context.Context) {
+	interval := e.idleTimeout / 2
+	if interval < 10*time.Second {
+		interval = 10 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			e.reapIdleSessions()
+		}
+	}
+}
+
+func (e *Engine) reapIdleSessions() {
+	now := time.Now().UTC()
+
+	e.mu.RLock()
+	var candidates []domain.TorrentID
+	for id := range e.sessions {
+		mode := e.modes[id]
+		// Never reap focused, stopped, or completed sessions.
+		if mode == domain.ModeFocused || mode == domain.ModeStopped || mode == domain.ModeCompleted {
+			continue
+		}
+		accessed := e.lastAccess[id]
+		if !accessed.IsZero() && now.Sub(accessed) > e.idleTimeout {
+			candidates = append(candidates, id)
+		}
+	}
+	e.mu.RUnlock()
+
+	for _, id := range candidates {
+		slog.Info("reaping idle session",
+			slog.String("torrentId", string(id)),
+			slog.Duration("idleTimeout", e.idleTimeout),
+		)
+		_ = e.StopSession(context.Background(), id)
+	}
 }
 
 func (e *Engine) GetSessionState(ctx context.Context, id domain.TorrentID) (domain.SessionState, error) {
@@ -562,6 +628,8 @@ func (e *Engine) StopSession(ctx context.Context, id domain.TorrentID) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	wasFocused := e.modes[id] == domain.ModeFocused
+
 	if err := e.transition(id, domain.ModeStopped); err != nil {
 		return err
 	}
@@ -573,6 +641,21 @@ func (e *Engine) StopSession(ctx context.Context, id domain.TorrentID) error {
 	// Restore max conns in case it was hard-paused before being stopped.
 	t.SetMaxEstablishedConns(defaultMaxConns)
 	t.AllowDataUpload()
+
+	// If the stopped torrent was focused, resume all paused torrents so
+	// they don't stay permanently stuck with 0 connections.
+	if wasFocused {
+		for sid, st := range e.sessions {
+			if sid == id {
+				continue
+			}
+			if e.modes[sid] == domain.ModePaused {
+				if err := e.transition(sid, domain.ModeDownloading); err == nil {
+					e.resumeTorrent(st)
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -763,10 +846,24 @@ func (e *Engine) dropTorrent(id domain.TorrentID, t *torrent.Torrent) error {
 	delete(e.sessions, id)
 	delete(e.modes, id)
 	delete(e.peakCompleted, id)
+	delete(e.peakBitfield, id)
 	delete(e.lastAccess, id)
 	delete(e.rateLimits, id)
-	if e.focusedID == id {
+	wasFocused := e.focusedID == id
+	if wasFocused {
 		e.focusedID = ""
+	}
+
+	// If the dropped torrent was focused, resume all paused torrents so
+	// they don't stay permanently stuck with 0 connections.
+	if wasFocused {
+		for sid, st := range e.sessions {
+			if e.modes[sid] == domain.ModePaused {
+				if err := e.transition(sid, domain.ModeDownloading); err == nil {
+					e.resumeTorrent(st)
+				}
+			}
+		}
 	}
 	e.mu.Unlock()
 	e.forgetFocusedPieces(id)
@@ -774,7 +871,18 @@ func (e *Engine) dropTorrent(id domain.TorrentID, t *torrent.Torrent) error {
 	if t != nil {
 		t.Drop()
 	}
+	// Return memory to the OS promptly after dropping a torrent session.
+	// Without this, Go's GC may hold freed memory for a long time, which
+	// causes OOM on memory-constrained systems (Docker, NAS).
+	freeOSMemory()
 	return nil
+}
+
+// freeOSMemory triggers garbage collection and returns freed memory to the OS.
+// Called after session cleanup to prevent memory accumulation.
+func freeOSMemory() {
+	runtime.GC()
+	debug.FreeOSMemory()
 }
 
 // pieceBitfield returns the total piece count and a base64-encoded bitfield
@@ -928,7 +1036,9 @@ func (e *Engine) evictIdleSessionLocked() (*torrent.Torrent, domain.TorrentID, e
 	delete(e.sessions, evictID)
 	delete(e.modes, evictID)
 	delete(e.peakCompleted, evictID)
+	delete(e.peakBitfield, evictID)
 	delete(e.lastAccess, evictID)
+	delete(e.rateLimits, evictID)
 	if e.focusedID == evictID {
 		e.focusedID = ""
 	}

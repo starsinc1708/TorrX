@@ -19,6 +19,10 @@ func mapPriority(prio domain.Priority) torrent.PiecePriority {
 		return torrent.PiecePriorityNone
 	case domain.PriorityHigh:
 		return torrent.PiecePriorityNow
+	case domain.PriorityNext:
+		return torrent.PiecePriorityNext
+	case domain.PriorityReadahead:
+		return torrent.PiecePriorityReadahead
 	case domain.PriorityNormal:
 		return torrent.PiecePriorityNormal
 	default:

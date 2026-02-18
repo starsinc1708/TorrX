@@ -21,13 +21,22 @@ func TestTorrentStatusConstants(t *testing.T) {
 }
 
 func TestPriorityConstants(t *testing.T) {
+	if PriorityNone != -1 {
+		t.Fatalf("PriorityNone = %d", PriorityNone)
+	}
 	if PriorityLow != 0 {
 		t.Fatalf("PriorityLow = %d", PriorityLow)
 	}
 	if PriorityNormal != 1 {
 		t.Fatalf("PriorityNormal = %d", PriorityNormal)
 	}
-	if PriorityHigh != 2 {
+	if PriorityReadahead != 2 {
+		t.Fatalf("PriorityReadahead = %d", PriorityReadahead)
+	}
+	if PriorityNext != 3 {
+		t.Fatalf("PriorityNext = %d", PriorityNext)
+	}
+	if PriorityHigh != 4 {
 		t.Fatalf("PriorityHigh = %d", PriorityHigh)
 	}
 }

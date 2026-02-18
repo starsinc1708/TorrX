@@ -48,9 +48,12 @@ func (s *Server) handleStreamTorrent(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	defer result.Reader.Close()
-	// HTTP streaming benefits from responsive mode: return partial data
-	// immediately rather than blocking until full pieces are downloaded.
-	result.Reader.SetResponsive()
+	// Do NOT use SetResponsive() for direct HTTP streaming: the responsive
+	// reader returns EOF when piece data isn't available, which causes
+	// io.Copy to terminate prematurely and silently truncate the stream.
+	// Instead, let the reader block until pieces arrive (like TorrServer).
+	// The HLS path uses SetResponsive() + bufferedStreamReader which has
+	// retry logic for transient EOFs.
 
 	ext := strings.ToLower(path.Ext(result.File.Path))
 	contentType := mime.TypeByExtension(ext)
@@ -59,6 +62,9 @@ func (s *Server) handleStreamTorrent(w http.ResponseWriter, r *http.Request, id 
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Accept-Ranges", "bytes")
+	// Close the connection after streaming to prevent keep-alive from holding
+	// the reader open after the player stops playback.
+	w.Header().Set("Connection", "close")
 
 	size := result.File.Length
 

@@ -12,6 +12,19 @@ import (
 
 const (
 	minSlidingPriorityStep = 1 << 20
+
+	// gradientHighBand is the byte range at the current read position set to
+	// PriorityHigh (PiecePriorityNow). Covers roughly 1 piece.
+	gradientHighBand int64 = 2 << 20 // 2 MB
+
+	// gradientNextBand is the byte range immediately after the high band set
+	// to PriorityNext (PiecePriorityNext).
+	gradientNextBand int64 = 2 << 20 // 2 MB
+
+	// fileBoundaryProtection is the byte range at the start and end of the
+	// file that is never deprioritized. Container formats (MP4 moov, MKV
+	// SeekHead/Cues) store seek indices at file boundaries.
+	fileBoundaryProtection int64 = 8 << 20 // 8 MB
 )
 
 type slidingPriorityReader struct {
@@ -24,15 +37,15 @@ type slidingPriorityReader struct {
 	backtrack int64
 	step      int64
 
-	mu                      sync.Mutex
-	pos                     int64
-	lastOff                 int64
-	prevOff                 int64
-	prevWindow              int64
+	mu                       sync.Mutex
+	pos                      int64
+	lastOff                  int64
+	prevOff                  int64
+	prevWindow               int64
 	bytesReadSinceLastUpdate int64
-	lastUpdateTime          time.Time
-	effectiveBytesPerSec    float64
-	seekBoostUntil          time.Time
+	lastUpdateTime           time.Time
+	effectiveBytesPerSec     float64
+	seekBoostUntil           time.Time
 }
 
 func newSlidingPriorityReader(
@@ -174,37 +187,128 @@ func (r *slidingPriorityReader) updatePriorityWindowLocked(force bool) {
 		}
 	}
 
-	// Deprioritize the non-overlapping portion of the previous window
-	// so stale pieces don't compete for bandwidth.
+	// Deprioritize the non-overlapping portion of the previous window,
+	// but never deprioritize file boundary regions (container headers).
 	if r.prevWindow > 0 {
 		prevEnd := r.prevOff + r.prevWindow
 		newStart := off
 		newEnd := off + r.window
 		if prevEnd <= newStart || r.prevOff >= newEnd {
-			// Old window entirely outside new window — reset all of it.
-			r.session.SetPiecePriority(
-				r.file,
-				domain.Range{Off: r.prevOff, Length: r.prevWindow},
-				domain.PriorityNone,
-			)
+			r.deprioritizeRange(r.prevOff, r.prevWindow)
 		} else if r.prevOff < newStart {
-			// Old window partially overlaps — reset only the prefix before new start.
-			r.session.SetPiecePriority(
-				r.file,
-				domain.Range{Off: r.prevOff, Length: newStart - r.prevOff},
-				domain.PriorityNone,
-			)
+			r.deprioritizeRange(r.prevOff, newStart-r.prevOff)
 		}
 	}
 
-	r.session.SetPiecePriority(
-		r.file,
-		domain.Range{Off: off, Length: r.window},
-		domain.PriorityHigh,
-	)
+	// Apply graduated priority: High → Next → Readahead → Normal.
+	// This focuses bandwidth on the immediate read position instead of
+	// spreading it evenly across the entire window (TorrServer-style).
+	r.applyGradientPriority(off)
+
 	r.prevOff = off
 	r.prevWindow = r.window
 	r.lastOff = off
+}
+
+// applyGradientPriority sets a 4-tier priority gradient on the current window:
+//
+//	[off, off+highBand)        → PriorityHigh      (PiecePriorityNow)
+//	[off+highBand, +nextBand)  → PriorityNext       (PiecePriorityNext)
+//	[+nextBand, +readahead)    → PriorityReadahead   (PiecePriorityReadahead)
+//	[+readahead, off+window)   → PriorityNormal      (PiecePriorityNormal)
+func (r *slidingPriorityReader) applyGradientPriority(off int64) {
+	remaining := r.window
+
+	// Band 1: PriorityHigh (immediate need)
+	highLen := gradientHighBand
+	if highLen > remaining {
+		highLen = remaining
+	}
+	r.session.SetPiecePriority(r.file,
+		domain.Range{Off: off, Length: highLen},
+		domain.PriorityHigh)
+	remaining -= highLen
+
+	// Band 2: PriorityNext
+	if remaining > 0 {
+		nextLen := gradientNextBand
+		if nextLen > remaining {
+			nextLen = remaining
+		}
+		r.session.SetPiecePriority(r.file,
+			domain.Range{Off: off + highLen, Length: nextLen},
+			domain.PriorityNext)
+		remaining -= nextLen
+	}
+
+	// Band 3: PriorityReadahead (up to ~25% of remaining window)
+	if remaining > 0 {
+		readaheadLen := remaining / 4
+		if readaheadLen < gradientHighBand {
+			readaheadLen = remaining // small window: everything is readahead
+		}
+		if readaheadLen > remaining {
+			readaheadLen = remaining
+		}
+		bandOff := off + highLen + gradientNextBand
+		r.session.SetPiecePriority(r.file,
+			domain.Range{Off: bandOff, Length: readaheadLen},
+			domain.PriorityReadahead)
+		remaining -= readaheadLen
+	}
+
+	// Band 4: PriorityNormal (rest of window)
+	if remaining > 0 {
+		normalOff := off + r.window - remaining
+		r.session.SetPiecePriority(r.file,
+			domain.Range{Off: normalOff, Length: remaining},
+			domain.PriorityNormal)
+	}
+}
+
+// deprioritizeRange sets a byte range to PriorityNone, but preserves file
+// boundary regions (first/last 8 MB) which contain container headers.
+func (r *slidingPriorityReader) deprioritizeRange(off, length int64) {
+	if length <= 0 {
+		return
+	}
+	end := off + length
+	fileLen := r.file.Length
+
+	// Compute the protected zones.
+	headEnd := fileBoundaryProtection
+	if headEnd > fileLen {
+		headEnd = fileLen
+	}
+	tailStart := fileLen - fileBoundaryProtection
+	if tailStart < headEnd {
+		tailStart = headEnd // file smaller than 2× protection; all protected
+	}
+
+	// Clip the deprioritization range to exclude protected zones.
+	// We may produce up to two non-contiguous ranges: one between head and
+	// tail protection zones, or just the middle portion.
+	deprioritizeSegment := func(s, e int64) {
+		if s >= e {
+			return
+		}
+		r.session.SetPiecePriority(r.file,
+			domain.Range{Off: s, Length: e - s},
+			domain.PriorityNone)
+	}
+
+	// Effective range after clipping head protection.
+	clippedStart := off
+	if clippedStart < headEnd {
+		clippedStart = headEnd
+	}
+	// Effective range after clipping tail protection.
+	clippedEnd := end
+	if clippedEnd > tailStart {
+		clippedEnd = tailStart
+	}
+
+	deprioritizeSegment(clippedStart, clippedEnd)
 }
 
 // EffectiveBytesPerSec returns the EMA-smoothed read throughput.

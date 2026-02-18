@@ -76,9 +76,25 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	// backoff, so FFmpeg gets data as soon as pieces are downloaded.
 	result.Reader.SetResponsive()
 
+	// On initial play (not a seek), preload the file tail in background.
+	// Container formats store seek indices at the end of the file.
+	if job.seekSeconds == 0 {
+		go m.preloadFileEnds(key, result.File)
+	}
+
 	// Build the data source abstraction (replaces inline if/else logic).
 	dataSource, subtitleSourcePath := m.newDataSource(result, job, key)
 	defer dataSource.Close()
+
+	// Eagerly populate codec/resolution cache for file-backed sources
+	// (directFileSource and partialDirectSource). On seek jobs the cache
+	// is already warm, making subsequent ffprobe calls instant.
+	if filePath := dataSourceFilePath(dataSource); filePath != "" {
+		m.isH264FileWithCache(filePath)
+		m.isAACAudioWithCache(filePath)
+		m.getVideoResolutionWithCache(filePath)
+	}
+
 	input, pipeReader := dataSource.InputSpec()
 	useReader := pipeReader != nil
 
@@ -536,13 +552,14 @@ const (
 // isH264FileWithCache checks if a file is H.264 encoded, using cache to avoid
 // repeated ffprobe calls that can block HLS startup for up to 6 seconds.
 func (m *hlsManager) isH264FileWithCache(filePath string) bool {
-	// Check cache first
-	m.codecCacheMu.RLock()
+	// Check cache first (update LRU timestamp on hit).
+	m.codecCacheMu.Lock()
 	if entry, ok := m.codecCache[filePath]; ok {
-		m.codecCacheMu.RUnlock()
+		entry.lastAccess = time.Now()
+		m.codecCacheMu.Unlock()
 		return entry.isH264
 	}
-	m.codecCacheMu.RUnlock()
+	m.codecCacheMu.Unlock()
 
 	// Not in cache, perform detection with retry
 	result := isH264FileWithRetry(m.ffprobePath, filePath, m.logger)
@@ -553,6 +570,7 @@ func (m *hlsManager) isH264FileWithCache(filePath string) bool {
 		m.codecCache[filePath] = &codecCacheEntry{}
 	}
 	m.codecCache[filePath].isH264 = result
+	m.codecCache[filePath].lastAccess = time.Now()
 	m.evictCodecCacheIfNeeded()
 	m.codecCacheMu.Unlock()
 
@@ -563,13 +581,14 @@ func (m *hlsManager) isH264FileWithCache(filePath string) bool {
 // isAACAudioWithCache checks if a file has AAC audio, using cache to avoid
 // repeated ffprobe calls.
 func (m *hlsManager) isAACAudioWithCache(filePath string) bool {
-	// Check cache first
-	m.codecCacheMu.RLock()
+	// Check cache first (update LRU timestamp on hit).
+	m.codecCacheMu.Lock()
 	if entry, ok := m.codecCache[filePath]; ok {
-		m.codecCacheMu.RUnlock()
+		entry.lastAccess = time.Now()
+		m.codecCacheMu.Unlock()
 		return entry.isAAC
 	}
-	m.codecCacheMu.RUnlock()
+	m.codecCacheMu.Unlock()
 
 	// Not in cache, perform detection with retry
 	result := isAACAudioWithRetry(m.ffprobePath, filePath, m.logger)
@@ -580,6 +599,7 @@ func (m *hlsManager) isAACAudioWithCache(filePath string) bool {
 		m.codecCache[filePath] = &codecCacheEntry{}
 	}
 	m.codecCache[filePath].isAAC = result
+	m.codecCache[filePath].lastAccess = time.Now()
 	m.evictCodecCacheIfNeeded()
 	m.codecCacheMu.Unlock()
 
