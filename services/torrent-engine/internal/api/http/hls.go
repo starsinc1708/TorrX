@@ -35,6 +35,7 @@ type HLSConfig struct {
 	MaxCacheSizeBytes int64
 	MaxCacheAge       time.Duration
 	MemBufSizeBytes   int64
+	SegmentDuration   int
 }
 
 type hlsKey struct {
@@ -62,7 +63,8 @@ type hlsJob struct {
 	genRef          *generationRef   // shared generation counter for stale reader detection
 	consumptionRate  func() float64         // returns EMA consumer read rate (bytes/sec); nil if unavailable
 	bufferedReader   *bufferedStreamReader // non-nil for pipe sources; used for rate limiting
-	ffmpegProgressUs int64                 // atomic: last FFmpeg out_time in microseconds
+	ffmpegProgressUs  int64  // atomic: last FFmpeg out_time in microseconds
+	priorityBoostFunc func() // triggers priority window boost; nil if unavailable
 
 	// Cached rewritten playlist (avoids re-parsing on every m3u8 GET).
 	rewrittenMu           sync.RWMutex
@@ -89,6 +91,7 @@ type resolutionCacheEntry struct {
 	width    int
 	height   int
 	duration float64 // seconds; 0 if unknown
+	fps      float64 // frames per second; 0 if unknown
 }
 
 type hlsManager struct {
@@ -131,6 +134,10 @@ type hlsManager struct {
 	totalAutoRestarts     uint64
 	lastAutoRestartAt     time.Time
 	lastAutoRestartReason string
+
+	// Remux cache: background ffmpeg -c copy remux from MKV → MP4.
+	remuxCache   map[string]*remuxEntry
+	remuxCacheMu sync.Mutex
 }
 
 type hlsHealthSnapshot struct {
@@ -156,6 +163,10 @@ const (
 	hlsWatchdogInterval       = 5 * time.Second
 	hlsWatchdogStallThreshold = 90 * time.Second
 	hlsMaxAutoRestarts        = 5
+
+	// Stall escalation ladder thresholds (applied before full restart).
+	hlsStallEscalation1 = 30 * time.Second // L1: remove rate limit
+	hlsStallEscalation2 = 60 * time.Second // L2: boost piece priority
 )
 
 var errSubtitleSourceUnavailable = errors.New("subtitle source file not ready")
@@ -204,6 +215,11 @@ func newHLSManager(stream StreamTorrentUseCase, engine ports.Engine, cfg HLSConf
 	cache := newHLSCache(cacheDir, cfg.MaxCacheSizeBytes, cfg.MaxCacheAge, logger)
 	memBuf := newHLSMemBuffer(cfg.MemBufSizeBytes)
 
+	segDur := cfg.SegmentDuration
+	if segDur <= 0 {
+		segDur = 2
+	}
+
 	mgr := &hlsManager{
 		stream:          stream,
 		engine:          engine,
@@ -215,13 +231,14 @@ func newHLSManager(stream StreamTorrentUseCase, engine ports.Engine, cfg HLSConf
 		preset:          preset,
 		crf:             crf,
 		audioBitrate:    audioBitrate,
-		segmentDuration: 4,
+		segmentDuration: segDur,
 		jobs:            make(map[hlsKey]*hlsJob),
 		lastHardSeek:    make(map[hlsKey]time.Time),
 		cache:           cache,
 		memBuf:          memBuf,
 		codecCache:      make(map[string]*codecCacheEntry),
 		resolutionCache: make(map[string]*resolutionCacheEntry),
+		remuxCache:      make(map[string]*remuxEntry),
 		logger:          logger,
 	}
 	mgr.segLimiter = newSegmentLimiter(50, 20) // 50 req/s sustained, burst 20
@@ -248,7 +265,7 @@ func (m *hlsManager) buildJobDir(key hlsKey) string {
 	m.mu.RUnlock()
 
 	if segDur <= 0 {
-		segDur = 4
+		segDur = 2
 	}
 	hash := computeProfileHash(preset, crf, audioBitrate, segDur)
 	dir := filepath.Join(
@@ -342,6 +359,7 @@ type persistedCodecEntry struct {
 	Width    int     `json:"w,omitempty"`
 	Height   int     `json:"h,omitempty"`
 	Duration float64 `json:"dur,omitempty"`
+	FPS      float64 `json:"fps,omitempty"`
 }
 
 func (m *hlsManager) codecCachePath() string {
@@ -364,8 +382,13 @@ func (m *hlsManager) loadCodecCache() {
 	m.resolutionCacheMu.Lock()
 	for path, e := range entries {
 		m.codecCache[path] = &codecCacheEntry{isH264: e.IsH264, isAAC: e.IsAAC}
-		if e.Width > 0 || e.Height > 0 || e.Duration > 0 {
-			m.resolutionCache[path] = &resolutionCacheEntry{width: e.Width, height: e.Height, duration: e.Duration}
+		if e.Width > 0 || e.Height > 0 || e.Duration > 0 || e.FPS > 0 {
+			m.resolutionCache[path] = &resolutionCacheEntry{
+				width:    e.Width,
+				height:   e.Height,
+				duration: e.Duration,
+				fps:      e.FPS,
+			}
 		}
 	}
 	m.resolutionCacheMu.Unlock()
@@ -386,6 +409,7 @@ func (m *hlsManager) saveCodecCache() {
 			e.Width = r.width
 			e.Height = r.height
 			e.Duration = r.duration
+			e.FPS = r.fps
 		}
 		entries[path] = e
 	}
@@ -454,7 +478,7 @@ func (m *hlsManager) profileHash() string {
 	defer m.mu.RUnlock()
 	segDur := m.segmentDuration
 	if segDur <= 0 {
-		segDur = 4
+		segDur = 2
 	}
 	return computeProfileHash(m.preset, m.crf, m.audioBitrate, segDur)
 }
@@ -474,7 +498,7 @@ func (m *hlsManager) cacheVariant(variant string) string {
 func (m *hlsManager) cacheVariantLocked(variant string) string {
 	segDur := m.segmentDuration
 	if segDur <= 0 {
-		segDur = 4
+		segDur = 2
 	}
 	ph := computeProfileHash(m.preset, m.crf, m.audioBitrate, segDur)
 	if variant != "" {
@@ -519,7 +543,7 @@ func (m *hlsManager) SegmentDuration() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.segmentDuration <= 0 {
-		return 4
+		return 2
 	}
 	return m.segmentDuration
 }
@@ -734,17 +758,18 @@ func (m *hlsManager) seekJob(id domain.TorrentID, fileIndex, audioTrack, subtitl
 
 	oldDir := ""
 	oldSeekSeconds := float64(0)
+	var deferredCancel context.CancelFunc
 	if old, ok := m.jobs[key]; ok {
 		// Transition existing job to Seeking state if possible.
 		_ = old.ctrl.Transition(StateSeeking)
 		old.ctrl.IncrementGeneration()
 		delete(m.jobs, key)
 		oldSeekSeconds = old.seekSeconds
-		if old.cancel != nil {
-			old.cancel()
-		}
+		// Defer cancel: keep old FFmpeg running while the new job starts so
+		// the old HLS.js stream can continue playing from its buffer.
+		deferredCancel = old.cancel
 		// Immediately reset rate limit so the torrent isn't left throttled
-		// while the old job is cleaned up asynchronously.
+		// while the old job is running in parallel.
 		m.resetRateLimit(key, old)
 		oldDir = old.dir
 	}
@@ -781,33 +806,38 @@ func (m *hlsManager) seekJob(id domain.TorrentID, fileIndex, audioTrack, subtitl
 	// Pre-warm torrent data at the target position for faster FFmpeg startup.
 	m.preSeekPriorityBoost(key, seekSeconds)
 
-	if oldDir != "" && oldDir != dir {
-		// Synchronous harvest with timeout so cached segments are available
-		// immediately for the new job's cache check.
-		harvestDone := make(chan struct{})
-		go func() {
-			m.harvestSegmentsToCache(key, oldDir, oldSeekSeconds)
-			close(harvestDone)
-		}()
-		select {
-		case <-harvestDone:
-		case <-time.After(3 * time.Second):
-			m.logger.Warn("hls seek: harvest timeout, continuing with partial cache")
-		}
-		// Async cleanup: wait for harvest to finish (if it hasn't yet),
-		// then purge membuf and remove the old directory.
-		go func(path string) {
-			<-harvestDone
-			if m.memBuf != nil {
-				m.memBuf.PurgePrefix(path)
-			}
-			_ = os.RemoveAll(path)
-		}(oldDir)
-	}
-
 	job.startOnce.Do(func() {
 		go m.run(job, key)
 	})
+
+	// Defer old-job cancellation and cleanup until the new job signals ready
+	// (or an 8-second timeout). This keeps the old FFmpeg alive during new-job
+	// startup so the frontend can keep playing from the old stream's buffer,
+	// eliminating the black-screen gap on hard seeks.
+	if deferredCancel != nil || (oldDir != "" && oldDir != dir) {
+		capturedOldDir := oldDir
+		capturedOldSeekSec := oldSeekSeconds
+		capturedNewDir := dir
+		go func() {
+			select {
+			case <-job.ready:
+			case <-time.After(8 * time.Second):
+				m.logger.Debug("hls seek: deferred old-job cancel timeout",
+					slog.String("torrentId", string(key.id)),
+				)
+			}
+			if deferredCancel != nil {
+				deferredCancel()
+			}
+			if capturedOldDir != "" && capturedOldDir != capturedNewDir {
+				m.harvestSegmentsToCache(key, capturedOldDir, capturedOldSeekSec)
+				if m.memBuf != nil {
+					m.memBuf.PurgePrefix(capturedOldDir)
+				}
+				_ = os.RemoveAll(capturedOldDir)
+			}
+		}()
+	}
 
 	// Emit metric for hard seeks when no existing job was found to evaluate.
 	if !seekModeEmitted {
@@ -1007,6 +1037,13 @@ func (m *hlsManager) applyRatePolicy(key hlsKey, job *hlsJob) {
 		limitBytesPerSec = 0
 	}
 
+	// Floor: never throttle below 512 KB/s. Low-bitrate content can cause the
+	// rate limiter to starve the torrent, stalling playback.
+	const minSafeRateBPS int64 = 512 * 1024
+	if limitBytesPerSec > 0 && limitBytesPerSec < minSafeRateBPS {
+		limitBytesPerSec = minSafeRateBPS
+	}
+
 	metrics.HLSRateLimitBytesPerSec.Set(float64(limitBytesPerSec))
 
 	// Apply rate limit to the buffered reader for local throttling.
@@ -1053,6 +1090,10 @@ func (m *hlsManager) watchJobProgress(key hlsKey, job *hlsJob) {
 	var lastProgressUs int64
 	lastProgressChangeAt := time.Now()
 
+	// Escalation ladder: tracks which stall mitigations have been applied.
+	// 0 = none, 1 = rate limit removed, 2 = priority boosted, 3 = restart.
+	escalationLevel := 0
+
 	for range ticker.C {
 		readyClosed := false
 		select {
@@ -1076,8 +1117,11 @@ func (m *hlsManager) watchJobProgress(key hlsKey, job *hlsJob) {
 		playlistPath := job.playlist
 		m.mu.RUnlock()
 
-		// Adjust torrent download rate based on playback state.
-		m.applyRatePolicy(key, job)
+		// Adjust torrent download rate based on playback state,
+		// but skip when escalation has already removed the rate limit.
+		if escalationLevel < 1 {
+			m.applyRatePolicy(key, job)
+		}
 
 		// Track playlist modifications for the initial ready signal,
 		// but do NOT use playlist mtime to reset the stall timer.
@@ -1100,6 +1144,8 @@ func (m *hlsManager) watchJobProgress(key hlsKey, job *hlsJob) {
 				lastSegChangedAt = time.Now()
 				m.touchJobActivity(key, job)
 				stallWarnLogged = false
+				// New segment appeared — stall cleared, reset escalation.
+				escalationLevel = 0
 			} else if time.Since(lastSegChangedAt) >= 45*time.Second && segSize < 256*1024 {
 				m.logger.Warn("hls watchdog: last segment appears stuck (tiny and unchanged)",
 					slog.String("torrentId", string(key.id)),
@@ -1124,10 +1170,39 @@ func (m *hlsManager) watchJobProgress(key hlsKey, job *hlsJob) {
 			continue
 		}
 
-		segStalled := time.Since(lastSegChangedAt) >= hlsWatchdogStallThreshold
-		progressStalled := lastProgressUs > 0 && time.Since(lastProgressChangeAt) >= hlsWatchdogStallThreshold
-
 		stallDuration := time.Since(lastSegChangedAt)
+
+		// ---- Escalation ladder ----
+		// L1 (30s): remove rate limit so torrent downloads at full speed.
+		if stallDuration >= hlsStallEscalation1 && escalationLevel < 1 {
+			escalationLevel = 1
+			if job.bufferedReader != nil {
+				job.bufferedReader.SetRateLimit(0)
+			}
+			if m.engine != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				_ = m.engine.SetDownloadRateLimit(ctx, key.id, 0)
+				cancel()
+			}
+			m.logger.Warn("hls watchdog escalation L1: rate limit removed",
+				slog.String("torrentId", string(key.id)),
+				slog.Int("fileIndex", key.fileIndex),
+				slog.Duration("stalled", stallDuration),
+			)
+		}
+
+		// L2 (60s): boost piece priority window.
+		if stallDuration >= hlsStallEscalation2 && escalationLevel < 2 {
+			escalationLevel = 2
+			if job.priorityBoostFunc != nil {
+				job.priorityBoostFunc()
+			}
+			m.logger.Warn("hls watchdog escalation L2: priority boost applied",
+				slog.String("torrentId", string(key.id)),
+				slog.Int("fileIndex", key.fileIndex),
+				slog.Duration("stalled", stallDuration),
+			)
+		}
 
 		// Log a warning once when the stall exceeds 30 seconds, so
 		// operators can see that FFmpeg is blocked waiting for data.
@@ -1140,6 +1215,10 @@ func (m *hlsManager) watchJobProgress(key hlsKey, job *hlsJob) {
 			)
 			stallWarnLogged = true
 		}
+
+		// L3 (90s): kill + restart FFmpeg.
+		segStalled := stallDuration >= hlsWatchdogStallThreshold
+		progressStalled := lastProgressUs > 0 && time.Since(lastProgressChangeAt) >= hlsWatchdogStallThreshold
 
 		if !segStalled && !progressStalled {
 			continue

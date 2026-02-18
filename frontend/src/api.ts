@@ -475,6 +475,25 @@ export const listActiveStates = async (): Promise<SessionStateList> => {
 export const buildStreamUrl = (id: string, fileIndex: number) =>
   buildUrl(`/torrents/${id}/stream?fileIndex=${fileIndex}`);
 
+export const buildDirectPlaybackUrl = (id: string, fileIndex: number) =>
+  buildUrl(`/torrents/${id}/direct/${fileIndex}`);
+
+/** HEAD probe for the /direct/ endpoint. Returns 'ready', 'remuxing', or false. */
+export const probeDirectPlayback = async (
+  id: string,
+  fileIndex: number,
+  signal?: AbortSignal,
+): Promise<'ready' | 'remuxing' | false> => {
+  try {
+    const res = await fetch(buildDirectPlaybackUrl(id, fileIndex), { method: 'HEAD', signal });
+    if (res.status === 200) return 'ready';
+    if (res.status === 202) return 'remuxing';
+    return false;
+  } catch {
+    return false;
+  }
+};
+
 /** HEAD request to direct stream URL. Resolves true if 200/206, false otherwise. */
 export const probeDirectStream = async (
   id: string,

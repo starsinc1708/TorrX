@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  buildDirectPlaybackUrl,
   buildHlsUrl,
   buildStreamUrl,
   getMediaInfo,
   hlsSeek,
   isApiError,
+  probeDirectPlayback,
   probeDirectStream,
   probeHlsManifest,
 } from '../api';
@@ -121,8 +123,13 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
 
   const directStreamUrl = useMemo(() => {
     if (!selectedTorrent || selectedFileIndex === null) return '';
+    // For non-browser-playable containers (e.g. .mkv), use the /direct/ endpoint
+    // which serves a remuxed MP4. For native containers, use /stream directly.
+    if (!directPlayable) {
+      return appendToken(buildDirectPlaybackUrl(selectedTorrent.id, selectedFileIndex), '_rt', streamRetryToken);
+    }
     return appendToken(buildStreamUrl(selectedTorrent.id, selectedFileIndex), '_rt', streamRetryToken);
-  }, [selectedTorrent, selectedFileIndex, streamRetryToken, appendToken]);
+  }, [selectedTorrent, selectedFileIndex, directPlayable, streamRetryToken, appendToken]);
 
   const hlsStreamUrl = useMemo(() => {
     if (!selectedTorrent || selectedFileIndex === null) return '';
@@ -161,6 +168,17 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
         if (ok) return { success: true, mode: 'direct' };
         // Direct probe failed — fall through to HLS.
         if (mode === 'direct') mode = 'hls';
+      }
+
+      // For non-playable containers (e.g. .mkv), check if a browser-ready
+      // remux is available via the /direct/ endpoint.
+      if (fileComplete && !directPlayable) {
+        const directStatus = await probeDirectPlayback(torrentId, fileIndex, signal);
+        if (signal.aborted) return { success: false, mode };
+        if (directStatus === 'ready') {
+          return { success: true, mode: 'direct' };
+        }
+        // 'remuxing' or false → fall through to HLS
       }
 
       // HLS probe with resume-during-probe optimization.
@@ -613,7 +631,21 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
                 if (controller.signal.aborted) return;
                 setSeekOffset(result.seekTime);
                 if (result.seekMode !== 'soft') {
-                  // Hard seek: new source URL triggers HLS.js reload.
+                  // Hard seek: poll the new FFmpeg job's manifest until its first
+                  // segment is ready, then reload HLS.js. During this wait the old
+                  // stream continues playing from the browser's buffer — no black screen.
+                  const pollUrl = buildHlsUrl(selectedTorrent.id, selectedFileIndex, {
+                    audioTrack: audio,
+                    subtitleTrack,
+                  });
+                  for (let i = 0; i < 20; i++) {
+                    if (controller.signal.aborted) return;
+                    const ready = await probeHlsManifest(pollUrl, controller.signal);
+                    if (controller.signal.aborted) return;
+                    if (ready) break;
+                    if (i < 19) await sleep(500);
+                  }
+                  if (controller.signal.aborted) return;
                   setSeekToken(Date.now());
                 }
                 setVideoError(null);

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -93,6 +94,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 		m.isH264FileWithCache(filePath)
 		m.isAACAudioWithCache(filePath)
 		m.getVideoResolutionWithCache(filePath)
+		m.getVideoFPSWithCache(filePath)
 	}
 
 	input, pipeReader := dataSource.InputSpec()
@@ -101,6 +103,30 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	// Wire buffered reader for rate limiting (only available for pipe sources).
 	if ps, ok := dataSource.(*pipeSource); ok {
 		job.bufferedReader = ps.BufferedReader()
+		// Pre-buffer: wait for data before starting FFmpeg to avoid initial stall.
+		const prebufBytes = 6 * 1024 * 1024   // 6 MB
+		const prebufTimeout = 15 * time.Second
+		if err := ps.BufferedReader().Prebuffer(ctx, prebufBytes, prebufTimeout); err != nil {
+			job.err = fmt.Errorf("prebuffer cancelled: %w", err)
+			_ = job.ctrl.TransitionWithError(job.err)
+			m.recordJobFailure(job, job.err)
+			job.signalReady()
+			m.cleanupJob(key, job)
+			return
+		}
+		m.logger.Info("hls prebuffer complete", slog.Int("buffered", ps.BufferedReader().Buffered()))
+
+		// Wire buffer fill feedback to sliding priority reader.
+		type bufferFillSetter interface{ SetBufferFillFunc(func() float64) }
+		if setter, ok := result.Reader.(bufferFillSetter); ok {
+			setter.SetBufferFillFunc(ps.BufferedReader().FillRatio)
+		}
+
+		// Wire priority boost callback for watchdog stall escalation.
+		type windowBooster interface{ BoostWindow(time.Duration) }
+		if booster, ok := result.Reader.(windowBooster); ok {
+			job.priorityBoostFunc = func() { booster.BoostWindow(15 * time.Second) }
+		}
 	}
 
 	if key.subtitleTrack >= 0 && subtitleSourcePath == "" {
@@ -170,7 +196,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	segDur := m.segmentDuration
 	m.mu.RUnlock()
 	if segDur <= 0 {
-		segDur = 4
+		segDur = 2
 	}
 	segDurStr := strconv.Itoa(segDur)
 
@@ -178,6 +204,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	isLocalFile := !useReader &&
 		!strings.HasPrefix(input, "http://") && !strings.HasPrefix(input, "https://")
 	sourceHeight := 0
+	sourceFPS := float64(0)
 	if isLocalFile {
 		_, sourceHeight = m.getVideoResolutionWithCache(input)
 	}
@@ -187,6 +214,37 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 	streamCopy := false
 	if isLocalFile && key.subtitleTrack < 0 && m.isH264FileWithCache(input) {
 		streamCopy = true
+
+		// Auto-trigger background remux (MKV → MP4) so the frontend can switch
+		// to direct playback on subsequent plays without the HLS pipeline.
+		ext := strings.ToLower(filepath.Ext(input))
+		if ext == ".mkv" {
+			go m.triggerRemux(key.id, key.fileIndex, input)
+		}
+	}
+
+	// Detect fps for re-encode paths so we can use GOP-aligned keyframes.
+	if isLocalFile && !streamCopy {
+		sourceFPS = m.getVideoFPSWithCache(input)
+	}
+
+	// Keyframe alignment strategy for re-encode modes.
+	// For local files with known fps, use GOP-size alignment (-g + -sc_threshold 0):
+	// the encoder inserts IDR frames at natural frame boundaries every segDur seconds,
+	// avoiding forced mid-GOP IDRs that slightly reduce quality.
+	// For pipe/HTTP sources where fps is unknown up front, fall back to time-based
+	// forced keyframes so segment boundaries are always predictable.
+	gopArgs := []string{"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segDur)}
+	if sourceFPS > 0 {
+		gopSize := int(math.Round(sourceFPS * float64(segDur)))
+		if gopSize > 0 {
+			gopArgs = []string{"-g", strconv.Itoa(gopSize), "-sc_threshold", "0"}
+			m.logger.Info("hls using GOP-aligned keyframes",
+				slog.Float64("fps", sourceFPS),
+				slog.Int("gopSize", gopSize),
+				slog.Int("segDur", segDur),
+			)
+		}
 	}
 
 	// Multi-variant encoding: only for re-encoding with known source resolution.
@@ -234,8 +292,8 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 			"-c:v", "libx264",
 			"-pix_fmt", "yuv420p",
 			"-preset", encPreset,
-			"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segDur),
 		)
+		args = append(args, gopArgs...)
 
 		// Per-variant bitrate / CRF settings.
 		for i, v := range variants {
@@ -272,8 +330,8 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 			"-pix_fmt", "yuv420p",
 			"-preset", encPreset,
 			"-crf", strconv.Itoa(encCRF),
-			"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segDur),
 		)
+		args = append(args, gopArgs...)
 		if key.subtitleTrack >= 0 {
 			args = append(args,
 				"-vf", subtitleFilterArg(subtitleSourcePath, key.subtitleTrack),
@@ -753,6 +811,64 @@ func (m *hlsManager) getVideoResolutionWithCache(filePath string) (int, int) {
 
 	m.scheduleCodecCacheSave()
 	return w, h
+}
+
+// getVideoFPS returns the frame rate of the first video stream as a float64.
+// r_frame_rate is returned as "num/den" (e.g. "24000/1001", "30/1").
+// Returns 0 when detection fails or the value is implausible.
+func getVideoFPS(ffprobePath, filePath string) float64 {
+	out, err := exec.Command(
+		ffprobePath,
+		"-v", "quiet",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=r_frame_rate",
+		"-of", "csv=p=0",
+		filePath,
+	).Output()
+	if err != nil {
+		return 0
+	}
+	line := strings.TrimSpace(string(out))
+	parts := strings.SplitN(line, "/", 2)
+	if len(parts) != 2 {
+		return 0
+	}
+	num, err1 := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	den, err2 := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if err1 != nil || err2 != nil || den == 0 {
+		return 0
+	}
+	fps := num / den
+	if fps <= 0 || fps > 120 { // sanity check
+		return 0
+	}
+	return fps
+}
+
+// getVideoFPSWithCache returns the fps for filePath, detecting it with ffprobe
+// on first call. Shares the resolutionCache so fps survives restarts via the
+// on-disk codec_cache.json.
+func (m *hlsManager) getVideoFPSWithCache(filePath string) float64 {
+	m.resolutionCacheMu.RLock()
+	if entry, ok := m.resolutionCache[filePath]; ok {
+		fps := entry.fps
+		m.resolutionCacheMu.RUnlock()
+		return fps
+	}
+	m.resolutionCacheMu.RUnlock()
+
+	fps := getVideoFPS(m.ffprobePath, filePath)
+
+	m.resolutionCacheMu.Lock()
+	if entry, ok := m.resolutionCache[filePath]; ok {
+		entry.fps = fps // merge into existing entry (width/height already set)
+	} else {
+		m.resolutionCache[filePath] = &resolutionCacheEntry{fps: fps}
+	}
+	m.resolutionCacheMu.Unlock()
+
+	m.scheduleCodecCacheSave()
+	return fps
 }
 
 // qualityVariant describes a single quality level for multi-variant HLS output.

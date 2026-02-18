@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,26 @@ func (s *Server) handleStreamTorrent(w http.ResponseWriter, r *http.Request, id 
 	if err != nil || fileIndex < 0 {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid fileIndex")
 		return
+	}
+
+	// Fast path: serve complete files directly from disk, bypassing the
+	// torrent reader. This gives better Range handling, ETag support, and
+	// kernel-level sendfile.
+	if s.mediaDataDir != "" && s.getState != nil {
+		if state, stateErr := s.getState.Execute(r.Context(), domain.TorrentID(id)); stateErr == nil {
+			if fileIndex < len(state.Files) {
+				file := state.Files[fileIndex]
+				if file.Length > 0 && file.BytesCompleted >= file.Length {
+					filePath, pathErr := resolveDataFilePath(s.mediaDataDir, file.Path)
+					if pathErr == nil {
+						if info, statErr := os.Stat(filePath); statErr == nil && !info.IsDir() {
+							http.ServeFile(w, r, filePath)
+							return
+						}
+					}
+				}
+			}
+		}
 	}
 
 	ctx := r.Context()
@@ -741,4 +762,91 @@ func storeRewrittenPlaylist(job *hlsJob, playlistPath string, audioTrack, subtit
 	job.rewrittenSubTrack = subtitleTrack
 	job.rewrittenCacheTime = time.Now()
 	job.rewrittenMu.Unlock()
+}
+
+// handleDirectPlayback serves a browser-ready file for direct playback.
+// For .mp4/.m4v files it serves the original. For .mkv files with H.264+AAC
+// it serves a cached remux (codec copy to MP4). Returns:
+//   - 200: file ready to serve
+//   - 202: remux in progress (retry later)
+//   - 404: not available (incomplete file or unsupported format)
+func (s *Server) handleDirectPlayback(w http.ResponseWriter, r *http.Request, id string, fileIndex int) {
+	if s.getState == nil || s.mediaDataDir == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	state, err := s.getState.Execute(r.Context(), domain.TorrentID(id))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if fileIndex >= len(state.Files) {
+		http.NotFound(w, r)
+		return
+	}
+
+	file := state.Files[fileIndex]
+	if file.Length <= 0 || file.BytesCompleted < file.Length {
+		http.NotFound(w, r)
+		return
+	}
+
+	filePath, pathErr := resolveDataFilePath(s.mediaDataDir, file.Path)
+	if pathErr != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if info, statErr := os.Stat(filePath); statErr != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(filePath))
+
+	// MP4/M4V: serve directly — already browser-compatible.
+	if ext == ".mp4" || ext == ".m4v" {
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.ServeFile(w, r, filePath)
+		return
+	}
+
+	// MKV: check if H.264 video — required for browser playback.
+	if ext != ".mkv" {
+		http.NotFound(w, r)
+		return
+	}
+
+	if s.hls == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if !s.hls.isH264FileWithCache(filePath) {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Check if a remuxed MP4 is ready.
+	remuxPath, ready := s.hls.checkRemux(domain.TorrentID(id), fileIndex)
+	if ready {
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.ServeFile(w, r, remuxPath)
+		return
+	}
+
+	// Trigger remux if not started.
+	if remuxPath == "" {
+		s.hls.triggerRemux(domain.TorrentID(id), fileIndex, filePath)
+	}
+
+	// 202 Accepted — remux in progress.
+	w.Header().Set("Retry-After", "3")
+	w.WriteHeader(http.StatusAccepted)
 }

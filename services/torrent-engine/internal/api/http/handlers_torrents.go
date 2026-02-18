@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -350,6 +351,21 @@ func (s *Server) handleTorrentByID(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			s.handleFocus(w, r, id)
+		case "direct":
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			if len(parts) < 3 {
+				http.NotFound(w, r)
+				return
+			}
+			directFileIndex, directErr := strconv.Atoi(parts[2])
+			if directErr != nil || directFileIndex < 0 {
+				writeError(w, http.StatusBadRequest, "invalid_request", "invalid fileIndex")
+				return
+			}
+			s.handleDirectPlayback(w, r, id, directFileIndex)
 		case "tags":
 			if r.Method != http.MethodPut {
 				w.WriteHeader(http.StatusMethodNotAllowed)
