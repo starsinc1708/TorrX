@@ -65,6 +65,7 @@ type hlsJob struct {
 	bufferedReader   *bufferedStreamReader // non-nil for pipe sources; used for rate limiting
 	ffmpegProgressUs  int64  // atomic: last FFmpeg out_time in microseconds
 	priorityBoostFunc func() // triggers priority window boost; nil if unavailable
+	isPipeSource      bool   // true when reading from torrent pipe (incomplete file)
 
 	// Cached rewritten playlist (avoids re-parsing on every m3u8 GET).
 	rewrittenMu           sync.RWMutex
@@ -161,8 +162,9 @@ type hlsHealthSnapshot struct {
 
 const (
 	hlsWatchdogInterval       = 5 * time.Second
-	hlsWatchdogStallThreshold = 90 * time.Second
-	hlsMaxAutoRestarts        = 5
+	hlsWatchdogStallThreshold     = 90 * time.Second
+	hlsPipeStallThreshold         = 5 * time.Minute // longer patience for pipe sources (incomplete files)
+	hlsMaxAutoRestarts            = 5
 
 	// Stall escalation ladder thresholds (applied before full restart).
 	hlsStallEscalation1 = 30 * time.Second // L1: remove rate limit
@@ -1216,9 +1218,16 @@ func (m *hlsManager) watchJobProgress(key hlsKey, job *hlsJob) {
 			stallWarnLogged = true
 		}
 
-		// L3 (90s): kill + restart FFmpeg.
-		segStalled := stallDuration >= hlsWatchdogStallThreshold
-		progressStalled := lastProgressUs > 0 && time.Since(lastProgressChangeAt) >= hlsWatchdogStallThreshold
+		// L3: kill + restart FFmpeg.
+		// Pipe sources (incomplete torrent files) get much longer patience
+		// because restarting destroys all encoded progress and the data
+		// will arrive eventually as the torrent downloads.
+		stallThreshold := hlsWatchdogStallThreshold
+		if job.isPipeSource {
+			stallThreshold = hlsPipeStallThreshold
+		}
+		segStalled := stallDuration >= stallThreshold
+		progressStalled := lastProgressUs > 0 && time.Since(lastProgressChangeAt) >= stallThreshold
 
 		if !segStalled && !progressStalled {
 			continue
@@ -1260,6 +1269,12 @@ func (m *hlsManager) tryAutoRestart(key hlsKey, expected *hlsJob, reason string)
 	nextRestart := expected.restartCount + 1
 	dir := expected.dir
 	seekSeconds := expected.seekSeconds
+	// Resume from last FFmpeg progress position instead of re-encoding
+	// from the original seek point. This preserves encoded progress when
+	// the stall was caused by waiting for torrent data.
+	if progressUs := atomic.LoadInt64(&expected.ffmpegProgressUs); progressUs > 0 {
+		seekSeconds = float64(progressUs) / 1_000_000.0
+	}
 	if expected.cancel != nil {
 		expected.cancel()
 	}

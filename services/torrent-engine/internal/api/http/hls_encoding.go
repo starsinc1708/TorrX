@@ -102,6 +102,7 @@ func (m *hlsManager) run(job *hlsJob, key hlsKey) {
 
 	// Wire buffered reader for rate limiting (only available for pipe sources).
 	if ps, ok := dataSource.(*pipeSource); ok {
+		job.isPipeSource = true
 		job.bufferedReader = ps.BufferedReader()
 		// Pre-buffer: wait for data before starting FFmpeg to avoid initial stall.
 		const prebufBytes = 6 * 1024 * 1024   // 6 MB
