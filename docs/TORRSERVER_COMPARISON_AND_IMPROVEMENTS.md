@@ -160,25 +160,36 @@ first (LRU).
 
 ## Remaining Improvement Opportunities
 
-### P1 — High Impact
+### Implemented (P1)
 
-#### Dual-Range Preload for Direct Streaming
-TorrServer preloads both the file start AND file tail (8 MB each) when a torrent
-is first accessed. The current implementation only preloads the tail in the HLS path.
-For direct streaming via `/stream`, there's no tail preload at all.
+#### 10. Dual-Range Preload for Direct Streaming
 
-**Recommendation:** Add a `preloadFileEnds()` call in `StreamTorrent.Execute()` that
-boosts both the first and last 8-16 MB of the file to `PriorityHigh`.
+**Files:** `stream_torrent.go`
 
-#### Reader Dormancy System
-TorrServer puts idle readers to sleep after 60s (sets readahead to 0, seeks to
-position 0) when multiple readers exist. This prevents idle readers from consuming
-bandwidth.
+TorrServer preloads both the file start AND file tail when a torrent is first
+accessed. The HLS path already had tail preload via `preloadFileEnds()`, but
+direct streaming via `/stream` had no tail preload at all.
 
-**Recommendation:** Add `lastAccess` tracking to `slidingPriorityReader`. On each
-`Read`/`Seek`, update the timestamp. Add a dormancy check: if multiple readers exist
-and this one hasn't been accessed in 60s, set readahead to 0 and deprioritize its
-window.
+**Fix:** Added tail preload in `StreamTorrent.Execute()`. After setting the initial
+priority window (which covers the file start), the last 16 MB of the file is boosted
+to `PriorityReadahead` for files larger than 32 MB. This ensures container metadata
+(MP4 moov atoms, MKV SeekHead/Cues) is available before the player seeks to the end.
+
+#### 11. Reader Dormancy System
+
+**Files:** `reader_dormancy.go` (new), `sliding_priority_reader.go`, `stream_torrent.go`
+
+TorrServer puts idle readers to sleep after 60s when multiple readers exist on the
+same torrent. Without dormancy, idle readers waste bandwidth requesting pieces that
+no one is consuming, starving the active reader.
+
+**Fix:** Added `readerRegistry` that tracks active readers per torrent. Each reader
+records `lastAccess` on every Read/Seek. Active readers periodically check peers
+(every 5s) and put idle ones (>60s) to sleep: readahead set to 0, priority window
+deprioritized. When a dormant reader receives its next Read or Seek, it wakes
+immediately: readahead is restored and the priority window reapplied. Single readers
+are never put to sleep. `StreamTorrent.Execute` changed to pointer receiver with
+lazy-initialized shared registry.
 
 ### P2 — Medium Impact
 

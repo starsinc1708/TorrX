@@ -159,7 +159,7 @@ func main() {
 	startUC := usecase.StartTorrent{Engine: engine, Repo: repo, Now: time.Now}
 	stopUC := usecase.StopTorrent{Engine: engine, Repo: repo, Now: time.Now}
 	deleteUC := usecase.DeleteTorrent{Engine: engine, Repo: repo, DataDir: cfg.TorrentDataDir}
-	streamUC := usecase.StreamTorrent{Engine: engine, Repo: repo, ReadaheadBytes: 2 << 20}
+	streamUC := &usecase.StreamTorrent{Engine: engine, Repo: repo, ReadaheadBytes: 2 << 20}
 	stateUC := usecase.GetTorrentState{Engine: engine}
 	listStateUC := usecase.ListActiveTorrentStates{Engine: engine}
 	mediaProbe := ffprobe.New(cfg.FFProbePath)

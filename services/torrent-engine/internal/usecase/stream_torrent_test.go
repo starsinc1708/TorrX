@@ -46,6 +46,7 @@ type fakeStreamSession struct {
 	lastRange domain.Range
 	lastPrio  domain.Priority
 	ranges    []domain.Range
+	prios     []domain.Priority
 	selectErr error
 }
 
@@ -66,6 +67,7 @@ func (s *fakeStreamSession) SetPiecePriority(file domain.FileRef, r domain.Range
 	s.lastRange = r
 	s.lastPrio = prio
 	s.ranges = append(s.ranges, r)
+	s.prios = append(s.prios, prio)
 }
 func (s *fakeStreamSession) Start() error { return nil }
 func (s *fakeStreamSession) Stop() error  { return nil }
@@ -233,5 +235,63 @@ func TestStreamTorrentSlidingPriorityOnSeek(t *testing.T) {
 	}
 	if totalGradientLen != boostedWindow {
 		t.Fatalf("total gradient coverage after seek: got %d, want %d (boosted)", totalGradientLen, boostedWindow)
+	}
+}
+
+func TestStreamTorrentTailPreload(t *testing.T) {
+	// File must be large enough (> 32 MB) to trigger tail preload.
+	fileLen := int64(100 << 20) // 100 MB
+	reader := &fakeStreamReader{}
+	session := &fakeStreamSession{
+		files:  []domain.FileRef{{Index: 0, Path: "movie.mkv", Length: fileLen}},
+		reader: reader,
+	}
+	engine := &fakeStreamEngine{session: session}
+
+	uc := &StreamTorrent{Engine: engine, ReadaheadBytes: 2 << 20}
+	_, err := uc.Execute(context.Background(), "t1", 0)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should have at least 2 priority ranges: initial window + tail preload.
+	if len(session.ranges) < 2 {
+		t.Fatalf("expected >= 2 priority ranges, got %d", len(session.ranges))
+	}
+
+	const tailPreloadSize int64 = 16 << 20
+	expectedTailOff := fileLen - tailPreloadSize
+	foundTail := false
+	for i, r := range session.ranges {
+		if r.Off == expectedTailOff && r.Length == tailPreloadSize {
+			if session.prios[i] != domain.PriorityReadahead {
+				t.Fatalf("tail preload priority: got %d, want %d", session.prios[i], domain.PriorityReadahead)
+			}
+			foundTail = true
+		}
+	}
+	if !foundTail {
+		t.Fatalf("tail preload range not found in %+v", session.ranges)
+	}
+}
+
+func TestStreamTorrentNoTailPreloadSmallFile(t *testing.T) {
+	// File smaller than 2× tail preload size should NOT get tail preload.
+	reader := &fakeStreamReader{}
+	session := &fakeStreamSession{
+		files:  []domain.FileRef{{Index: 0, Path: "small.mp4", Length: 100}},
+		reader: reader,
+	}
+	engine := &fakeStreamEngine{session: session}
+
+	uc := &StreamTorrent{Engine: engine, ReadaheadBytes: 2 << 20}
+	_, err := uc.Execute(context.Background(), "t1", 0)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Only the initial priority window, no tail preload.
+	if len(session.ranges) != 1 {
+		t.Fatalf("expected exactly 1 priority range for small file, got %d", len(session.ranges))
 	}
 }

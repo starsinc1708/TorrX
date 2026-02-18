@@ -46,6 +46,14 @@ type slidingPriorityReader struct {
 	lastUpdateTime           time.Time
 	effectiveBytesPerSec     float64
 	seekBoostUntil           time.Time
+
+	// Dormancy support: idle readers are put to sleep when multiple readers
+	// exist for the same torrent, freeing bandwidth for the active reader.
+	lastAccess        time.Time
+	lastDormancyCheck time.Time
+	dormant           bool
+	registry          *readerRegistry
+	torrentID         domain.TorrentID
 }
 
 func newSlidingPriorityReader(
@@ -54,6 +62,8 @@ func newSlidingPriorityReader(
 	file domain.FileRef,
 	readahead int64,
 	window int64,
+	registry *readerRegistry,
+	torrentID domain.TorrentID,
 ) *slidingPriorityReader {
 	backtrack := readahead
 	if backtrack < 0 {
@@ -68,6 +78,7 @@ func newSlidingPriorityReader(
 		step = minSlidingPriorityStep
 	}
 
+	now := time.Now()
 	return &slidingPriorityReader{
 		reader:         reader,
 		session:        session,
@@ -78,7 +89,10 @@ func newSlidingPriorityReader(
 		backtrack:      backtrack,
 		step:           step,
 		lastOff:        0,
-		lastUpdateTime: time.Now(),
+		lastUpdateTime: now,
+		lastAccess:     now,
+		registry:       registry,
+		torrentID:      torrentID,
 	}
 }
 
@@ -97,12 +111,25 @@ func (r *slidingPriorityReader) SetResponsive() {
 func (r *slidingPriorityReader) Read(p []byte) (int, error) {
 	n, err := r.reader.Read(p)
 	if n > 0 {
+		now := time.Now()
 		r.mu.Lock()
 		r.pos += int64(n)
+		r.lastAccess = now
 		r.bytesReadSinceLastUpdate += int64(n)
+		if r.dormant {
+			r.exitDormancyLocked()
+		}
 		r.adjustWindowLocked()
 		r.updatePriorityWindowLocked(false)
+		checkDormancy := r.registry != nil && now.Sub(r.lastDormancyCheck) > 5*time.Second
+		if checkDormancy {
+			r.lastDormancyCheck = now
+		}
 		r.mu.Unlock()
+
+		if checkDormancy {
+			r.registry.enforceDormancy(r.torrentID, r)
+		}
 	}
 	if err != nil {
 		return n, err
@@ -117,6 +144,10 @@ func (r *slidingPriorityReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	r.mu.Lock()
 	r.pos = pos
+	r.lastAccess = time.Now()
+	if r.dormant {
+		r.exitDormancyLocked()
+	}
 	// Post-seek boost: temporarily double the window to reduce stalls.
 	boosted := r.window * 2
 	if boosted > r.maxWindow {
@@ -126,11 +157,36 @@ func (r *slidingPriorityReader) Seek(offset int64, whence int) (int64, error) {
 	r.seekBoostUntil = time.Now().Add(10 * time.Second)
 	r.updatePriorityWindowLocked(true)
 	r.mu.Unlock()
+
+	if r.registry != nil {
+		r.registry.enforceDormancy(r.torrentID, r)
+	}
 	return pos, nil
 }
 
 func (r *slidingPriorityReader) Close() error {
+	if r.registry != nil {
+		r.registry.unregister(r.torrentID, r)
+	}
 	return r.reader.Close()
+}
+
+// enterDormancyLocked puts the reader to sleep: sets readahead to 0 and
+// deprioritizes its window. Must be called with r.mu held.
+func (r *slidingPriorityReader) enterDormancyLocked() {
+	r.dormant = true
+	r.reader.SetReadahead(0)
+	if r.prevWindow > 0 {
+		r.deprioritizeRange(r.prevOff, r.prevWindow)
+	}
+}
+
+// exitDormancyLocked wakes the reader: restores readahead and reapplies
+// the priority window. Must be called with r.mu held.
+func (r *slidingPriorityReader) exitDormancyLocked() {
+	r.dormant = false
+	r.reader.SetReadahead(r.window)
+	r.updatePriorityWindowLocked(true)
 }
 
 const adaptiveTargetBufferSeconds = 30.0

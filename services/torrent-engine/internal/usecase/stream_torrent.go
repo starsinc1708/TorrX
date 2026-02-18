@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"torrentstream/internal/domain"
 	"torrentstream/internal/domain/ports"
@@ -47,9 +48,19 @@ type StreamTorrent struct {
 	Engine         ports.Engine
 	Repo           ports.TorrentRepository
 	ReadaheadBytes int64
+
+	readersOnce sync.Once
+	readers     *readerRegistry
 }
 
-func (uc StreamTorrent) Execute(ctx context.Context, id domain.TorrentID, fileIndex int) (StreamResult, error) {
+func (uc *StreamTorrent) getRegistry() *readerRegistry {
+	uc.readersOnce.Do(func() {
+		uc.readers = newReaderRegistry()
+	})
+	return uc.readers
+}
+
+func (uc *StreamTorrent) Execute(ctx context.Context, id domain.TorrentID, fileIndex int) (StreamResult, error) {
 	if uc.Engine == nil {
 		return StreamResult{}, errors.New("engine not configured")
 	}
@@ -98,6 +109,15 @@ func (uc StreamTorrent) Execute(ctx context.Context, id domain.TorrentID, fileIn
 	priorityWindow := streamPriorityWindow(readahead, file.Length)
 	session.SetPiecePriority(file, domain.Range{Off: 0, Length: priorityWindow}, domain.PriorityHigh)
 
+	// Preload file tail for container headers (MP4 moov atoms, MKV SeekHead/Cues).
+	// Players commonly seek to the file end first to read container metadata.
+	const tailPreloadSize int64 = 16 << 20
+	if file.Length > tailPreloadSize*2 {
+		session.SetPiecePriority(file,
+			domain.Range{Off: file.Length - tailPreloadSize, Length: tailPreloadSize},
+			domain.PriorityReadahead)
+	}
+
 	reader, err := session.NewReader(file)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
@@ -109,7 +129,9 @@ func (uc StreamTorrent) Execute(ctx context.Context, id domain.TorrentID, fileIn
 		return StreamResult{}, errors.New("stream reader not available")
 	}
 
-	spr := newSlidingPriorityReader(reader, session, file, readahead, priorityWindow)
+	reg := uc.getRegistry()
+	spr := newSlidingPriorityReader(reader, session, file, readahead, priorityWindow, reg, id)
+	reg.register(id, spr)
 	spr.SetContext(ctx)
 
 	// Use the full priority window as readahead so the torrent client
