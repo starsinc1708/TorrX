@@ -20,6 +20,13 @@ export type PrebufferPhase =
   | 'retrying' // probe failed, auto-retrying after delay
   | 'error';   // all probes failed
 
+export interface HlsSeekResult {
+  /** How the server handled the seek. */
+  seekMode: 'soft' | 'cache' | 'hard' | 'restart';
+  /** Target time in local HLS coordinates (relative to current seekOffset). */
+  localTarget: number;
+}
+
 const findDefaultAudioTrack = (info: MediaInfo | null): number => {
   if (!info) return 0;
   const audioTracks = info.tracks.filter((t) => t.type === 'audio');
@@ -70,6 +77,10 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
   const seekAbortRef = useRef<AbortController | null>(null);
   /** Resolve callback of the previous debounced seek promise (to avoid hanging). */
   const seekResolveRef = useRef<(() => void) | null>(null);
+  /** Synchronous ref for seekOffset — allows hlsSeekTo to read the current value
+   *  without needing it in the useCallback deps (which would cause excessive re-creation). */
+  const seekOffsetRef = useRef(0);
+  seekOffsetRef.current = seekOffset;
 
   const availableFiles = useMemo<FileRef[]>(() => {
     const fromRecord = selectedTorrent?.files ?? [];
@@ -580,8 +591,9 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
   );
 
   const hlsSeekTo = useCallback(
-    (absoluteTime: number): Promise<void> => {
-      if (!selectedTorrent || selectedFileIndex === null) return Promise.resolve();
+    (absoluteTime: number): Promise<HlsSeekResult> => {
+      const fallback: HlsSeekResult = { seekMode: 'hard', localTarget: 0 };
+      if (!selectedTorrent || selectedFileIndex === null) return Promise.resolve(fallback);
 
       // Clamp to valid range.
       const duration = mediaInfo?.duration ?? 0;
@@ -608,8 +620,8 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
         seekResolveRef.current = null;
       }
 
-      return new Promise<void>((resolve, reject) => {
-        seekResolveRef.current = resolve;
+      return new Promise<HlsSeekResult>((resolve, reject) => {
+        seekResolveRef.current = () => resolve(fallback);
         seekDebounceRef.current = setTimeout(async () => {
           seekResolveRef.current = null;
           seekDebounceRef.current = null;
@@ -627,27 +639,38 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
                   signal: controller.signal,
                 });
                 if (controller.signal.aborted) return;
-                setSeekOffset(result.seekTime);
-                if (result.seekMode !== 'soft') {
-                  // Hard seek: poll the new FFmpeg job's manifest until its first
-                  // segment is ready, then reload HLS.js. During this wait the old
-                  // stream continues playing from the browser's buffer — no black screen.
-                  const pollUrl = buildHlsUrl(selectedTorrent.id, selectedFileIndex, {
-                    audioTrack: audio,
-                    subtitleTrack,
-                  });
-                  for (let i = 0; i < 20; i++) {
-                    if (controller.signal.aborted) return;
-                    const ready = await probeHlsManifest(pollUrl, controller.signal);
-                    if (controller.signal.aborted) return;
-                    if (ready) break;
-                    if (i < 19) await sleep(500);
-                  }
-                  if (controller.signal.aborted) return;
-                  setSeekToken(Date.now());
+
+                const mode = result.seekMode as HlsSeekResult['seekMode'];
+
+                // Soft / cache seek: the server confirmed the target is
+                // within the current job's encoded range. Don't change
+                // seekOffset or seekToken — just tell the caller to do a
+                // local video.currentTime seek.
+                if (mode === 'soft' || mode === 'cache') {
+                  const localTarget = clamped - seekOffsetRef.current;
+                  setVideoError(null);
+                  resolve({ seekMode: mode, localTarget });
+                  return;
                 }
+
+                // Hard / restart seek: a new FFmpeg job was created.
+                // Update seekOffset and reload HLS.js.
+                setSeekOffset(result.seekTime);
+                const pollUrl = buildHlsUrl(selectedTorrent.id, selectedFileIndex, {
+                  audioTrack: audio,
+                  subtitleTrack,
+                });
+                for (let i = 0; i < 20; i++) {
+                  if (controller.signal.aborted) return;
+                  const ready = await probeHlsManifest(pollUrl, controller.signal);
+                  if (controller.signal.aborted) return;
+                  if (ready) break;
+                  if (i < 19) await sleep(500);
+                }
+                if (controller.signal.aborted) return;
+                setSeekToken(Date.now());
                 setVideoError(null);
-                resolve();
+                resolve({ seekMode: mode, localTarget: 0 });
                 return;
               } catch (error) {
                 if (controller.signal.aborted) return;
@@ -659,7 +682,7 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
                 if (controller.signal.aborted) return;
               }
             }
-            resolve();
+            resolve(fallback);
           } catch (error) {
             if (controller.signal.aborted) return;
             if (isApiError(error)) {

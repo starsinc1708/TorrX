@@ -6,7 +6,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import type { FileRef, MediaTrack, PlayerHealth, SessionState } from '../types';
-import type { PrebufferPhase } from '../hooks/useVideoPlayer';
+import type { HlsSeekResult, PrebufferPhase } from '../hooks/useVideoPlayer';
 import { formatBytes, formatTime } from '../utils';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { useWatchPositionSave } from '../hooks/useWatchPositionSave';
@@ -37,7 +37,7 @@ interface VideoPlayerProps {
   subtitlesReady: boolean;
   mediaDuration: number;
   seekOffset: number;
-  onHlsSeek: (absoluteTime: number) => Promise<void>;
+  onHlsSeek: (absoluteTime: number) => Promise<HlsSeekResult>;
   sessionState: SessionState | null;
   onSelectFile: (index: number) => void;
   onSelectAudioTrack: (index: number | null) => void;
@@ -1119,7 +1119,26 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       setSeekStatus('seeking');
       setSeekStatusText(`Seeking to ${formatTime(absoluteTarget)}...`);
       try {
-        await onHlsSeek(absoluteTarget);
+        const result = await onHlsSeek(absoluteTarget);
+
+        // Soft / cache seek: the HLS job didn't change. Seek locally
+        // within the existing manifest instead of reloading HLS.js.
+        if (result.seekMode === 'soft' || result.seekMode === 'cache') {
+          if (video && Number.isFinite(result.localTarget) && result.localTarget >= 0) {
+            video.currentTime = result.localTarget;
+            setCurrentTime(result.localTarget);
+          }
+          setSeekStatus('idle');
+          setSeekStatusText('');
+          shouldResumeAfterHlsSeekRef.current = false;
+          if (shouldResume && video) {
+            pendingPlayRef.current = true;
+            void video.play().catch(() => {});
+          }
+          return;
+        }
+
+        // Hard / restart seek: HLS.js will reload with the new URL.
         setSeekStatus('buffering');
         setSeekStatusText('Preparing target fragments. Playback will continue automatically.');
       } catch {
