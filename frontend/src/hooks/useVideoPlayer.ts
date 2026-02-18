@@ -57,7 +57,6 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
   const [mediaInfoToken, setMediaInfoToken] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const probeRetryCountRef = useRef(0);
   const mediaRetryCountRef = useRef(0);
   const mediaInfoInFlightRef = useRef(false);
   const probeAbortRef = useRef<AbortController | null>(null);
@@ -223,14 +222,12 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
     [audioTrack, subtitleTrack, mediaInfo, directPlayable],
   );
 
-  // Launch probe whenever file selection, retry token, or mode changes.
+  // Launch probe whenever file selection or retry token changes.
   useEffect(() => {
     if (!selectedTorrent || selectedFileIndex === null) {
       setPrebufferPhase('idle');
       return;
     }
-
-    probeRetryCountRef.current = 0;
 
     // Abort any running probe.
     probeAbortRef.current?.abort();
@@ -244,43 +241,44 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
     const resumePos = resumePositionRef.current;
     const fileComplete = sessionState?.progress != null && sessionState.progress >= 0.99;
 
+    const maxRetries = 5;
     void (async () => {
-      const result = await runProbe(
-        currentMode,
-        selectedTorrent.id,
-        selectedFileIndex,
-        hlsStreamUrl,
-        controller.signal,
-        resumePos,
-        fileComplete,
-      );
-      if (controller.signal.aborted) return;
-
-      if (result.success) {
-        setActiveMode(result.mode);
-        if (result.seekOffset !== undefined) {
-          setSeekOffset(result.seekOffset);
-          setSeekToken(Date.now());
-        }
-        setPrebufferPhase('ready');
-      } else {
-        if (probeRetryCountRef.current < 5) {
-          probeRetryCountRef.current += 1;
+      for (let retry = 0; retry <= maxRetries; retry += 1) {
+        if (controller.signal.aborted) return;
+        if (retry > 0) {
           setPrebufferPhase('retrying');
-          const delay = Math.min(probeRetryCountRef.current * 3000, 10000);
+          const delay = Math.min(retry * 3000, 10000);
           await sleep(delay);
           if (controller.signal.aborted) return;
-          setStreamRetryToken((t) => t + 1);
+        }
+
+        const result = await runProbe(
+          currentMode,
+          selectedTorrent.id,
+          selectedFileIndex,
+          hlsStreamUrl,
+          controller.signal,
+          resumePos,
+          fileComplete,
+        );
+        if (controller.signal.aborted) return;
+
+        if (result.success) {
+          setActiveMode(result.mode);
+          if (result.seekOffset !== undefined) {
+            setSeekOffset(result.seekOffset);
+            setSeekToken(Date.now());
+          }
+          setPrebufferPhase('ready');
           return;
         }
-        setPrebufferPhase('error');
       }
+      setPrebufferPhase('error');
     })();
 
     return () => {
       controller.abort();
     };
-    // We intentionally depend on streamRetryToken to re-probe on retry.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTorrent?.id, selectedFileIndex, streamRetryToken]);
 

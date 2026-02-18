@@ -508,7 +508,7 @@ export const probeDirectStream = async (
   }
 };
 
-/** Fetches HLS manifest. Returns true if it contains #EXTINF (segments ready). */
+/** Fetches HLS manifest. Returns true if it contains segments or variant streams. */
 export const probeHlsManifest = async (
   url: string,
   signal?: AbortSignal,
@@ -517,7 +517,9 @@ export const probeHlsManifest = async (
     const res = await fetch(url, { signal });
     if (!res.ok) return false;
     const text = await res.text();
-    return text.includes('#EXTINF');
+    // Single-variant: has #EXTINF (segment entries).
+    // Multi-variant (master): has #EXT-X-STREAM-INF (variant references).
+    return text.includes('#EXTINF') || text.includes('#EXT-X-STREAM-INF');
   } catch {
     return false;
   }

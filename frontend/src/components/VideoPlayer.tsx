@@ -197,6 +197,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const pendingSeekTargetRef = useRef<number | null>(null);
   const wasPlayingRef = useRef(false);
   const currentSourceKeyRef = useRef<string>('');
+  const currentStreamUrlRef = useRef<string>('');
   const sourcePositionMapRef = useRef<Map<string, number>>(new Map());
   const lastPlaybackSnapshotRef = useRef<{ sourceKey: string; time: number; wasPlaying: boolean } | null>(null);
   const autoAdvanceRef = useRef(false);
@@ -422,8 +423,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     shouldResumeAfterHlsSeekRef.current = false;
 
     const previousSourceKey = currentSourceKeyRef.current;
+    const previousStreamUrl = currentStreamUrlRef.current;
     const nextSourceKey = sourceKeyFromStreamUrl(streamUrl);
     const sameSource = previousSourceKey !== '' && previousSourceKey === nextSourceKey;
+    // Same torrent+file but the URL changed (seek token, retry token, audio track, etc.)
+    // — the HLS job was likely regenerated and the playlist starts from local time 0.
+    const hlsJobChanged = sameSource && streamUrl !== previousStreamUrl && previousStreamUrl !== '';
 
     const lastSnapshot = lastPlaybackSnapshotRef.current;
     const snapshotMatchesPrevious = lastSnapshot?.sourceKey === previousSourceKey;
@@ -464,7 +469,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       forcedResumeTarget.position > 0;
 
     if (forcedMatchesSelected) {
-      savedTimeRef.current = forcedResumeTarget.position;
+      // For HLS: the probe already seeked the server, so the playlist starts
+      // from local time 0. Don't set startPosition to the absolute resume time
+      // or HLS.js will look for segments that don't exist → infinite buffering.
+      savedTimeRef.current = useHls ? null : forcedResumeTarget.position;
       wasPlayingRef.current = true;
     } else {
       if (forcedResumeTarget && selectedFileIndex !== forcedResumeTarget.fileIndex) {
@@ -485,8 +493,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         wasPlayingRef.current = false;
       }
     }
+    // When the HLS job was regenerated (seek, track switch, probe re-seek,
+    // retry), the new playlist starts from local time 0.  Clear any stale
+    // position so startPosition defaults to 0 — otherwise HLS.js looks for
+    // segments at an offset that doesn't exist and stalls forever.
+    if (hlsJobChanged && useHls) {
+      savedTimeRef.current = null;
+    }
     pendingSeekTargetRef.current = savedTimeRef.current;
     currentSourceKeyRef.current = nextSourceKey;
+    currentStreamUrlRef.current = streamUrl;
 
     const recordPlaybackSnapshot = () => {
       const sourceKey = currentSourceKeyRef.current;
