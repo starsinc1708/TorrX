@@ -67,13 +67,6 @@ const SettingsPage: React.FC = () => {
     clearAccentCustom,
   } = useThemeAccent();
 
-  // Playback
-  const [focusMode, setFocusMode] = useState(() => localStorage.getItem('focusMode') === 'true');
-  const handleFocusModeToggle = (checked: boolean) => {
-    setFocusMode(checked);
-    localStorage.setItem('focusMode', String(checked));
-  };
-
   // Storage
   const [storageSettings, setStorageSettings] = useState<StorageSettings | null>(null);
   const [storageLoading, setStorageLoading] = useState(false);
@@ -863,21 +856,6 @@ const SettingsPage: React.FC = () => {
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="space-y-3">
-            <div className="text-sm font-semibold">Playback</div>
-            <div className="flex items-center justify-between gap-4 rounded-lg border border-border/70 bg-muted/20 p-3">
-              <div className="space-y-0.5">
-                <div className="text-sm font-medium">Focus mode</div>
-                <div className="text-xs text-muted-foreground">Deprioritize other downloads while streaming.</div>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-sm text-muted-foreground">{focusMode ? 'On' : 'Off'}</span>
-                <Switch checked={focusMode} onCheckedChange={handleFocusModeToggle} />
-              </div>
-            </div>
-          </div>
-
-          <div className="border-t border-border/70 pt-5">
-          <div className="space-y-3">
             <div className="text-sm font-semibold">Storage</div>
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
@@ -941,7 +919,6 @@ const SettingsPage: React.FC = () => {
                 {storageError}
               </div>
             ) : null}
-          </div>
           </div>
 
           <div className="border-t border-border/70 pt-5">
