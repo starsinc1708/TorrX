@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 0
+    "completedTasks": 9
   },
   "tasks": [
     {
@@ -1076,8 +1076,8 @@
         "frontend/src/app/providers/ToastProvider.tsx",
         "frontend/src/components/Header.tsx"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-19. Fully implemented frontend scaffold with React 18.3.1 + TypeScript 5.6.3 + Vite 5.4.10. package.json includes all deps: react-router-dom 7.13.0, tailwindcss 3.4.17, Radix UI (dialog, dropdown-menu, slot, switch, tabs), clsx, tailwind-merge, class-variance-authority, hls.js 1.5.15, lucide-react. vite.config.ts has proxy rules: /torrents→:8080 (VITE_API_PROXY_TARGET), /search→:8090 (VITE_SEARCH_PROXY_TARGET), plus /settings/*, /watch-history, /swagger, /ws. App.tsx has 5 routes via React Router v7: /→CatalogPage, /discover→SearchPage, /watch/:torrentId/:fileIndex?→PlayerPage (lazy+Suspense), /settings→SettingsPage, /diagnostics→ProviderDiagnosticsPage, catch-all→Navigate /. api.ts: fetch-based client with GET dedup (inflightGets Map), 3 timeout tiers (15s/7s/90s), AbortController, ApiRequestError class. design-system.ts: light/dark themes, 7 accent presets (indigo/blue/teal/green/orange/rose/violet) + custom hex via hexToHslTriplet(), applyAccentToRoot(), pickPrimaryForegroundForHsl(). cn.ts: clsx+tailwind-merge utility. globals.css: full CSS variable sets for :root and .dark, ts-dropdown-trigger/panel/item classes, app-backdrop, scrollbar styling, animations. All 12 UI kit components in src/components/ui/: button, card, input, select, multi-select, dropdown-menu, dialog, switch, tabs, badge, alert, textarea. ThemeAccentProvider: React Context with system/light/dark modes, localStorage persistence, accent presets+custom. ToastProvider: context-based toasts with 4 variants, 4.5s auto-dismiss, max 5, ARIA. Header: responsive nav with logo, NavLinks, theme toggle, add torrent modal, catalog stats. ErrorBoundary: class component with test file. tsc --noEmit passes clean, npm run build succeeds."
     },
     {
       "id": "T-036",

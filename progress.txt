@@ -294,3 +294,32 @@ Format:
   - T-005 (middleware, medium, deps: T-003 ✅)
   - T-009 (settings repos, medium, deps: T-004 ✅)
 - Recommend T-020 next as it is high priority and now fully unblocked, or T-008 as it unblocks T-021 and T-022
+
+## Iteration 8 — 2026-02-19 23:00
+**Task:** [T-035] Scaffold frontend with Vite, routing, API client, design system, and UI kit
+**Status:** done
+**What was done:**
+- Verified frontend scaffold already fully implemented — no code changes needed
+- Confirmed package.json: React 18.3.1, TypeScript 5.6.3, Vite 5.4.10, React Router DOM 7.13.0, Tailwind CSS 3.4.17, Radix UI primitives, clsx+tailwind-merge, hls.js, lucide-react
+- Confirmed vite.config.ts: proxy /torrents→:8080, /search→:8090 (env-configurable), plus /settings/*, /watch-history, /swagger, /ws
+- Confirmed App.tsx: 5 routes (/, /discover, /watch/:torrentId/:fileIndex?, /settings, /diagnostics) with lazy-loaded PlayerPage and catch-all redirect
+- Confirmed api.ts: fetch-based client with GET dedup (inflightGets Map), 3 timeout tiers (15s/7s/90s), AbortController, ApiRequestError class, SSE support
+- Confirmed design-system.ts: light/dark themes, 7 accent presets (indigo/blue/teal/green/orange/rose/violet) + custom hex, applyAccentToRoot()
+- Confirmed cn.ts: clsx + tailwind-merge utility
+- Confirmed globals.css: CSS variables for :root/.dark, ts-dropdown-trigger/panel/item, app-backdrop, scrollbar, animations
+- Confirmed all 12 UI components: button, card, input, select, multi-select, dropdown-menu, dialog, switch, tabs, badge, alert, textarea
+- Confirmed ThemeAccentProvider, ToastProvider, Header, ErrorBoundary all present
+- Ran npm install, npx tsc --noEmit (0 errors), npm run build (success, 21.86s)
+**Issues found:**
+- None. Implementation was complete.
+**Notes for next session:**
+- T-035 is done and unblocks: T-036 (CatalogPage, critical, deps: T-035 ✅, T-010 ✅), T-037 (SearchPage, high, deps: T-035 ✅, T-034 ❌), T-039 (PlayerPage, critical, deps: T-035 ✅, T-019 ✅), T-042 (SettingsPage encoding, medium), T-043 (SettingsPage providers, medium), T-044 (DiagnosticsPage, low), T-045 (WebSocket integration, medium)
+- 9 tasks now done: T-003, T-004, T-006, T-007, T-010, T-015, T-018, T-019, T-035
+- Next tasks with all deps satisfied:
+  - T-036 (CatalogPage, critical, deps: T-035 ✅, T-010 ✅) — NOW UNBLOCKED
+  - T-039 (PlayerPage, critical, deps: T-035 ✅, T-019 ✅) — NOW UNBLOCKED
+  - T-020 (HLS seek/watchdog, high, deps: T-019 ✅)
+  - T-012 (torrent lifecycle, high, deps: T-007 ✅, T-010 ✅)
+  - T-008 (FFprobe adapter, high, deps: T-004 ✅)
+  - T-027 (scaffold torrent-search, high, deps: [])
+- Recommend T-036 or T-039 next as they are critical and newly unblocked
