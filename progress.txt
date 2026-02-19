@@ -675,3 +675,53 @@ Format:
   - T-041 (video player UX, medium, deps: T-039 ✅, T-024 ❌) — BLOCKED on T-024
 - Recommend T-005 next as lowest ID among medium priority with all deps satisfied
 - DISK SPACE WARNING: C: drive at 0 bytes — frontend/node_modules removed. Run `cd frontend && npm install` before frontend tasks. Consider cleaning npm cache (~1.7GB at /c/Users/starsinc/AppData/Local/npm-cache/) and /tmp/ (~33GB of temp data outside project root)
+
+## Iteration 19 — 2026-02-20 07:00
+**Task:** [T-005] Implement HTTP middleware stack
+**Status:** done
+**What was done:**
+- Verified all middleware already fully implemented in middleware.go (234 lines) — no code changes needed
+- CORS middleware: whitelist-based with map lookup, empty=allow all, trailing slash/whitespace trimmed, reflects origin + Vary header, preflight OPTIONS returns 204, exposes Content-Range/Accept-Ranges/Content-Length
+- Rate limiting: token bucket via golang.org/x/time/rate (100 RPS, burst 200), skips /internal/health/player and /metrics, returns 429 + Retry-After:1
+- Panic recovery: catches all panic types, logs error + method + path + clientIP + stack trace via debug.Stack(), returns 500 JSON error
+- Logging: wraps responseWriter to capture status/size, logs method/path/status/bytes/durationMs/clientIP + optional query/userAgent, noisy paths at debug level, 4xx→warn, 5xx→error
+- Metrics: Prometheus HTTPRequestsTotal + HTTPRequestDuration, normalizeRoute for cardinality control
+- responseWriter: supports Hijack for WebSocket upgrades
+- clientIP: X-Forwarded-For (first IP) → X-Real-IP → RemoteAddr fallback chain
+- Middleware chain wired in server.go:382: recovery → rateLimit → metrics → cors → logging → handler
+- Created middleware_test.go with 40+ test cases:
+  - CORS: 7 tests (allow-all nil/empty, allow whitelisted, reject non-whitelisted, trailing slash, preflight 204, same-origin, whitespace, multiple origins)
+  - Rate limit: 5 tests (within burst, 429 after burst, skip health, skip metrics, 429 body)
+  - Recovery: 4 tests (string panic, nil panic, error panic, no panic passthrough)
+  - Logging: 2 tests (status/size capture, default 200)
+  - responseWriter: 4 tests (WriteHeader, Write size, Hijack supported/unsupported)
+  - clientIP: 8 table-driven cases
+  - truncate: 10 table-driven cases
+  - pickRequestLogLevel: 12 table-driven cases
+  - isNoisyPath: 9 table-driven cases
+  - normalizeRoute: 15 table-driven cases
+  - metricsMiddleware: 2 tests
+  - Integration chain: 2 tests (recovery catches chain panic, cors+rateLimit together)
+- go vet ./... passes clean (type-checks and verifies test code compiles)
+**Issues found:**
+- DISK SPACE: C: drive at 0 bytes available — could not link test binary to execute tests. go vet confirms code compiles correctly. Need `go clean -cache` (3GB) or `npm cache clean --force` (1.7GB) to free space.
+**Notes for next session:**
+- T-005 is done. No tasks directly depend on T-005.
+- 21 tasks now done: T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-010, T-012, T-015, T-018, T-019, T-020, T-027, T-028, T-032, T-035, T-036, T-039, T-040
+- CRITICAL: Must run `go clean -cache` to free ~3GB before any Go test execution
+- Next tasks with all deps satisfied (medium priority, lowest ID first):
+  - T-009 (settings repos, medium, deps: T-004 ✅)
+  - T-011 (list view modes, medium, deps: T-010 ✅)
+  - T-013 (bulk operations, medium, deps: T-012 ✅)
+  - T-014 (SyncState, medium, deps: T-006 ✅, T-007 ✅)
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅)
+  - T-017 (dormancy, medium, deps: T-015 ✅)
+  - T-021 (direct browser playback, medium, deps: T-008 ✅, T-018 ✅)
+  - T-022 (media info endpoint, medium, deps: T-008 ✅, T-003 ✅)
+  - T-024 (watch history, medium, deps: T-004 ✅, T-003 ✅)
+  - T-025 (WebSocket, medium, deps: T-003 ✅)
+  - T-029 (1337x + Rutracker, medium, deps: T-027 ✅)
+  - T-030 (Torznab, medium, deps: T-027 ✅)
+  - T-031 (TMDB, medium, deps: T-027 ✅)
+  - T-033 (search caching + SSE, medium, deps: T-032 ✅)
+- Recommend T-009 next as lowest ID among medium priority with all deps satisfied

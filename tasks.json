@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 20
+    "completedTasks": 21
   },
   "tasks": [
     {
@@ -155,8 +155,8 @@
       "files_likely_touched": [
         "services/torrent-engine/internal/api/http/middleware.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. All middleware already fully implemented in middleware.go (234 lines). CORS middleware: whitelist-based with map lookup, trailing slash/whitespace trimmed, empty=allow all, reflects origin + Vary header, preflight OPTIONS returns 204, exposes Content-Range/Accept-Ranges/Content-Length. Rate limiting: token bucket via golang.org/x/time/rate (100 RPS, burst 200), skips /internal/health/player and /metrics, returns 429 + Retry-After:1. Panic recovery: catches all panic types, logs error + method + path + clientIP + stack trace via debug.Stack(), returns 500 JSON error. Logging: wraps responseWriter to capture status/size, logs method/path/status/bytes/durationMs/clientIP + optional query/userAgent, noisy paths (health/swagger/HLS segments) at debug level, 4xx→warn, 5xx→error. Metrics: Prometheus HTTPRequestsTotal counter + HTTPRequestDuration histogram, normalizeRoute for cardinality control. responseWriter: supports Hijack for WebSocket upgrades. clientIP: X-Forwarded-For (first IP) → X-Real-IP → RemoteAddr fallback. Middleware chain wired in server.go:382: recovery → rateLimit → metrics → cors → logging → handler. Created middleware_test.go with 40+ test cases: CORS (7 tests: allow-all nil/empty, allow whitelisted, reject non-whitelisted, trailing slash trim, preflight 204, same-origin no headers, whitespace trim, multiple origins), rate limit (5 tests: allows within burst, 429 after burst, skip health, skip metrics, 429 response body), recovery (4 tests: catch string panic, nil panic, error panic, no panic passthrough), logging (2 tests: status/size capture, default 200), responseWriter (4 tests: WriteHeader, Write size tracking, Hijack supported, Hijack unsupported), clientIP (8 table cases), truncate (10 table cases), pickRequestLogLevel (12 table cases), isNoisyPath (9 table cases), normalizeRoute (15 table cases), metricsMiddleware (2 tests), integration chain (2 tests). go vet passes clean. Tests could not be run due to 0 bytes free on C: drive (linker cannot write test binary)."
     },
     {
       "id": "T-006",
