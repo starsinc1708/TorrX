@@ -488,3 +488,41 @@ Format:
   - T-016 (adaptive boosts, medium, deps: T-015 ✅)
   - T-017 (dormancy, medium, deps: T-015 ✅)
 - Recommend T-027 next as it is high priority with no dependencies, or T-022 if deps are met
+
+## Iteration 14 — 2026-02-20 02:00
+**Task:** [T-001] Set up Docker Compose with all infrastructure services
+**Status:** done
+**What was done:**
+- Verified Docker Compose fully implemented in deploy/docker-compose.yml (348 lines) — no code changes needed
+- 12 main services: traefik v3.2 (CLI static config, file provider, Prometheus metrics, OTLP tracing), jaeger all-in-one (OTLP collector, memory storage 10K traces, 512MB limit), prometheus (15d retention, custom rules), grafana (admin/admin, dark theme, provisioned datasources/dashboards), jackett, flaresolverr (proxy support), prowlarr, torrent-search (build from source, env-configured providers/Redis/OTLP), torrentstream (build from source, MongoDB/HLS/OTLP), redis 7-alpine (256MB LRU), mongo 7, web-client (Nginx, build from source)
+- 2 extra backup profile services: mongo-backup (on-demand), mongo-backup-scheduled (daily 3AM cron)
+- All services have healthchecks with appropriate intervals, timeouts, retries
+- Service dependencies use condition: service_healthy for ordered startup
+- Networks: edge (torrentstream_edge, Traefik-facing) + core (internal services)
+- 8 named volumes: torrent_data, hls_cache, anacrolix_cache, mongo_data, redis_data, prometheus_data, grafana_data, mongo_backups
+- Traefik dynamic routing (deploy/traefik/dynamic.yml, 119 lines): HTTP+HTTPS routers with security headers middleware, backend-long-timeout serversTransport (120s response header timeout)
+  - /torrents+/settings/*+/watch-history+/swagger+/internal+/ws → torrentstream:8080 (priority 200)
+  - /search → torrent-search:8090 (priority 190)
+  - /* → web-client:80 (priority 1)
+  - Jackett/Prowlarr accessible via Host() rules on *.localhost
+- docker compose config validates clean with no errors
+**Issues found:**
+- None. Implementation was fully complete.
+**Notes for next session:**
+- T-001 is done and unblocks: T-002 (multi-stage Dockerfiles, medium, deps: T-001 ✅)
+- 15 tasks now done: T-001, T-003, T-004, T-006, T-007, T-008, T-010, T-012, T-015, T-018, T-019, T-020, T-035, T-036, T-039
+- Next tasks with all deps satisfied:
+  - T-027 (scaffold torrent-search, high, deps: [])
+  - T-002 (multi-stage Dockerfiles, medium, deps: T-001 ✅) — NOW UNBLOCKED
+  - T-005 (middleware, medium, deps: T-003 ✅)
+  - T-009 (settings repos, medium, deps: T-004 ✅)
+  - T-011 (list view modes, medium, deps: T-010 ✅)
+  - T-013 (bulk operations, medium, deps: T-012 ✅)
+  - T-014 (SyncState, medium, deps: T-006 ✅, T-007 ✅)
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅)
+  - T-017 (dormancy, medium, deps: T-015 ✅)
+  - T-021 (direct browser playback, medium, deps: T-008 ✅, T-018 ✅)
+  - T-022 (media info endpoint, medium, deps: T-008 ✅, T-003 ✅)
+  - T-024 (watch history, medium, deps: T-004 ✅, T-003 ✅)
+  - T-025 (WebSocket, medium, deps: T-003 ✅)
+- Recommend T-027 next as it is the only remaining high-priority task with all deps satisfied
