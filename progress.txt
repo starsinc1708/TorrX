@@ -40,3 +40,34 @@ Format:
 - T-004 is done and unblocks: T-007 (anacrolix engine adapter), T-015 (SlidingPriorityReader), T-006 (MongoDB repo), T-009 (settings repos), T-024 (watch history)
 - T-003 (scaffold) is also ready to verify — Go module, config, HTTP server, health endpoint all exist
 - Consider T-007 or T-003 next as they are critical priority with T-004 dependency now satisfied
+
+## Iteration 2 — 2026-02-19 14:00
+**Task:** [T-003] Scaffold torrent-engine project with config and HTTP server
+**Status:** done
+**What was done:**
+- Verified go.mod: module `torrentstream`, Go 1.25.5, all dependencies present
+- Verified cmd/server/main.go (394 lines): full HTTP server with net/http.ServeMux (25+ routes), graceful shutdown on SIGTERM/SIGINT with 10s timeout, ordered component teardown (HLS manager → HTTP server → engine → MongoDB → tracer)
+- Verified internal/app/config.go: parses all 22 PRD 9.1 env vars — 21 in config.go (HTTP_ADDR, MONGO_URI, MONGO_DB, MONGO_COLLECTION, TORRENT_DATA_DIR, TORRENT_MAX_SESSIONS, TORRENT_MIN_DISK_SPACE_BYTES, FFMPEG_PATH, FFPROBE_PATH, HLS_DIR, HLS_PRESET, HLS_CRF, HLS_AUDIO_BITRATE, HLS_SEGMENT_DURATION, HLS_RAMBUF_SIZE_MB, HLS_PREBUFFER_MB, HLS_WINDOW_BEFORE_MB, HLS_WINDOW_AFTER_MB, CORS_ALLOWED_ORIGINS, LOG_LEVEL, LOG_FORMAT) + OTEL_EXPORTER_OTLP_ENDPOINT in telemetry.go
+- Verified health endpoint: GET /internal/health/player returns JSON with status, sessions, HLS diagnostics, issues array
+- Verified middleware stack: CORS (whitelist-based), rate-limit (100 RPS/200 burst, skips health/metrics), panic recovery, structured logging, OTEL tracing
+- Created internal/app/config_test.go with 6 table-driven test functions (42+ sub-tests):
+  - TestLoadConfigDefaults: verifies all 22 fields have correct defaults
+  - TestLoadConfigFromEnv: verifies all fields read from environment correctly
+  - TestGetEnvInt64InvalidFallsBack: 7 edge cases (empty, NaN, negative, zero, valid, whitespace, float)
+  - TestParseCSV: 7 edge cases (empty, whitespace, single, multiple, spaces, trailing comma, empty entries)
+  - TestGetEnvFallback: existing vs missing env var
+  - TestLogLevelCaseInsensitive: LOG_LEVEL case normalization
+- go build ./cmd/server/ — success with zero errors
+- go vet ./... — clean, zero warnings
+- go test ./... — all packages pass (14 packages, no failures)
+**Issues found:**
+- None. Scaffold was fully implemented; only config tests were missing.
+**Notes for next session:**
+- T-003 is done and unblocks: T-005 (middleware), T-010 (torrent CRUD), T-019 (HLS pipeline), T-022 (direct playback), T-023 (settings API), T-024 (watch history), T-025 (WebSocket), T-026 (metrics/swagger), T-050 (OTEL tracing)
+- Both T-003 and T-004 are now done. Next critical tasks with all deps satisfied:
+  - T-007 (anacrolix engine adapter, critical, deps: T-004 ✅)
+  - T-015 (SlidingPriorityReader, critical, deps: T-004 ✅)
+  - T-006 (MongoDB repo, high, deps: T-004 ✅)
+  - T-005 (middleware, medium, deps: T-003 ✅)
+  - T-008 (FFprobe adapter, high, deps: T-004 ✅)
+- Recommend T-007 next as it is critical priority and unblocks T-010 and T-018

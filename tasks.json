@@ -94,8 +94,8 @@
         "services/torrent-engine/cmd/server/main.go",
         "services/torrent-engine/internal/app/config.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-19. Go module torrentstream (Go 1.25.5), cmd/server/main.go with full HTTP server (net/http.ServeMux, 25+ routes), graceful shutdown (SIGTERM/SIGINT, 10s timeout), ordered component teardown. Config parses all 22 PRD 9.1 env vars (21 in config.go + OTEL_EXPORTER_OTLP_ENDPOINT in telemetry.go). Health endpoint at /internal/health/player with comprehensive checks. Middleware stack: CORS, rate-limit, recovery, logging, OTEL tracing. Added config_test.go with 6 test functions (42+ sub-tests): defaults, env override, int64 parsing, CSV parsing, fallback, case-insensitivity. go build, go vet, and go test ./... all pass clean."
     },
     {
       "id": "T-004",
