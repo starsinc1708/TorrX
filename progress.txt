@@ -526,3 +526,39 @@ Format:
   - T-024 (watch history, medium, deps: T-004 ✅, T-003 ✅)
   - T-025 (WebSocket, medium, deps: T-003 ✅)
 - Recommend T-027 next as it is the only remaining high-priority task with all deps satisfied
+
+## Iteration 15 — 2026-02-20 03:00
+**Task:** [T-027] Scaffold torrent-search service with config and provider interface
+**Status:** done
+**What was done:**
+- Verified torrent-search scaffold already fully implemented — no code changes needed
+- Go module: torrentstream/searchservice (Go 1.25.0) with prometheus, redis, otel, x/sync+text+time dependencies
+- cmd/server/main.go (292 lines): full HTTP server with LoadConfig, structured logging, Prometheus metrics, OTEL tracing, provider initialization (PirateBay, Jackett, Prowlarr, 1337x, Rutracker), search.NewService with ServiceOption pattern, TMDB client, runtime config store, graceful shutdown (10s timeout)
+- internal/app/config.go (124 lines): Config struct with 18 fields, LoadConfig parses 20+ env vars (HTTP_ADDR :8090, SEARCH_TIMEOUT_SECONDS 15, LOG_LEVEL, LOG_FORMAT, SEARCH_USER_AGENT, provider endpoints with defaults, Rutracker cookies/proxy, FlareSolverr URL, Redis, TMDB, cache TTL/disabled)
+- internal/search/provider.go (209 lines): Provider interface (Name, Info, Search), IndexerLister optional interface, TMDBClient interface, Service struct with provider registry + aliases (piratebay→bittorrent/tpb, 1337x→x1337, rutracker→rt), per-provider rate limiters (2 RPS burst 5), in-memory + Redis cache, warmer goroutine, health tracking, ServiceOption pattern
+- internal/domain/search.go (276 lines): SearchResult, SearchRequest, ProviderInfo, SearchResponse, SearchFilters, SearchRankingProfile, SearchEnrichment, DubbingInfo/Type, ProviderDiagnostics, runtime config types, normalize helpers
+- go vet ./... clean, go test ./... all 8 test packages pass
+**Issues found:**
+- go build ./cmd/server/ fails due to disk space (not code issue — linker cannot write output binary)
+**Notes for next session:**
+- T-027 is done and unblocks: T-028 (Pirate Bay + DHT providers, high, deps: T-027 ✅), T-029 (1337x + Rutracker, high, deps: T-027 ✅), T-030 (Torznab/Jackett, high, deps: T-027 ✅), T-031 (TMDB, medium, deps: T-027 ✅), T-032 (aggregator, high, deps: T-027 ✅ + T-028), T-033 (cache/SSE, high, deps: T-032), T-034 (search API, high, deps: T-032 ✅ + T-033)
+- 16 tasks now done: T-001, T-003, T-004, T-006, T-007, T-008, T-010, T-012, T-015, T-018, T-019, T-020, T-027, T-035, T-036, T-039
+- Next tasks with all deps satisfied:
+  - T-028 (Pirate Bay + DHT providers, high, deps: T-027 ✅) — NOW UNBLOCKED
+  - T-029 (1337x + Rutracker, high, deps: T-027 ✅) — NOW UNBLOCKED
+  - T-030 (Torznab/Jackett, high, deps: T-027 ✅) — NOW UNBLOCKED
+  - T-002 (multi-stage Dockerfiles, medium, deps: T-001 ✅)
+  - T-005 (middleware, medium, deps: T-003 ✅)
+  - T-009 (settings repos, medium, deps: T-004 ✅)
+  - T-011 (list view modes, medium, deps: T-010 ✅)
+  - T-013 (bulk operations, medium, deps: T-012 ✅)
+  - T-014 (SyncState, medium, deps: T-006 ✅, T-007 ✅)
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅)
+  - T-017 (dormancy, medium, deps: T-015 ✅)
+  - T-021 (direct browser playback, medium, deps: T-008 ✅, T-018 ✅)
+  - T-022 (media info endpoint, medium, deps: T-008 ✅, T-003 ✅)
+  - T-024 (watch history, medium, deps: T-004 ✅, T-003 ✅)
+  - T-025 (WebSocket, medium, deps: T-003 ✅)
+  - T-031 (TMDB, medium, deps: T-027 ✅) — NOW UNBLOCKED
+- Recommend T-028 next as it is high priority with lowest ID among newly unblocked high-priority tasks
+- DISK SPACE WARNING: build linking fails due to insufficient disk space — may need cleanup before tasks requiring binary builds

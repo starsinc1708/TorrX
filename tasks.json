@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 15
+    "completedTasks": 16
   },
   "tasks": [
     {
@@ -814,8 +814,8 @@
         "services/torrent-search/internal/app/config.go",
         "services/torrent-search/internal/search/provider.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. Torrent-search scaffold fully implemented — no code changes needed.\n\n**Go module:** torrentstream/searchservice (Go 1.25.0) with dependencies: prometheus, redis/go-redis v9, otelhttp, otel exporters, golang.org/x/sync+text+time.\n\n**cmd/server/main.go (292 lines):** Full HTTP server with LoadConfig(), structured logging (text/JSON), Prometheus metrics registration, OTEL tracing (torrent-search), provider initialization (PirateBay, Jackett, Prowlarr, 1337x, Rutracker), search.NewService with ServiceOption pattern, TMDB client (optional), runtime config store (Redis-backed), API server with ServerOption injection (logger, provider settings, TMDB), graceful shutdown on SIGTERM/SIGINT (10s timeout). Rutracker gets custom HTTP client with optional proxy support (url.Parse validation). SSE streaming supported via WriteTimeout=0.\n\n**internal/app/config.go (124 lines):** Config struct with 18 fields. LoadConfig parses 20+ env vars: HTTP_ADDR (:8090), SEARCH_TIMEOUT_SECONDS (15), LOG_LEVEL (info), LOG_FORMAT (text), SEARCH_USER_AGENT (torrent-stream-search/1.0), SEARCH_PROVIDER_PIRATEBAY_ENDPOINT (apibay.org), SEARCH_PROVIDER_BITTORRENT_ENDPOINT (alias), SEARCH_PROVIDER_1337X_ENDPOINT (3 mirrors), SEARCH_PROVIDER_RUTRACKER_ENDPOINT, SEARCH_PROVIDER_RUTRACKER_COOKIE, SEARCH_PROVIDER_RUTRACKER_PROXY, SEARCH_PROVIDER_RUTRACKER_BB_SESSION/BB_GUID/BB_SSL/CF_CLEARANCE (individual cookie vars), FLARESOLVERR_URL, REDIS_URL, TMDB_API_KEY, TMDB_BASE_URL, SEARCH_CACHE_TTL_HOURS (6), SEARCH_CACHE_DISABLED, TMDB_CACHE_TTL_DAYS (7). Helper functions: getEnv, getEnvInt (validates >0), getEnvBool (supports 1/true/yes/on/0/false/no/off), buildRutrackerCookies (composite from individual vars), normalizeFlareSolverrURL (ensures http:// prefix and trailing /).\n\n**internal/search/provider.go (209 lines):** Provider interface with Name() string, Info() domain.ProviderInfo, Search(ctx, SearchRequest) ([]SearchResult, error). IndexerLister optional interface for sub-indexer fan-out diagnostics. TMDBClient optional interface. Service struct with provider registry (map[string]Provider with aliases: piratebay→bittorrent/tpb, 1337x→x1337, rutracker→rt), per-provider rate limiters (2 RPS, burst 5), in-memory cache, Redis cache backend (optional), warmer background goroutine, health tracking. ServiceOption pattern: WithRedisCache, WithCacheTTL, WithCacheDisabled, WithTMDB.\n\n**internal/domain/search.go (276 lines):** SearchResult (name, infoHash, magnet, pageUrl, sizeBytes, seeders, leechers, source, tracker, sources, publishedAt, enrichment), SearchRequest (query, limit, offset, sortBy, sortOrder, profile, filters, noCache), ProviderInfo (name, label, kind, enabled), SearchResponse, SearchFilters (quality, contentType, yearFrom/To, dubbingGroups/Types, minSeeders), SearchRankingProfile (5 weights + preferences), SearchEnrichment (description, NFO, poster, screenshots, quality, audio, subtitles, series/season/episode, year, dubbing, HDR/DolbyVision, TMDB metadata), DubbingInfo/DubbingType, ProviderDiagnostics, ProviderRuntimeConfig/Patch, FlareSolverr types, NormalizeSortBy/SortOrder/RankingProfile helpers.\n\n**Tests:** 8 test packages pass (api/http, bittorrentindex, common, dht, rutracker, torznab, x1337, search). go vet ./... clean."
     },
     {
       "id": "T-028",
