@@ -204,3 +204,52 @@ Format:
   - T-005 (middleware, medium, deps: T-003 ✅)
   - T-009 (settings repos, medium, deps: T-004 ✅)
 - Recommend T-015 next as it is critical priority and standalone, or T-012 as it is high priority and now fully unblocked
+
+## Iteration 6 — 2026-02-19 22:00
+**Task:** [T-015] Implement SlidingPriorityReader base with 4-tier gradient
+**Status:** done
+**What was done:**
+- Verified SlidingPriorityReader fully implemented (441 lines in sliding_priority_reader.go) with all PRD 4.2 features
+- Verified 4-tier gradient: [pos,+2MB)→PriorityHigh, [+2MB,+4MB)→PriorityNext, [+4MB,+~25%rem)→PriorityReadahead, rest→PriorityNormal
+- Verified window sizing: readahead×4, clamped [32MB, 256MB], scales to 1% of file length for large files
+- Verified boundary protection: first/last 8MB never deprioritized (MP4 moov, MKV SeekHead/Cues)
+- Verified startup gradient: 4MB High + 4MB Next + graduated Readahead/Normal bands
+- Verified seek boost: window doubles for 10s after seek, clamps to maxWindow
+- Verified buffer-low boost: high band expands to 6MB for 5s when buffer <30%, no re-trigger while active
+- Verified dynamic window: EMA α=0.3 smoothing, updated every 500ms, targets 30s buffered content
+- Verified dormancy system: 60s idle threshold, enter/exit dormancy, readahead zero/restore
+- Verified reader_dormancy.go (74 lines): registry register/unregister/enforceDormancy
+- Created sliding_priority_reader_test.go with 50 comprehensive table-driven tests:
+  - TestStreamPriorityWindow: 9 cases (default/small/large readahead, 1% scaling, max clamp, negative, zero)
+  - TestApplyStartupGradient: 3 cases (4 bands, small window, medium window)
+  - TestNewSlidingPriorityReaderDefaults: 5 cases (step, step clamp, backtrack clamp, negative readahead, min/max)
+  - TestApplyGradientPriority: 6 cases (4 bands at offset, small/tiny/exact window, buffer-low boost 6MB, offset zero)
+  - TestDeprioritizeRange: 9 cases (middle/head/tail protection, full protect, zero/negative len, span both)
+  - TestUpdatePriorityWindowLocked: 3 cases (step threshold, force, deprioritize old window)
+  - TestSeekBoost: 4 cases (doubles 10s, max clamp, pos update, wake dormant)
+  - TestReadUpdatesPosAndPriority, TestReadWakesDormantReader, TestReadEOFPassthrough: 3 cases
+  - TestAdjustWindowEMA: 6 cases (500ms throttle, first/subsequent EMA, 30s target, min clamp, seek boost skip)
+  - TestBufferLowBoost: 4 cases (trigger, no trigger >30%, max clamp, no re-trigger)
+  - TestCloseUnregistersFromRegistry, TestCloseWithNilRegistry: 2 cases
+  - TestEnterExitDormancy: 2 cases (enter sets readahead=0, exit restores)
+  - TestBoostWindowMethod: 3 cases (doubles, update calls, max clamp)
+  - TestEffectiveBytesPerSec: 1 case
+  - TestSetContextDelegation, TestSetReadaheadDelegation, TestSetResponsiveDelegation: 3 cases
+  - TestSlidingPriorityReaderImplementsStreamReader/ReadSeekCloser: 2 interface compliance
+- go vet ./... — clean, zero warnings
+- go build ./cmd/server/ — success
+- go test ./... — all packages pass (0 failures)
+**Issues found:**
+- None. Implementation was fully complete and correct per PRD; only comprehensive unit tests were missing.
+**Notes for next session:**
+- T-015 is done and unblocks: T-016 (adaptive boosts, medium), T-017 (SlidingPriorityReader idle/dormancy, medium), T-018 (stream torrent, critical, deps: T-007 ✅, T-015 ✅)
+- T-003, T-004, T-006, T-007, T-010, T-015 all done. Next tasks with all deps satisfied:
+  - T-018 (stream torrent use case, critical, deps: T-007 ✅, T-015 ✅) — NOW UNBLOCKED
+  - T-012 (torrent lifecycle start/stop/focus, high, deps: T-007 ✅, T-010 ✅)
+  - T-008 (FFprobe adapter, high, deps: T-004 ✅) — needed by T-021 and T-022
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅) — NOW UNBLOCKED
+  - T-017 (idle/dormancy, medium, deps: T-015 ✅) — NOW UNBLOCKED
+  - T-011 (list view modes, medium, deps: T-010 ✅)
+  - T-005 (middleware, medium, deps: T-003 ✅)
+  - T-009 (settings repos, medium, deps: T-004 ✅)
+- Recommend T-018 next as it is critical and now fully unblocked, or T-012 as high priority
