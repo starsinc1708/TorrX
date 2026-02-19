@@ -71,3 +71,48 @@ Format:
   - T-005 (middleware, medium, deps: T-003 ✅)
   - T-008 (FFprobe adapter, high, deps: T-004 ✅)
 - Recommend T-007 next as it is critical priority and unblocks T-010 and T-018
+
+## Iteration 3 — 2026-02-19 16:00
+**Task:** [T-007] Implement anacrolix/torrent engine adapter
+**Status:** done
+**What was done:**
+- Verified all 14 Engine port methods implemented: Open, Close, GetSessionState, GetSession, ListActiveSessions, StopSession, StartSession, RemoveSession, SetPiecePriority, ListSessions, FocusSession, UnfocusAll, GetSessionMode, SetDownloadRateLimit
+- Verified Session implements all 7 port methods: ID, Files, SelectFile, SetPiecePriority, Start, Stop, NewReader
+- Verified AddMagnet returns TorrentID as info hash hex string
+- Verified NewReader returns anacrolix torrent.Reader satisfying ports.StreamReader (io.ReadSeekCloser + SetContext, SetReadahead, SetResponsive)
+- Verified Focus mode: hardPauseTorrent sets DisallowDataDownload+DisallowDataUpload+SetMaxEstablishedConns(0) on non-focused torrents; resumeTorrentForStreaming re-enables data on focused torrent without DownloadAll
+- Fixed defaultMaxConns from 55 to 35 per PRD specification
+- Initialized focusedPieces map in New() and NewWithClient() for consistency with other map fields
+- Created engine_unit_test.go with comprehensive table-driven tests (45 test cases total):
+  - TestDefaultMaxConnsIs35: verifies PRD-compliant value
+  - TestMapPriority: 7 cases (None, Low, Normal, Readahead, Next, High, unknown default)
+  - TestTransitionValid: 18 cases covering all valid state machine transitions
+  - TestTransitionInvalid: 12 cases covering all invalid transitions
+  - TestTransitionSameStateIsNoop: verifies same-state is no-op
+  - TestTransitionUnknownSession: verifies ErrSessionNotFound
+  - TestTransitionUpdatesFocusedID: verifies focusedID cache set/clear
+  - TestTransitionFocusSwitchUpdatesCache: verifies focus switch between torrents
+  - TestEvictIdleSessionLocked: 4 cases (empty, LRU idle, focused protected, prefers idle)
+  - TestGetSessionMode: 2 cases (not found, correct mode)
+  - TestListSessions: 2 cases (empty, returns all)
+  - TestListActiveSessions: excludes stopped/completed, includes active/paused
+  - TestSetDownloadRateLimit: not found + get rate limit
+  - TestSession*: 8 cases (ID, defensive copy, nil torrent, file selection, nil reader, nil engine)
+  - TestSampleSpeedNegativeDeltaClamped: counter reset handling
+  - TestStoreFocusedPieces/ForgetFocusedPieces: 4 cases (zero range, valid, cleanup, nil map)
+  - TestCloseNilClient, TestTouchLastAccess: 3 edge cases
+- go vet ./... — clean, zero warnings
+- go test ./... — all 14 packages pass (0 failures)
+**Issues found:**
+- defaultMaxConns was 55 (anacrolix default) instead of 35 (PRD spec) — fixed
+- focusedPieces map not initialized in constructors (inconsistent with other maps) — fixed
+**Notes for next session:**
+- T-007 is done and unblocks: T-010 (torrent CRUD, critical), T-012 (torrent lifecycle, high), T-018 (stream torrent, critical)
+- T-003, T-004, T-007 are all done. Next critical tasks with all deps satisfied:
+  - T-015 (SlidingPriorityReader, critical, deps: T-004 ✅)
+  - T-006 (MongoDB repo, high, deps: T-004 ✅) — needed by T-010 and T-014
+  - T-008 (FFprobe adapter, high, deps: T-004 ✅) — needed by T-021 and T-022
+  - T-005 (middleware, medium, deps: T-003 ✅)
+  - T-009 (settings repos, medium, deps: T-004 ✅)
+- T-010 (torrent CRUD, critical) needs T-003 ✅, T-006 ❌, T-007 ✅ — T-006 is the remaining blocker
+- Recommend T-006 (MongoDB repo) next to unblock T-010, or T-015 (SlidingPriorityReader) as standalone critical task

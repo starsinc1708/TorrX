@@ -214,8 +214,8 @@
         "services/torrent-engine/internal/services/torrent/engine/anacrolix/engine.go",
         "services/torrent-engine/internal/services/torrent/engine/anacrolix/engine_test.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-19. All 14 Engine port methods implemented (Open, Close, GetSessionState, GetSession, ListActiveSessions, StopSession, StartSession, RemoveSession, SetPiecePriority, ListSessions, FocusSession, UnfocusAll, GetSessionMode, SetDownloadRateLimit). Session implements 7 port methods (ID, Files, SelectFile, SetPiecePriority, Start, Stop, NewReader). AddMagnet returns TorrentID as info hash hex. Reader from NewReader satisfies ports.StreamReader (io.ReadSeekCloser + SetContext, SetReadahead, SetResponsive). Focus mode hard-pauses other torrents via DisallowData+SetMaxEstablishedConns(0). defaultMaxConns=35 per PRD. State machine with 6 modes and validated transitions. LRU idle eviction, idle reaper, speed sampling, piece bitfield high-water marks, download rate limiting. focusedPieces map initialized in constructors. 45 tests pass: priority mapping (7 cases), valid transitions (18 cases), invalid transitions (12 cases), same-state noop, unknown session, focus cache consistency (2), eviction (4), public API (6), session struct (8), speed edge case, focused pieces (4), close/touch (3). go vet clean, go test ./... all pass."
     },
     {
       "id": "T-008",

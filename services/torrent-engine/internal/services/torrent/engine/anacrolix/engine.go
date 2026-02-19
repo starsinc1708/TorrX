@@ -20,8 +20,8 @@ import (
 var ErrSessionNotFound = domain.ErrNotFound
 
 // defaultMaxConns is the value restored when resuming a hard-paused torrent.
-// Anacrolix default is 55.
-const defaultMaxConns = 55
+// PRD specifies 35 to balance peer connections vs resource usage.
+const defaultMaxConns = 35
 
 // ErrSessionLimitReached is returned when the maximum number of sessions is
 // reached and no idle session can be evicted.
@@ -68,6 +68,7 @@ func New(cfg Config) (*Engine, error) {
 		sessions:      make(map[domain.TorrentID]*torrent.Torrent),
 		modes:         make(map[domain.TorrentID]domain.SessionMode),
 		speeds:        make(map[domain.TorrentID]speedSample),
+		focusedPieces: make(map[domain.TorrentID]focusedPieceRange),
 		peakCompleted: make(map[domain.TorrentID]int64),
 		peakBitfield:  make(map[domain.TorrentID][]byte),
 		lastAccess:    make(map[domain.TorrentID]time.Time),
@@ -91,6 +92,7 @@ func NewWithClient(client *torrent.Client) *Engine {
 		sessions:      make(map[domain.TorrentID]*torrent.Torrent),
 		modes:         make(map[domain.TorrentID]domain.SessionMode),
 		speeds:        make(map[domain.TorrentID]speedSample),
+		focusedPieces: make(map[domain.TorrentID]focusedPieceRange),
 		peakCompleted: make(map[domain.TorrentID]int64),
 		peakBitfield:  make(map[domain.TorrentID][]byte),
 		lastAccess:    make(map[domain.TorrentID]time.Time),
