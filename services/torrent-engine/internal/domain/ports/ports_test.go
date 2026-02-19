@@ -105,6 +105,20 @@ func TestSchedulerInterface(t *testing.T) {
 	assertMethod(t, typ, "Prefetch", []reflect.Type{reflect.TypeOf(domain.FileRef{}), reflect.TypeOf(int64(0)), reflect.TypeOf(int64(0))}, nil)
 }
 
+func TestStreamReaderInterface(t *testing.T) {
+	typ := reflect.TypeOf((*StreamReader)(nil)).Elem()
+
+	// Embedded io.ReadSeekCloser methods
+	assertMethod(t, typ, "Read", []reflect.Type{reflect.TypeOf([]byte{})}, []reflect.Type{reflect.TypeOf(0), errorType()})
+	assertMethod(t, typ, "Seek", []reflect.Type{reflect.TypeOf(int64(0)), reflect.TypeOf(0)}, []reflect.Type{reflect.TypeOf(int64(0)), errorType()})
+	assertMethod(t, typ, "Close", nil, []reflect.Type{errorType()})
+
+	// StreamReader-specific methods
+	assertMethod(t, typ, "SetContext", []reflect.Type{contextType()}, nil)
+	assertMethod(t, typ, "SetReadahead", []reflect.Type{reflect.TypeOf(int64(0))}, nil)
+	assertMethod(t, typ, "SetResponsive", nil, nil)
+}
+
 func TestTorrentRepositoryInterface(t *testing.T) {
 	typ := reflect.TypeOf((*TorrentRepository)(nil)).Elem()
 

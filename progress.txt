@@ -1,0 +1,42 @@
+# Progress Log — T◎RRX
+
+Each iteration appends a structured entry.
+The coding agent reads this file at the start of every session to understand what has been done.
+
+Format:
+```
+## Iteration [N] — [YYYY-MM-DD HH:MM]
+**Task:** [T-XXX] [title]
+**Status:** done | in_progress | blocked
+**What was done:**
+- ...
+**Issues found:**
+- ... (or "None")
+**Notes for next session:**
+- ...
+```
+
+---
+
+## Iteration 1 — 2026-02-19 12:00
+**Task:** [T-004] Implement domain layer with value objects and port interfaces
+**Status:** done
+**What was done:**
+- Verified all domain value objects exist and match PRD: TorrentRecord, TorrentStatus (5 states), TorrentSource, FileRef, SessionMode (6 states + state machine), SessionState, Priority (-1 to 4), MediaInfo, MediaTrack, WatchPosition, TorrentFilter, Range
+- Verified all port interfaces: Engine (14 methods), TorrentRepository (8 methods), Session (7 methods), Storage (6 methods), StreamReader (6 methods including io.ReadSeekCloser), Scheduler (2 methods)
+- Verified domain error types: ErrNotFound, ErrUnsupported, ErrAlreadyExists, ErrInvalidTransition
+- Verified domain purity: no external imports in domain package (only stdlib errors, time)
+- Verified go vet passes clean on ./internal/domain/...
+- Added missing test: TorrentPending status constant test
+- Added 30-case table-driven TestCanTransition covering all 6 SessionMode states (valid + invalid transitions)
+- Added 7-case TestToStatus verifying SessionMode-to-TorrentStatus mapping including unknown mode
+- Added 13-case table-driven TestTorrentRecordValidate (valid, empty ID, empty status, invalid status, negative bytes, overflow, boundary cases, all 5 statuses)
+- Added TestWatchPositionJSONTags, TestMediaInfoJSONTags, TestMediaTrackJSONTags
+- Added TestStreamReaderInterface verifying all 6 methods (Read, Seek, Close from io.ReadSeekCloser + SetContext, SetReadahead, SetResponsive)
+- All tests pass (56 domain test cases total)
+**Issues found:**
+- None. Domain layer was fully implemented; tests had gaps that are now filled.
+**Notes for next session:**
+- T-004 is done and unblocks: T-007 (anacrolix engine adapter), T-015 (SlidingPriorityReader), T-006 (MongoDB repo), T-009 (settings repos), T-024 (watch history)
+- T-003 (scaffold) is also ready to verify — Go module, config, HTTP server, health endpoint all exist
+- Consider T-007 or T-003 next as they are critical priority with T-004 dependency now satisfied
