@@ -5,14 +5,15 @@ WORKDIR /app
 ARG NPM_REGISTRY=https://registry.npmjs.org
 RUN npm config set registry ${NPM_REGISTRY}
 
-COPY package.json package-lock.json* ./
+COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm install --no-fund --no-audit
 
-COPY . .
+COPY frontend/ .
 RUN npm run build
 
 FROM nginx:1.27-alpine
 
+COPY deploy/nginx/frontend.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 
 EXPOSE 80

@@ -603,3 +603,38 @@ Format:
 - Recommend T-032 next as it is high priority and now fully unblocked
 - DISK SPACE WARNING: frontend/node_modules was removed to free space — run `cd frontend && npm install` before frontend tasks
 - DISK SPACE: C: drive was at 0 bytes available, cleaned 247MB, still very tight
+
+## Iteration 17 — 2026-02-20 05:00
+**Task:** [T-002] Create multi-stage Dockerfiles for all three services
+**Status:** done
+**What was done:**
+- Verified three multi-stage Dockerfiles already existed in build/ (flat naming: torrent-engine.Dockerfile, torrent-search.Dockerfile, frontend.Dockerfile)
+- torrent-engine.Dockerfile: Go 1.25 build → Alpine 3.20 runtime with FFmpeg (apk add ffmpeg installs both ffmpeg and ffprobe), copies docs/, exposes :8080
+- torrent-search.Dockerfile: Go 1.25 build → Alpine 3.20 runtime, exposes :8090. Fixed: added go.sum to COPY step for go mod download
+- frontend.Dockerfile: Node 20 Alpine build → Nginx 1.27 Alpine. Updated to use repo root as build context so it can COPY deploy/nginx/frontend.conf into the image (baked-in nginx config)
+- Updated docker-compose.yml web-client build context from ../frontend to .. (repo root) and removed redundant volume mount for nginx.conf
+- Nginx config (deploy/nginx/frontend.conf): gzip on (text/css/js/json/xml/svg, min 256 bytes), SPA fallback (try_files $uri $uri/ /index.html), asset caching for /assets/ (expires 1y → max-age=31536000, immutable)
+- docker compose config validates clean with all three services correctly configured
+**Issues found:**
+- torrent-search.Dockerfile was missing go.sum in COPY — fixed
+- frontend.Dockerfile had no nginx.conf baked in (relied solely on volume mount) — fixed by changing build context to repo root
+**Notes for next session:**
+- T-002 is done. No tasks directly depend on T-002.
+- 19 tasks now done: T-001, T-002, T-003, T-004, T-006, T-007, T-008, T-010, T-012, T-015, T-018, T-019, T-020, T-027, T-028, T-032, T-035, T-036, T-039
+- All remaining pending tasks are medium or low priority. Next tasks with all deps satisfied (lowest ID first):
+  - T-005 (middleware, medium, deps: T-003 ✅)
+  - T-009 (settings repos, medium, deps: T-004 ✅)
+  - T-011 (list view modes, medium, deps: T-010 ✅)
+  - T-013 (bulk operations, medium, deps: T-012 ✅)
+  - T-014 (SyncState, medium, deps: T-006 ✅, T-007 ✅)
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅)
+  - T-017 (dormancy, medium, deps: T-015 ✅)
+  - T-021 (direct browser playback, medium, deps: T-008 ✅, T-018 ✅)
+  - T-022 (media info endpoint, medium, deps: T-008 ✅, T-003 ✅)
+  - T-024 (watch history, medium, deps: T-004 ✅, T-003 ✅)
+  - T-025 (WebSocket, medium, deps: T-003 ✅)
+  - T-029 (1337x + Rutracker, medium, deps: T-027 ✅)
+  - T-030 (Torznab, medium, deps: T-027 ✅)
+  - T-031 (TMDB, medium, deps: T-027 ✅)
+  - T-033 (search caching + SSE, medium, deps: T-032 ✅)
+- Recommend T-005 next as it is the lowest ID among medium priority with all deps satisfied

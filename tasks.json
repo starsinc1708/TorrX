@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 17
+    "completedTasks": 19
   },
   "tasks": [
     {
@@ -65,8 +65,8 @@
         "build/web-client/Dockerfile",
         "build/web-client/nginx.conf"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. Three multi-stage Dockerfiles exist in build/: torrent-engine.Dockerfile (Go 1.25 → Alpine 3.20 + FFmpeg, CGO_ENABLED=0, copies docs directory, exposes :8080), torrent-search.Dockerfile (Go 1.25 → Alpine 3.20, CGO_ENABLED=0, exposes :8090), frontend.Dockerfile (Node 20 Alpine → Nginx 1.27 Alpine, bakes in nginx.conf from deploy/nginx/frontend.conf). Fixed: torrent-search.Dockerfile was missing go.sum in COPY step. Updated frontend.Dockerfile to use repo root as build context (changed docker-compose.yml) so it can COPY deploy/nginx/frontend.conf into the image directly. Removed redundant runtime volume mount for nginx.conf since config is now baked into image. Nginx config (deploy/nginx/frontend.conf, 24 lines) provides: gzip compression (text/css/js/json/xml/svg, min 256 bytes), SPA fallback (try_files $uri $uri/ /index.html), static asset caching for /assets/ (expires 1y → max-age=31536000, immutable). docker compose config validates clean."
     },
     {
       "id": "T-003",
@@ -968,8 +968,8 @@
         "services/torrent-search/internal/search/query_expand.go",
         "services/torrent-search/internal/search/dubbing.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Implementation verified: aggregator.go (1087 lines) — concurrent fan-out with semaphore (max 10), per-provider timeout, circuit breaker gating, rate limiting (2 RPS burst 5), retry with exponential backoff, dedup by info_hash/title+size, configurable sort/filter, TMDB enrichment, pagination. normalize.go (883 lines) — parseTitleMeta extracts year/season/episode, Cyrillic transliteration, relevance scoring with configurable profile weights (seeders/quality/language/size/freshness), enrichSearchResult detects quality/source/HDR/audio/content type/dubbing. health.go (203 lines) — circuit breaker with providerHealth tracking, 3 consecutive failures triggers exponential backoff (2min × 2^(n-3), max 15min), ProviderDiagnostics endpoint. query_expand.go (83 lines) — adds language tokens for non-RuTracker providers, Cyrillic transliteration for 1337x. dubbing.go (168 lines) — knownDubbingGroups map, dubbingTypePatterns regex, professional group detection, dubbingScore ordering. Tests: 109 tests across aggregator_test.go, normalize_test.go, dubbing_test.go, health_test.go, query_expand_test.go, cache_key_test.go, retry_test.go covering fan-out, dedup, sort, filter, enrichment, relevance scoring, circuit breaker, query expansion, dubbing detection."
     },
     {
       "id": "T-033",
