@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 12
+    "completedTasks": 13
   },
   "tasks": [
     {
@@ -368,8 +368,8 @@
         "services/torrent-engine/internal/usecase/get_torrent_state.go",
         "services/torrent-engine/internal/api/http/handlers_torrent.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. All lifecycle operations fully implemented. StartTorrent (start_torrent.go, 57 lines): fetches record, calls engine.StartSession, falls back to openSessionFromRecord if session not found, updates status to TorrentActive. StopTorrent (stop_torrent.go, 46 lines): fetches record, calls engine.StopSession (ignores ErrNotFound for idempotency), updates status to TorrentStopped. GetTorrentState/ListActiveTorrentStates (state_torrent.go, 53 lines): single state via engine.GetSessionState, list via engine.ListActiveSessions + individual state fetch. SessionState includes ID, Status, Mode, Progress, Peers, DownloadSpeed, UploadSpeed, Files, NumPieces, PieceBitfield, UpdatedAt. SessionMode state machine in domain (6 modes: Idle/Downloading/Focused/Paused/Stopped/Completed with correct transitions per PRD 4.1). Focus/Unfocus handlers (handlers_torrents.go lines 646-700): handleFocus sets current torrent via player settings or engine.FocusSession, handleUnfocus clears via engine.UnfocusAll. All handlers wired: POST /torrents/{id}/start (line 398), POST /torrents/{id}/stop (line 413), POST /torrents/{id}/focus (line 646), POST /torrents/unfocus (line 666), GET /torrents/{id}/state (line 608), GET /torrents/state?status=active (line 623). Bulk start/stop also implemented (lines 499-549). 15 use case tests (start: 5, stop: 6, state: 4) + 10+ HTTP handler tests all pass. go build, go vet, go test ./... all clean."
     },
     {
       "id": "T-013",

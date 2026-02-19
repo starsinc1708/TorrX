@@ -421,3 +421,38 @@ Format:
   - T-016 (adaptive boosts, medium, deps: T-015 ✅)
   - T-017 (dormancy, medium, deps: T-015 ✅)
 - Recommend T-012 next as it is high priority with lowest ID among unblocked high-priority tasks
+
+## Iteration 12 — 2026-02-20 00:15
+**Task:** [T-012] Implement torrent lifecycle: start, stop, focus with session state
+**Status:** done
+**What was done:**
+- Verified all lifecycle operations already fully implemented — no code changes needed
+- StartTorrent (start_torrent.go, 57 lines): fetches record from repo, calls engine.StartSession, falls back to openSessionFromRecord if session not found, updates status to TorrentActive, persists update
+- StopTorrent (stop_torrent.go, 46 lines): fetches record, calls engine.StopSession (ignores ErrNotFound for idempotency), updates status to TorrentStopped
+- GetTorrentState + ListActiveTorrentStates (state_torrent.go, 53 lines): single state via engine.GetSessionState returning full SessionState (ID, Status, Mode, Progress, Peers, DownloadSpeed, UploadSpeed, Files, NumPieces, PieceBitfield, UpdatedAt); list via engine.ListActiveSessions with per-session state fetch
+- SessionMode state machine in domain: 6 modes (Idle/Downloading/Focused/Paused/Stopped/Completed) with correct transitions per PRD 4.1
+- Focus handler (handlers_torrents.go line 646): sets current torrent via player settings controller or engine.FocusSession, auto-starts if not active
+- Unfocus handler (handlers_torrents.go line 666): clears via engine.UnfocusAll
+- All endpoints wired: POST /torrents/{id}/start (line 398), POST /torrents/{id}/stop (line 413), POST /torrents/{id}/focus (line 646), POST /torrents/unfocus (line 666), GET /torrents/{id}/state (line 608), GET /torrents/state?status=active (line 623)
+- Bulk start/stop also implemented (lines 499-549)
+- 15 use case tests pass: StartTorrent (happy + not found + engine error + repo update error + repo get error), StopTorrent (happy + not found + repo get error + engine error + repo update error + engine-not-found-ignored), GetTorrentState (happy + not found), ListActiveTorrentStates (happy + engine error)
+- 10+ HTTP handler tests pass: start/stop/focus/unfocus/state endpoints + bulk operations + edge cases
+- go build, go vet, go test ./... all pass clean (0 failures)
+**Issues found:**
+- None. Implementation was fully complete with comprehensive test coverage.
+**Notes for next session:**
+- T-012 is done and unblocks: T-013 (bulk operations + tag management, medium, deps: T-012 ✅)
+- 13 tasks now done: T-003, T-004, T-006, T-007, T-008, T-010, T-012, T-015, T-018, T-019, T-035, T-036, T-039
+- Next tasks with all deps satisfied:
+  - T-020 (HLS seek/watchdog/FSM, high, deps: T-019 ✅)
+  - T-021 (FFprobe media analysis endpoint, high, deps: T-008 ✅, T-019 ✅)
+  - T-022 (direct playback, high, deps: T-008 ✅, T-019 ✅)
+  - T-027 (scaffold torrent-search, high, deps: [])
+  - T-013 (bulk operations, medium, deps: T-012 ✅) — NOW UNBLOCKED
+  - T-005 (middleware, medium, deps: T-003 ✅)
+  - T-009 (settings repos, medium, deps: T-004 ✅)
+  - T-011 (list view modes, medium, deps: T-010 ✅)
+  - T-014 (SyncState, medium, deps: T-006 ✅, T-007 ✅)
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅)
+  - T-017 (dormancy, medium, deps: T-015 ✅)
+- Recommend T-020 next as it is high priority with lowest ID among unblocked high-priority tasks
