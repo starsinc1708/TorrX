@@ -163,3 +163,44 @@ Format:
   - T-005 (middleware, medium, deps: T-003 ✅)
   - T-009 (settings repos, medium, deps: T-004 ✅)
 - Recommend T-010 next as it is now fully unblocked and is the critical torrent CRUD vertical slice
+
+## Iteration 5 — 2026-02-19 20:00
+**Task:** [T-010] Implement torrent CRUD vertical slice with API handlers
+**Status:** done
+**What was done:**
+- Verified all CRUD operations already fully implemented: CreateTorrent (magnet JSON + multipart .torrent 5MB limit), GetTorrent, ListTorrents (status/search/tags filters, sort by 5 fields, pagination), DeleteTorrent (file cleanup + path traversal protection)
+- Verified HTTP handlers in handlers_torrents.go: POST/GET /torrents, GET/DELETE /torrents/{id}, plus bulk start/stop/delete, tag management, focus/unfocus, state endpoints
+- Verified use case wiring in server.go via ServerOption pattern with dependency injection
+- Verified error response format: {"error":{"code":"...", "message":"..."}} per PRD 5.7
+- Verified routing: handleTorrents (POST/GET), handleTorrentByID (dynamic path parsing with nested routes for actions)
+- Added 18 new use case tests in control_torrent_test.go:
+  - StartTorrent: engine error, repo update error, repo get error (3 new)
+  - StopTorrent: not found, repo get error, engine error, repo update error, engine-not-found-ignored (5 new)
+  - DeleteTorrent: keep files, not found, repo get error, engine-not-found-ignored, engine error, repo delete error, nil engine, path traversal (3 sub-cases: parent escape, empty path, platform-aware absolute path), empty data dir, missing file ignored, multiple files (10 new)
+- Added 20 new use case tests in create_torrent_test.go:
+  - CreateTorrent: pending when no files, custom name override, whitespace-only source, already-exists returns existing, concurrent duplicate (ErrAlreadyExists → re-fetch) (5 new)
+  - Helper function tests: validateSource (both set, neither set), sumFileLengths (4 cases), deriveName (6 cases), parseInfoHash (6 cases) (5 test functions, 18 sub-cases)
+- Added 30+ new handler tests in server_test.go:
+  - Method routing: /torrents method not allowed, /torrents/{id} POST not allowed (2 new)
+  - Create handler: engine error, bad JSON (2 new)
+  - Delete handler: not found, engine error (2 new)
+  - List handler: invalid sortBy/sortOrder/limit/offset, limit clamped to 1000, no repo, sort by progress (7 new)
+  - Bulk operations: stop, delete, too many IDs (>100), empty IDs, invalid JSON, method not allowed, unknown action, partial failure with empty ID (8 new)
+  - Utility functions: progressRatio (6 cases), parseBoolQuery (5 cases), parseStatus (7 cases), isAllowedSortBy (9 cases), parseCommaSeparated (7 cases), parseSortOrder (5 cases) (6 test functions)
+  - Tags: not found, bad JSON (2 new)
+  - Route edge cases: empty torrent ID, unknown action (2 new)
+- go vet ./... — clean, zero warnings
+- go build ./cmd/server/ — success
+- go test ./... — all 8 test packages pass (0 failures)
+**Issues found:**
+- None. Implementation was fully complete; comprehensive tests were missing.
+**Notes for next session:**
+- T-010 is done and unblocks: T-011 (list view modes, medium), T-012 (torrent lifecycle, high, deps: T-007 ✅, T-010 ✅), T-013 (bulk operations, medium, deps: T-012)
+- T-003, T-004, T-006, T-007, T-010 all done. Next tasks with all deps satisfied:
+  - T-015 (SlidingPriorityReader, critical, deps: T-004 ✅)
+  - T-012 (torrent lifecycle start/stop/focus, high, deps: T-007 ✅, T-010 ✅) — NOW UNBLOCKED
+  - T-008 (FFprobe adapter, high, deps: T-004 ✅) — needed by T-021 and T-022
+  - T-011 (list view modes, medium, deps: T-010 ✅) — NOW UNBLOCKED
+  - T-005 (middleware, medium, deps: T-003 ✅)
+  - T-009 (settings repos, medium, deps: T-004 ✅)
+- Recommend T-015 next as it is critical priority and standalone, or T-012 as it is high priority and now fully unblocked

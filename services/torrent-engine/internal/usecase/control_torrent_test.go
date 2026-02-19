@@ -156,6 +156,41 @@ func TestStartTorrentNotFound(t *testing.T) {
 	}
 }
 
+func TestStartTorrentEngineError(t *testing.T) {
+	engine := &fakeControlEngine{startErr: errors.New("engine broke")}
+	repo := &fakeControlRepo{
+		get: domain.TorrentRecord{ID: "t1", Status: domain.TorrentStopped},
+	}
+	uc := StartTorrent{Engine: engine, Repo: repo, Now: func() time.Time { return time.Unix(0, 0) }}
+
+	_, err := uc.Execute(context.Background(), "t1")
+	if !errors.Is(err, ErrEngine) {
+		t.Fatalf("expected engine error, got %v", err)
+	}
+}
+
+func TestStartTorrentRepoUpdateError(t *testing.T) {
+	engine := &fakeControlEngine{}
+	repo := &fakeControlRepo{
+		get:       domain.TorrentRecord{ID: "t1", Status: domain.TorrentStopped},
+		updateErr: errors.New("update failed"),
+	}
+	uc := StartTorrent{Engine: engine, Repo: repo, Now: func() time.Time { return time.Unix(0, 0) }}
+
+	_, err := uc.Execute(context.Background(), "t1")
+	if !errors.Is(err, ErrRepository) {
+		t.Fatalf("expected repo error, got %v", err)
+	}
+}
+
+func TestStartTorrentRepoGetError(t *testing.T) {
+	uc := StartTorrent{Engine: &fakeControlEngine{}, Repo: &fakeControlRepo{getErr: errors.New("db down")}}
+	_, err := uc.Execute(context.Background(), "t1")
+	if !errors.Is(err, ErrRepository) {
+		t.Fatalf("expected repo error, got %v", err)
+	}
+}
+
 func TestStopTorrent(t *testing.T) {
 	now := time.Date(2026, 2, 10, 13, 0, 0, 0, time.UTC)
 	engine := &fakeControlEngine{}
@@ -179,6 +214,66 @@ func TestStopTorrent(t *testing.T) {
 	}
 	if record.UpdatedAt != now {
 		t.Fatalf("updatedAt not set")
+	}
+}
+
+func TestStopTorrentNotFound(t *testing.T) {
+	uc := StopTorrent{Engine: &fakeControlEngine{}, Repo: &fakeControlRepo{getErr: domain.ErrNotFound}}
+	_, err := uc.Execute(context.Background(), "t1")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("expected not found, got %v", err)
+	}
+}
+
+func TestStopTorrentRepoGetError(t *testing.T) {
+	uc := StopTorrent{Engine: &fakeControlEngine{}, Repo: &fakeControlRepo{getErr: errors.New("db down")}}
+	_, err := uc.Execute(context.Background(), "t1")
+	if !errors.Is(err, ErrRepository) {
+		t.Fatalf("expected repo error, got %v", err)
+	}
+}
+
+func TestStopTorrentEngineError(t *testing.T) {
+	engine := &fakeControlEngine{stopErr: errors.New("engine broke")}
+	repo := &fakeControlRepo{
+		get: domain.TorrentRecord{ID: "t1", Status: domain.TorrentActive},
+	}
+	uc := StopTorrent{Engine: engine, Repo: repo, Now: func() time.Time { return time.Unix(0, 0) }}
+
+	_, err := uc.Execute(context.Background(), "t1")
+	if !errors.Is(err, ErrEngine) {
+		t.Fatalf("expected engine error, got %v", err)
+	}
+}
+
+func TestStopTorrentRepoUpdateError(t *testing.T) {
+	engine := &fakeControlEngine{}
+	repo := &fakeControlRepo{
+		get:       domain.TorrentRecord{ID: "t1", Status: domain.TorrentActive},
+		updateErr: errors.New("update failed"),
+	}
+	uc := StopTorrent{Engine: engine, Repo: repo, Now: func() time.Time { return time.Unix(0, 0) }}
+
+	_, err := uc.Execute(context.Background(), "t1")
+	if !errors.Is(err, ErrRepository) {
+		t.Fatalf("expected repo error, got %v", err)
+	}
+}
+
+func TestStopTorrentEngineNotFoundIgnored(t *testing.T) {
+	now := time.Date(2026, 2, 10, 13, 0, 0, 0, time.UTC)
+	engine := &fakeControlEngine{stopErr: domain.ErrNotFound}
+	repo := &fakeControlRepo{
+		get: domain.TorrentRecord{ID: "t1", Status: domain.TorrentActive},
+	}
+	uc := StopTorrent{Engine: engine, Repo: repo, Now: func() time.Time { return now }}
+
+	record, err := uc.Execute(context.Background(), "t1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if record.Status != domain.TorrentStopped {
+		t.Fatalf("status = %q", record.Status)
 	}
 }
 
@@ -213,5 +308,213 @@ func TestDeleteTorrentRemovesFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("file not removed")
+	}
+}
+
+func TestDeleteTorrentKeepFiles(t *testing.T) {
+	dir := t.TempDir()
+	rel := "video.mp4"
+	path := filepath.Join(dir, rel)
+	if err := os.WriteFile(path, []byte("data"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	engine := &fakeControlEngine{}
+	repo := &fakeControlRepo{
+		get: domain.TorrentRecord{
+			ID:    "t1",
+			Files: []domain.FileRef{{Index: 0, Path: rel, Length: 4}},
+		},
+	}
+	uc := DeleteTorrent{Engine: engine, Repo: repo, DataDir: dir}
+
+	if err := uc.Execute(context.Background(), "t1", false); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if repo.deleteCalls != 1 {
+		t.Fatalf("repo delete not called")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("file should not be removed: %v", err)
+	}
+}
+
+func TestDeleteTorrentNotFound(t *testing.T) {
+	uc := DeleteTorrent{
+		Engine: &fakeControlEngine{},
+		Repo:   &fakeControlRepo{getErr: domain.ErrNotFound},
+	}
+	err := uc.Execute(context.Background(), "t1", false)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("expected not found, got %v", err)
+	}
+}
+
+func TestDeleteTorrentRepoGetError(t *testing.T) {
+	uc := DeleteTorrent{
+		Engine: &fakeControlEngine{},
+		Repo:   &fakeControlRepo{getErr: errors.New("db down")},
+	}
+	err := uc.Execute(context.Background(), "t1", false)
+	if !errors.Is(err, ErrRepository) {
+		t.Fatalf("expected repo error, got %v", err)
+	}
+}
+
+func TestDeleteTorrentEngineNotFoundIgnored(t *testing.T) {
+	engine := &fakeControlEngine{removeErr: domain.ErrNotFound}
+	repo := &fakeControlRepo{
+		get: domain.TorrentRecord{ID: "t1"},
+	}
+	uc := DeleteTorrent{Engine: engine, Repo: repo}
+
+	if err := uc.Execute(context.Background(), "t1", false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if engine.removeCalled != 1 {
+		t.Fatalf("engine remove not called")
+	}
+	if repo.deleteCalls != 1 {
+		t.Fatalf("repo delete not called")
+	}
+}
+
+func TestDeleteTorrentEngineError(t *testing.T) {
+	engine := &fakeControlEngine{removeErr: errors.New("engine broke")}
+	repo := &fakeControlRepo{
+		get: domain.TorrentRecord{ID: "t1"},
+	}
+	uc := DeleteTorrent{Engine: engine, Repo: repo}
+
+	err := uc.Execute(context.Background(), "t1", false)
+	if !errors.Is(err, ErrEngine) {
+		t.Fatalf("expected engine error, got %v", err)
+	}
+}
+
+func TestDeleteTorrentRepoDeleteError(t *testing.T) {
+	engine := &fakeControlEngine{}
+	repo := &fakeControlRepo{
+		get:       domain.TorrentRecord{ID: "t1"},
+		deleteErr: errors.New("delete failed"),
+	}
+	uc := DeleteTorrent{Engine: engine, Repo: repo}
+
+	err := uc.Execute(context.Background(), "t1", false)
+	if !errors.Is(err, ErrRepository) {
+		t.Fatalf("expected repo error, got %v", err)
+	}
+}
+
+func TestDeleteTorrentNilEngine(t *testing.T) {
+	repo := &fakeControlRepo{
+		get: domain.TorrentRecord{ID: "t1"},
+	}
+	uc := DeleteTorrent{Engine: nil, Repo: repo}
+
+	if err := uc.Execute(context.Background(), "t1", false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if repo.deleteCalls != 1 {
+		t.Fatalf("repo delete not called")
+	}
+}
+
+func TestDeleteTorrentPathTraversal(t *testing.T) {
+	dir := t.TempDir()
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{"parent_escape", "../../../etc/passwd"},
+		{"empty_path", "  "},
+	}
+
+	// Platform-specific absolute path test
+	if filepath.IsAbs("C:\\Windows\\System32") {
+		tests = append(tests, struct {
+			name string
+			path string
+		}{"absolute_path_win", "C:\\Windows\\System32\\file"})
+	} else {
+		tests = append(tests, struct {
+			name string
+			path string
+		}{"absolute_path_unix", "/etc/passwd"})
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeControlRepo{
+				get: domain.TorrentRecord{
+					ID:    "t1",
+					Files: []domain.FileRef{{Index: 0, Path: tt.path, Length: 1}},
+				},
+			}
+			uc := DeleteTorrent{Engine: &fakeControlEngine{}, Repo: repo, DataDir: dir}
+
+			err := uc.Execute(context.Background(), "t1", true)
+			if err == nil {
+				t.Fatalf("expected error for path %q, got nil", tt.path)
+			}
+		})
+	}
+}
+
+func TestDeleteTorrentEmptyDataDir(t *testing.T) {
+	repo := &fakeControlRepo{
+		get: domain.TorrentRecord{
+			ID:    "t1",
+			Files: []domain.FileRef{{Index: 0, Path: "video.mp4", Length: 1}},
+		},
+	}
+	uc := DeleteTorrent{Engine: &fakeControlEngine{}, Repo: repo, DataDir: ""}
+
+	err := uc.Execute(context.Background(), "t1", true)
+	if err == nil {
+		t.Fatalf("expected error for empty DataDir")
+	}
+}
+
+func TestDeleteTorrentMissingFileIgnored(t *testing.T) {
+	dir := t.TempDir()
+	repo := &fakeControlRepo{
+		get: domain.TorrentRecord{
+			ID:    "t1",
+			Files: []domain.FileRef{{Index: 0, Path: "nonexistent.mp4", Length: 1}},
+		},
+	}
+	uc := DeleteTorrent{Engine: &fakeControlEngine{}, Repo: repo, DataDir: dir}
+
+	if err := uc.Execute(context.Background(), "t1", true); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDeleteTorrentMultipleFiles(t *testing.T) {
+	dir := t.TempDir()
+	goodFile := "good.mp4"
+	goodPath := filepath.Join(dir, goodFile)
+	if err := os.WriteFile(goodPath, []byte("data"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	repo := &fakeControlRepo{
+		get: domain.TorrentRecord{
+			ID: "t1",
+			Files: []domain.FileRef{
+				{Index: 0, Path: goodFile, Length: 4},
+				{Index: 1, Path: "nonexistent.mp4", Length: 1},
+			},
+		},
+	}
+	uc := DeleteTorrent{Engine: &fakeControlEngine{}, Repo: repo, DataDir: dir}
+
+	if err := uc.Execute(context.Background(), "t1", true); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := os.Stat(goodPath); !os.IsNotExist(err) {
+		t.Fatalf("file should be removed")
 	}
 }

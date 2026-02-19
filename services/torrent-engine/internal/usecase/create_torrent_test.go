@@ -268,3 +268,206 @@ func TestCreateTorrentInfoHashFallback(t *testing.T) {
 		t.Fatalf("InfoHash = %q", got.InfoHash)
 	}
 }
+
+func TestCreateTorrentPendingWhenNoFiles(t *testing.T) {
+	session := &fakeSession{id: "t1", files: nil}
+	engine := &fakeEngine{returnedSession: session}
+	repo := &fakeRepo{}
+	now := time.Date(2026, 2, 6, 12, 0, 0, 0, time.UTC)
+	uc := CreateTorrent{Engine: engine, Repo: repo, Now: func() time.Time { return now }}
+
+	got, err := uc.Execute(context.Background(), CreateTorrentInput{Source: domain.TorrentSource{Magnet: "magnet:?xt=urn:btih:abc"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Status != domain.TorrentPending {
+		t.Fatalf("Status = %q, want pending", got.Status)
+	}
+	// Session.Start() should NOT be called when no files available
+	if session.stopCnt != 0 {
+		t.Fatalf("session should not be stopped")
+	}
+}
+
+func TestCreateTorrentCustomName(t *testing.T) {
+	files := []domain.FileRef{{Index: 0, Path: "Sintel/Sintel.mp4", Length: 10}}
+	session := &fakeSession{id: "t1", files: files}
+	engine := &fakeEngine{returnedSession: session}
+	repo := &fakeRepo{}
+	now := time.Date(2026, 2, 6, 12, 0, 0, 0, time.UTC)
+	uc := CreateTorrent{Engine: engine, Repo: repo, Now: func() time.Time { return now }}
+
+	got, err := uc.Execute(context.Background(), CreateTorrentInput{
+		Source: domain.TorrentSource{Magnet: "magnet:?xt=urn:btih:abc"},
+		Name:   "My Custom Torrent",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Name != "My Custom Torrent" {
+		t.Fatalf("Name = %q, want My Custom Torrent", got.Name)
+	}
+}
+
+func TestCreateTorrentWhitespaceSource(t *testing.T) {
+	uc := CreateTorrent{Engine: &fakeEngine{}, Repo: &fakeRepo{}, Now: func() time.Time { return time.Unix(0, 0).UTC() }}
+
+	_, err := uc.Execute(context.Background(), CreateTorrentInput{Source: domain.TorrentSource{Magnet: "   "}})
+	if !errors.Is(err, ErrInvalidSource) {
+		t.Fatalf("expected ErrInvalidSource for whitespace-only magnet, got %v", err)
+	}
+}
+
+type fakeRepoWithGet struct {
+	fakeRepo
+	getRecord domain.TorrentRecord
+	getErr    error
+}
+
+func (r *fakeRepoWithGet) Get(ctx context.Context, id domain.TorrentID) (domain.TorrentRecord, error) {
+	if r.getErr != nil {
+		return domain.TorrentRecord{}, r.getErr
+	}
+	return r.getRecord, nil
+}
+
+func TestCreateTorrentAlreadyExistsReturnsExisting(t *testing.T) {
+	existing := domain.TorrentRecord{ID: "t1", Name: "Existing", Status: domain.TorrentActive}
+	session := &fakeSession{id: "t1", files: []domain.FileRef{{Index: 0, Path: "f.mp4", Length: 1}}}
+	engine := &fakeEngine{returnedSession: session}
+	repo := &fakeRepoWithGet{getRecord: existing}
+	now := time.Date(2026, 2, 6, 12, 0, 0, 0, time.UTC)
+	uc := CreateTorrent{Engine: engine, Repo: repo, Now: func() time.Time { return now }}
+
+	got, err := uc.Execute(context.Background(), CreateTorrentInput{Source: domain.TorrentSource{Magnet: "magnet:?xt=urn:btih:abc"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ID != "t1" || got.Name != "Existing" {
+		t.Fatalf("expected existing record, got %+v", got)
+	}
+	// Repo.Create should not be called since the record already exists
+	if repo.createCalled != 0 {
+		t.Fatalf("expected repo.Create not called, got %d", repo.createCalled)
+	}
+}
+
+func TestCreateTorrentConcurrentDuplicate(t *testing.T) {
+	existing := domain.TorrentRecord{ID: "t1", Name: "Concurrent", Status: domain.TorrentActive}
+	session := &fakeSession{id: "t1", files: []domain.FileRef{{Index: 0, Path: "f.mp4", Length: 1}}}
+	engine := &fakeEngine{returnedSession: session}
+
+	// Repo.Get returns not found first (so Create is attempted), but Create fails with AlreadyExists
+	// and then re-fetch succeeds
+	repo := &fakeRepoConcurrent{
+		fakeRepo:    fakeRepo{createErr: domain.ErrAlreadyExists},
+		getErrFirst: errors.New("not found"),
+		getRecord:   existing,
+	}
+	now := time.Date(2026, 2, 6, 12, 0, 0, 0, time.UTC)
+	uc := CreateTorrent{Engine: engine, Repo: repo, Now: func() time.Time { return now }}
+
+	got, err := uc.Execute(context.Background(), CreateTorrentInput{Source: domain.TorrentSource{Magnet: "magnet:?xt=urn:btih:abc"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ID != "t1" || got.Name != "Concurrent" {
+		t.Fatalf("expected re-fetched record, got %+v", got)
+	}
+}
+
+type fakeRepoConcurrent struct {
+	fakeRepo
+	getErrFirst error
+	getRecord   domain.TorrentRecord
+	getCalled   int
+}
+
+func (r *fakeRepoConcurrent) Get(ctx context.Context, id domain.TorrentID) (domain.TorrentRecord, error) {
+	r.getCalled++
+	if r.getCalled == 1 && r.getErrFirst != nil {
+		return domain.TorrentRecord{}, r.getErrFirst
+	}
+	return r.getRecord, nil
+}
+
+func TestValidateSourceBothSet(t *testing.T) {
+	err := validateSource(domain.TorrentSource{Magnet: "m", Torrent: "t"})
+	if !errors.Is(err, ErrInvalidSource) {
+		t.Fatalf("expected ErrInvalidSource, got %v", err)
+	}
+}
+
+func TestValidateSourceNeitherSet(t *testing.T) {
+	err := validateSource(domain.TorrentSource{})
+	if !errors.Is(err, ErrInvalidSource) {
+		t.Fatalf("expected ErrInvalidSource, got %v", err)
+	}
+}
+
+func TestSumFileLengths(t *testing.T) {
+	tests := []struct {
+		name  string
+		files []domain.FileRef
+		want  int64
+	}{
+		{"nil", nil, 0},
+		{"empty", []domain.FileRef{}, 0},
+		{"single", []domain.FileRef{{Length: 100}}, 100},
+		{"multiple", []domain.FileRef{{Length: 100}, {Length: 200}, {Length: 50}}, 350},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sumFileLengths(tt.files)
+			if got != tt.want {
+				t.Fatalf("got %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDeriveName(t *testing.T) {
+	tests := []struct {
+		name  string
+		files []domain.FileRef
+		want  string
+	}{
+		{"nil_files", nil, ""},
+		{"empty_files", []domain.FileRef{}, ""},
+		{"single_file", []domain.FileRef{{Path: "movie.mp4"}}, "movie.mp4"},
+		{"nested_path", []domain.FileRef{{Path: "Sintel/Sintel.mp4"}}, "Sintel"},
+		{"windows_path", []domain.FileRef{{Path: "Sintel\\Sintel.mp4"}}, "Sintel"},
+		{"empty_path", []domain.FileRef{{Path: ""}}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deriveName(tt.files)
+			if got != tt.want {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseInfoHash(t *testing.T) {
+	tests := []struct {
+		name   string
+		magnet string
+		want   domain.InfoHash
+	}{
+		{"empty", "", ""},
+		{"no_xt", "magnet:?dn=Sintel", ""},
+		{"valid", "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel", "08ada5a7a6183aae1e09d831df6748d566095a10"},
+		{"no_dn", "magnet:?xt=urn:btih:abc123", "abc123"},
+		{"case_insensitive", "magnet:?XT=URN:BTIH:ABC123&dn=test", "ABC123"},
+		{"whitespace", "  magnet:?xt=urn:btih:abc  ", "abc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseInfoHash(tt.magnet)
+			if got != tt.want {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
