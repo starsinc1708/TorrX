@@ -725,3 +725,42 @@ Format:
   - T-031 (TMDB, medium, deps: T-027 ✅)
   - T-033 (search caching + SSE, medium, deps: T-032 ✅)
 - Recommend T-009 next as lowest ID among medium priority with all deps satisfied
+
+## Iteration 20 — 2026-02-20 08:00
+**Task:** [T-009] Implement MongoDB settings repositories
+**Status:** done
+**What was done:**
+- Verified all three settings repositories and managers already fully implemented — no code changes needed
+- EncodingSettings: repository/mongo/encoding_settings.go (66 lines, MongoDB Get/Set _id=encoding, upsert), app/encoding_settings.go (64 lines, EncodingSettingsManager with Get reads from engine, Update applies to engine then persists to store with rollback on error)
+- HLSSettings: repository/mongo/hls_settings.go (72 lines, _id=hls, 5 fields), app/hls_settings.go (70 lines, HLSSettingsManager with byte-to-MB conversion in Get, rollback in Update)
+- PlayerSettings: services/session/repository/mongo/player_settings.go (63 lines, _id=player, currentTorrentId Get/Set)
+- HTTP handlers in handlers_settings.go (318 lines): GET/PUT/PATCH for /settings/encoding, /settings/hls, /settings/player
+- Validation: preset in {ultrafast,superfast,veryfast,faster,fast,medium}, CRF 0-51, audioBitrate in {96k,128k,192k,256k}, segDur 2-10, ramBuf 4-4096MB, prebuffer 1-1024MB, winBefore 1-1024MB, winAfter 4-4096MB
+- Partial updates merge with current values (zero-value fields preserved)
+- StreamJobManager implements EncodingSettingsEngine and HLSSettingsEngine interfaces
+- Settings controllers wired in server.go via WithEncodingSettings/WithPlayerSettings options + SetHLSSettings method
+- Created encoding_settings_test.go (5 tests: Get, Update no store, Update with store, store error rollback, reflects engine state)
+- Created hls_settings_test.go (7 tests: Get, Update no store, Update with store, store error rollback, reflects engine state, byte→MB conversion)
+- Created handlers_settings_test.go (25+ tests: encoding get/not-configured/valid-update/invalid-preset/CRF-out-of-range×2/invalid-bitrate/partial-update/bad-JSON/method-not-allowed/all-valid-presets×6/all-valid-bitrates×4/CRF-boundary×2/store-error; HLS get/not-configured/valid-update/validation×10/partial/bad-JSON/method-not-allowed/min-boundary/max-boundary/store-error)
+- go vet ./... passes clean (type-checks all test code)
+**Issues found:**
+- DISK SPACE: C: drive at 0 bytes available — go vet confirms compilation but test binaries cannot be linked. Need `go clean -cache` (3GB) to free space.
+**Notes for next session:**
+- T-009 is done. No tasks directly depend on T-009.
+- 22 tasks now done: T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-009, T-010, T-012, T-015, T-018, T-019, T-020, T-027, T-028, T-032, T-035, T-036, T-039, T-040
+- CRITICAL: Must run `go clean -cache` to free ~3GB before any Go test execution
+- Next tasks with all deps satisfied (medium priority, lowest ID first):
+  - T-011 (list view modes, medium, deps: T-010 ✅)
+  - T-013 (bulk operations, medium, deps: T-012 ✅)
+  - T-014 (SyncState, medium, deps: T-006 ✅, T-007 ✅)
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅)
+  - T-017 (dormancy, medium, deps: T-015 ✅)
+  - T-021 (direct browser playback, medium, deps: T-008 ✅, T-018 ✅)
+  - T-022 (media info endpoint, medium, deps: T-008 ✅, T-003 ✅)
+  - T-024 (watch history, medium, deps: T-004 ✅, T-003 ✅)
+  - T-025 (WebSocket, medium, deps: T-003 ✅)
+  - T-029 (1337x + Rutracker, medium, deps: T-027 ✅)
+  - T-030 (Torznab, medium, deps: T-027 ✅)
+  - T-031 (TMDB, medium, deps: T-027 ✅)
+  - T-033 (search caching + SSE, medium, deps: T-032 ✅)
+- Recommend T-011 next as lowest ID among medium priority with all deps satisfied

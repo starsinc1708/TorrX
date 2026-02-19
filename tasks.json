@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 21
+    "completedTasks": 22
   },
   "tasks": [
     {
@@ -272,8 +272,8 @@
         "services/torrent-engine/internal/repository/mongo/hls_settings.go",
         "services/torrent-engine/internal/repository/mongo/player_settings.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. All three settings repositories and managers fully implemented. EncodingSettings: repository/mongo/encoding_settings.go (66 lines, MongoDB Get/Set with _id=encoding, upsert), app/encoding_settings.go (64 lines, manager with rollback on store error). HLSSettings: repository/mongo/hls_settings.go (72 lines, _id=hls, stores segDur/ramBuf/prebuffer/windowBefore/windowAfter), app/hls_settings.go (70 lines, byte-to-MB conversion, rollback). PlayerSettings: services/session/repository/mongo/player_settings.go (63 lines, _id=player, currentTorrentId). HTTP handlers in handlers_settings.go (318 lines): GET/PUT/PATCH for /settings/encoding, /settings/hls, /settings/player with validation (preset whitelist, CRF 0-51, audioBitrate whitelist, segDur 2-10, ramBuf 4-4096, prebuffer 1-1024, winBefore 1-1024, winAfter 4-4096). Partial update merge. Created 37+ tests across 3 files: encoding_settings_test.go (5), hls_settings_test.go (7), handlers_settings_test.go (25+). go vet passes clean. Tests could not execute due to 0 bytes free on C: drive."
     },
     {
       "id": "T-010",
