@@ -376,6 +376,41 @@ func TestListTorrentsFull(t *testing.T) {
 	}
 }
 
+func TestListTorrentsCompactViewAlias(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC)
+	repo := &fakeRepo{
+		list: []domain.TorrentRecord{
+			{ID: "t1", Name: "Sintel", Status: domain.TorrentActive, TotalBytes: 100, DoneBytes: 25, CreatedAt: now, UpdatedAt: now},
+		},
+	}
+	server := NewServer(&fakeCreateTorrent{}, WithRepository(repo))
+
+	req := httptest.NewRequest(http.MethodGet, "/torrents?view=compact", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	var resp struct {
+		Items []struct {
+			ID       string  `json:"id"`
+			Progress float64 `json:"progress"`
+		} `json:"items"`
+		Count int `json:"count"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Count != 1 || len(resp.Items) != 1 {
+		t.Fatalf("count/items mismatch: %+v", resp)
+	}
+	if resp.Items[0].ID != "t1" || resp.Items[0].Progress != 0.25 {
+		t.Fatalf("compact alias should return summary fields: %+v", resp.Items[0])
+	}
+}
+
 func TestListTorrentsStatusFilter(t *testing.T) {
 	repo := &fakeRepo{}
 	server := NewServer(&fakeCreateTorrent{}, WithRepository(repo))

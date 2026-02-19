@@ -153,7 +153,7 @@ func (s *Server) handleListTorrents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := strings.TrimSpace(r.URL.Query().Get("view"))
-	if view == "" {
+	if view == "" || view == "compact" {
 		view = "summary"
 	}
 	if view != "summary" && view != "full" {

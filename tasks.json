@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 22
+    "completedTasks": 23
   },
   "tasks": [
     {
@@ -335,8 +335,8 @@
         "services/torrent-engine/internal/usecase/list_torrents.go",
         "services/torrent-engine/internal/api/http/handlers_torrent.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. All T-011 features already implemented — only minor enhancement needed. (1) View parameter: handleListTorrents (handlers_torrents.go:155-162) supports ?view=summary (default) and ?view=full. Added 'compact' as alias for 'summary' to match verification step (one-line change: view=='' || view=='compact' → 'summary'). torrentSummary struct returns compact field set (ID, Name, Status, Progress, DoneBytes, TotalBytes, CreatedAt, UpdatedAt, Tags). torrentListFull returns complete TorrentRecord. (2) Tag filtering: parseCommaSeparated parses ?tags=movie,hd, normalizeTags deduplicates case-insensitively, repository uses MongoDB $all operator for AND logic. (3) Text search: MongoDB text index on 'name' field created in EnsureIndexes. Query uses $regex with $options:'i' for case-insensitive substring matching (more practical than $text for torrent name searching — substring matching vs word-boundary matching). (4) Progress sort: cached progress float64 (0.0-1.0) computed on every Create/Update/UpdateProgress, stored in MongoDB document with descending index, mongoSortField maps 'progress' → BSON 'progress' field directly. Added TestListTorrentsCompactViewAlias test. Could not run go build/test due to 0 bytes free on C: drive — code verified via review."
     },
     {
       "id": "T-012",

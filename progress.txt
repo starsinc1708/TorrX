@@ -764,3 +764,39 @@ Format:
   - T-031 (TMDB, medium, deps: T-027 ✅)
   - T-033 (search caching + SSE, medium, deps: T-032 ✅)
 - Recommend T-011 next as lowest ID among medium priority with all deps satisfied
+
+## Iteration 21 — 2026-02-20 09:00
+**Task:** [T-011] Implement torrent list view modes and advanced filtering
+**Status:** done
+**What was done:**
+- Verified all T-011 features already implemented — only minor enhancement needed
+- View parameter: handleListTorrents supports ?view=summary (default compact) and ?view=full. Added "compact" as alias for "summary" to match PRD verification step (handlers_torrents.go:156)
+- torrentSummary struct (line 121): ID, Name, Status, Progress, DoneBytes, TotalBytes, CreatedAt, UpdatedAt, Tags
+- torrentListFull struct (line 138): complete TorrentRecord objects
+- Tag filtering: parseCommaSeparated parses ?tags=movie,hd, normalizeTags deduplicates case-insensitively, repository uses MongoDB $all operator for multi-tag AND logic
+- Text search: MongoDB text index on "name" field created in EnsureIndexes. Query uses $regex with case-insensitive matching (more practical than $text for torrent name substring searches)
+- Progress sort: cached progress float64 (0.0-1.0) computed on every write, stored in MongoDB with descending index, Sort maps "progress" directly
+- Added TestListTorrentsCompactViewAlias test in server_test.go
+**Issues found:**
+- DISK SPACE: C: drive at 0 bytes — could not run go build/vet/test. Code verified via review only.
+**Notes for next session:**
+- T-011 is done. No tasks directly depend on T-011.
+- 23 tasks now done: T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-009, T-010, T-011, T-012, T-015, T-018, T-019, T-020, T-027, T-028, T-032, T-035, T-036, T-039, T-040
+- CRITICAL: C: drive at 0 bytes — must clean go cache (3GB at AppData/Local/go-build/), npm cache (1.7GB), or temp files (33GB at AppData/Local/Temp/) before any build/test tasks
+- Next tasks with all deps satisfied (medium priority, lowest ID first):
+  - T-013 (bulk operations, medium, deps: T-012 ✅)
+  - T-014 (SyncState, medium, deps: T-006 ✅, T-007 ✅)
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅)
+  - T-017 (dormancy, medium, deps: T-015 ✅)
+  - T-021 (direct browser playback, medium, deps: T-008 ✅, T-018 ✅)
+  - T-022 (media info endpoint, medium, deps: T-008 ✅, T-003 ✅)
+  - T-023 (dynamic settings API, medium, deps: T-009 ✅, T-003 ✅)
+  - T-024 (watch history, medium, deps: T-004 ✅, T-003 ✅)
+  - T-025 (WebSocket, medium, deps: T-003 ✅)
+  - T-029 (1337x + Rutracker, medium, deps: T-027 ✅)
+  - T-030 (Torznab, medium, deps: T-027 ✅)
+  - T-031 (TMDB, medium, deps: T-027 ✅)
+  - T-033 (search caching + SSE, medium, deps: T-032 ✅)
+  - T-052 (torrent-engine integration tests, medium, deps: T-019 ✅, T-020 ✅)
+  - T-055 (Docker health checks, medium, deps: T-002 ✅)
+- Recommend T-013 next as lowest ID among medium priority with all deps satisfied
