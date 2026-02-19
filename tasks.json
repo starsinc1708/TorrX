@@ -185,8 +185,8 @@
         "services/torrent-engine/internal/repository/mongo/torrent_repository.go",
         "services/torrent-engine/internal/repository/mongo/torrent_repository_test.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-19. All 8 TorrentRepository port methods implemented (Create, Update, UpdateProgress, Get, List, GetMany, Delete, UpdateTags). Implementation in repository/mongo/repository.go with BSON document models, toDoc/fromDoc conversion, normalizeTags dedup, mongoSortField mapping, progressOfRecord calculation. EnsureIndexes creates 5 indexes: text on name, tags, createdAt, updatedAt, progress. UpdateProgress uses atomic $max on doneBytes to prevent concurrent regression. List supports status filter, case-insensitive regex search (with QuoteMeta for special chars), multi-tag AND filter, sort by name/createdAt/updatedAt/totalBytes/progress, pagination via limit/offset. Interface compliance verified at compile time. 42 unit tests (table-driven): toDoc/fromDoc roundtrip (4 cases), toDoc progress calculation (5 cases), toUpdateDoc (3 cases), normalizeTags (9 cases), mongoSortField (8 cases), progressOfRecord (6 cases), timeFromUnix (3 cases), fromDocs (2 cases), BSON serialization (2 cases). 31 integration tests against MongoDB: Create/CreateDuplicate, Get/GetNotFound, Update/UpdateNotFound, UpdateProgress forward/$max regression/higher/NotFound/WithFiles, Delete/DeleteNotFound, ListAll, ListFilterStatus, ListSearch/CaseInsensitive/SpecialChars, ListFilterTags (single + multi-AND), ListSortByName/Progress/DefaultDesc, ListPagination, ListCombinedFilters, ListUnknownSortFallback, GetMany/Empty/PartialMatch, UpdateTags/NotFound/Normalized, EnsureIndexes idempotency + index verification, UpdateProgressCachesProgressField. go vet clean, go test ./... all pass."
     },
     {
       "id": "T-007",

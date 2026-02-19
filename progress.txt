@@ -116,3 +116,50 @@ Format:
   - T-009 (settings repos, medium, deps: T-004 ✅)
 - T-010 (torrent CRUD, critical) needs T-003 ✅, T-006 ❌, T-007 ✅ — T-006 is the remaining blocker
 - Recommend T-006 (MongoDB repo) next to unblock T-010, or T-015 (SlidingPriorityReader) as standalone critical task
+
+## Iteration 4 — 2026-02-19 18:00
+**Task:** [T-006] Implement MongoDB torrent repository adapter
+**Status:** done
+**What was done:**
+- Verified all 8 TorrentRepository port methods already implemented: Create, Update, UpdateProgress, Get, List, GetMany, Delete, UpdateTags
+- Verified compile-time interface compliance check in interface_test.go
+- Verified implementation details: BSON document models (torrentDoc, torrentUpdateDoc, fileDoc), toDoc/fromDoc conversion, normalizeTags case-insensitive dedup, mongoSortField mapping, progressOfRecord calculation, cached progress field (0.0-1.0) for efficient DB sorting
+- Verified EnsureIndexes creates all 5 PRD indexes: text on name, tags, createdAt, updatedAt, progress
+- Verified UpdateProgress uses atomic $max on doneBytes to prevent concurrent regression
+- Verified List supports status filter, case-insensitive regex search (QuoteMeta for special chars), multi-tag AND filter ($all), sort by name/createdAt/updatedAt/totalBytes/progress, pagination via limit/offset
+- Wrote 42 unit tests (table-driven, no MongoDB required):
+  - TestToDocFromDocRoundtrip: full field roundtrip
+  - TestToDocWithTorrentFileSource: .torrent source path
+  - TestToDocEmptyFiles: empty files slice
+  - TestToDocProgress: 5 cases (zero total, zero done, half, complete, large file)
+  - TestToUpdateDocOmitsID: _id excluded from update doc
+  - TestToUpdateDocPreservesProgress: progress calculation
+  - TestToUpdateDocAllFieldsPresent: all 11 required fields
+  - TestNormalizeTags: 9 cases (nil, empty, single, case-insensitive dedup, whitespace, empty removal, order, mixed, all-empty)
+  - TestMongoSortField: 8 cases (5 valid fields, unknown, empty, case-sensitive)
+  - TestProgressOfRecord: 6 cases (zero, negative, done, half, complete, overflow)
+  - TestTimeFromUnix: 3 cases (epoch, specific, recent)
+  - TestFromDocsEmpty, TestFromDocsMultiple: edge cases
+  - TestToDocBSONRoundtrip: BSON serialize/deserialize integrity
+  - TestToDocIDMappedTo_id: _id BSON tag mapping
+  - TestEnsureIndexesNilRepository, TestEnsureIndexesNilCollection: nil safety
+- Wrote 31 integration tests against real MongoDB (skip if unavailable):
+  - CRUD: Create, CreateDuplicate(ErrAlreadyExists), GetRoundtrip(all fields), GetNotFound, Update, UpdateNotFound, Delete, DeleteNotFound
+  - UpdateProgress: forward, $max regression (lower value preserved), higher value, NotFound, WithFiles, CachesProgressField
+  - List: All, FilterStatus, Search, SearchCaseInsensitive, SearchSpecialChars, FilterTags(single+multi-AND), SortByName, SortByProgress, SortDefaultDesc, Pagination, CombinedFilters, UnknownSortFieldFallsBack
+  - GetMany: normal, empty, partial match
+  - UpdateTags: normal, NotFound, Normalized
+  - EnsureIndexes: idempotency + 6 index verification
+- go vet clean, go test ./... all 8 test packages pass (0 failures)
+**Issues found:**
+- None. Implementation was fully complete; only comprehensive tests were missing.
+**Notes for next session:**
+- T-006 is done and unblocks: T-010 (torrent CRUD, critical, deps: T-003 ✅, T-006 ✅, T-007 ✅), T-014 (SyncState, medium)
+- T-003, T-004, T-006, T-007 all done. T-010 is now fully unblocked (all 3 deps satisfied)
+- Next critical tasks with all deps satisfied:
+  - T-010 (torrent CRUD vertical slice, critical, deps: T-003 ✅, T-006 ✅, T-007 ✅) — NOW UNBLOCKED
+  - T-015 (SlidingPriorityReader, critical, deps: T-004 ✅)
+  - T-008 (FFprobe adapter, high, deps: T-004 ✅) — needed by T-021 and T-022
+  - T-005 (middleware, medium, deps: T-003 ✅)
+  - T-009 (settings repos, medium, deps: T-004 ✅)
+- Recommend T-010 next as it is now fully unblocked and is the critical torrent CRUD vertical slice
