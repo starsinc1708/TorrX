@@ -356,3 +356,32 @@ Format:
   - T-016 (adaptive boosts, medium, deps: T-015 ✅)
   - T-017 (dormancy, medium, deps: T-015 ✅)
 - Recommend T-039 next as it is the remaining critical task with all deps satisfied
+
+## Iteration 10 — 2026-02-19 24:00
+**Task:** [T-039] Implement PlayerPage with core HLS.js video playback
+**Status:** done
+**What was done:**
+- Verified all 4 core files already fully implemented — no code changes needed
+- PlayerPage.tsx (601 lines): route /watch/:torrentId/:fileIndex?, auto-start + focus torrent, watch history resume (server + localStorage merge), torrent info dialog, files panel, player health polling
+- VideoPlayer.tsx (1628 lines): full HLS.js lifecycle (loadSource, attachMedia, MANIFEST_PARSED/LEVEL_SWITCHED/ERROR events), quality level tracking, error recovery with auto-retry, prebuffer phase integration, seek status overlay, auto-advance, keyboard shortcuts, watch position save, fullscreen, screenshot, auto-hide controls, timeline preview
+- VideoControls.tsx (384 lines): play/pause, prev/next file, skip ±10s, mute/volume, time display, Settings dropdown (audio/subtitle tracks), Speed dropdown (0.25x–2x), Quality dropdown (Auto + levels), Info, Screenshot, Fullscreen
+- useVideoPlayer.ts (747 lines): manages file selection, audio/subtitle tracks, media info polling, seek offset, prebuffer probe logic (direct → direct playback → HLS with retry), hlsSeekTo with debounce + soft/hard modes, track switch with HLS rebuild, fallback to HLS on decode errors
+- Ran npx tsc --noEmit — 0 errors
+- Ran npm run build — success (10.55s)
+**Issues found:**
+- None. Implementation was complete.
+**Notes for next session:**
+- T-039 is done. No more critical tasks remain with all deps satisfied.
+- 11 tasks now done: T-003, T-004, T-006, T-007, T-010, T-015, T-018, T-019, T-035, T-036, T-039
+- Next tasks with all deps satisfied:
+  - T-008 (FFprobe adapter, high, deps: T-004 ✅)
+  - T-012 (torrent lifecycle, high, deps: T-007 ✅, T-010 ✅)
+  - T-020 (HLS seek/watchdog, high, deps: T-019 ✅)
+  - T-027 (scaffold torrent-search, high, deps: [])
+  - T-005 (middleware, medium, deps: T-003 ✅)
+  - T-009 (settings repos, medium, deps: T-004 ✅)
+  - T-011 (list view modes, medium, deps: T-010 ✅)
+  - T-014 (SyncState, medium, deps: T-006 ✅, T-007 ✅)
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅)
+  - T-017 (dormancy, medium, deps: T-015 ✅)
+- Recommend T-008, T-012, or T-020 next as they are high priority with all deps satisfied
