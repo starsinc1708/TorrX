@@ -545,8 +545,8 @@
         "services/torrent-engine/internal/usecase/stream_torrent.go",
         "services/torrent-engine/internal/api/http/handlers_streaming.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-19. StreamTorrent use case fully implemented (253 lines): Execute() wraps reader in SlidingPriorityReader with 4-tier startup gradient, tail preload (16MB for MP4 moov/MKV headers), focus session for max bandwidth, priority window sizing (4× readahead, clamped [32MB,256MB], 1% scaling). ExecuteRaw() returns raw StreamReader without priority wrapper (for FSM-based streaming). Repo fallback: when engine session not found, loads from repository and opens new session via openSessionFromRecord(). Raw stream handler (handleStreamTorrent, 146 lines): fast path serves completed files from disk via http.ServeFile (kernel sendfile), slow path streams via use case with HTTP Range support (206 Partial Content, Content-Range headers), HEAD request support (headers only), Content-Type detection via mime.TypeByExtension + fallback map, Connection: close header, parseByteRange with suffix/open-end/multi-range rejection. Server wired via WithStreamTorrent() ServerOption. Added 22 new use case tests: nil engine, engine error, 7 repo fallback paths (success, not found, repo error, no repo, missing source, open error, start error with cleanup), nil reader, default readahead, 8 ExecuteRaw tests (success, nil engine, not found, repo fallback, invalid file index, nil reader, engine error, start error), streamPriorityWindow table-driven (6 cases), applyStartupGradient (2 cases: 4-band and small window). Added 15 new handler tests: HEAD request, content-type by extension (3 sub-tests), Connection: close, not configured (nil), nil reader, domain not found, range suffix, range open-end, malformed range, content-length, parseByteRange table-driven (17 cases), fallbackContentType table-driven (11 cases). go vet clean, go build clean, go test ./... all packages pass (0 failures)."
     },
     {
       "id": "T-019",
@@ -579,8 +579,8 @@
         "services/torrent-engine/internal/api/http/hls_types.go",
         "services/torrent-engine/internal/api/http/handlers_streaming.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-19. Implementation fully complete across 8 source files: hls_types.go (quality presets, computeVariants, profile hashing, playlist parsing, seek estimation), hls_datasource.go (MediaDataSource interface with directFile/streamPipe sources), streaming_ffmpeg.go (FFmpegArgConfig + buildStreamingFFmpegArgs pure function, FFmpegProcess wrapper), streaming_rambuf.go (RAMBuffer ring buffer with exponential backoff), streaming_manager.go (StreamJobManager lifecycle, codec/resolution/FPS caches, remux, encoding/HLS settings), streaming_fsm.go (8-state FSM: Idle→Loading→Ready→Playing→Buffering→Seeking→Completed→Error), streaming_priority.go (3-band priority with boundary protection), handlers_streaming.go (HLS master/variant/segment endpoints, seek, media info, direct playback). Added comprehensive test suite in hls_test.go (~1520 lines, 57+ test functions) covering all pure functions, RAMBuffer, FSM states, PriorityManager, StreamJobManager, MediaDataSource, playlist rewriting, and HLS HTTP handler edge cases."
     },
     {
       "id": "T-020",

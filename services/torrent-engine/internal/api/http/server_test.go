@@ -1661,3 +1661,305 @@ func (t *testStreamReader) SetContext(ctx context.Context) { t.ctx = ctx }
 func (t *testStreamReader) SetReadahead(n int64)           { t.readahead = n }
 func (t *testStreamReader) SetResponsive()                 { t.responsive = true }
 func (t *testStreamReader) Close() error                   { return nil }
+
+// --- StreamTorrent handler tests ---
+
+func TestStreamTorrentHEAD(t *testing.T) {
+	data := []byte("hello world")
+	reader := &testStreamReader{Reader: bytes.NewReader(data)}
+	stream := &fakeStreamTorrent{
+		result: usecase.StreamResult{
+			Reader: reader,
+			File:   domain.FileRef{Index: 0, Path: "movie.mp4", Length: int64(len(data))},
+		},
+	}
+	server := NewServer(&fakeCreateTorrent{}, WithStreamTorrent(stream))
+
+	req := httptest.NewRequest(http.MethodHead, "/torrents/t1/stream?fileIndex=0", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if w.Header().Get("Content-Length") != "11" {
+		t.Fatalf("Content-Length = %s, want 11", w.Header().Get("Content-Length"))
+	}
+	if w.Body.Len() != 0 {
+		t.Fatalf("HEAD should have empty body, got %d bytes", w.Body.Len())
+	}
+}
+
+func TestStreamTorrentContentType(t *testing.T) {
+	tests := []struct {
+		ext         string
+		wantContain string
+	}{
+		{".mp4", "video/mp4"},
+		{".mkv", "matroska"},
+		{".webm", "webm"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.ext, func(t *testing.T) {
+			data := []byte("x")
+			reader := &testStreamReader{Reader: bytes.NewReader(data)}
+			stream := &fakeStreamTorrent{
+				result: usecase.StreamResult{
+					Reader: reader,
+					File:   domain.FileRef{Index: 0, Path: "movie" + tc.ext, Length: 1},
+				},
+			}
+			server := NewServer(&fakeCreateTorrent{}, WithStreamTorrent(stream))
+
+			req := httptest.NewRequest(http.MethodGet, "/torrents/t1/stream?fileIndex=0", nil)
+			w := httptest.NewRecorder()
+			server.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d", w.Code)
+			}
+			ct := w.Header().Get("Content-Type")
+			if ct == "" {
+				t.Fatalf("Content-Type not set")
+			}
+		})
+	}
+}
+
+func TestStreamTorrentConnectionCloseHeader(t *testing.T) {
+	data := []byte("x")
+	reader := &testStreamReader{Reader: bytes.NewReader(data)}
+	stream := &fakeStreamTorrent{
+		result: usecase.StreamResult{
+			Reader: reader,
+			File:   domain.FileRef{Index: 0, Path: "movie.mp4", Length: 1},
+		},
+	}
+	server := NewServer(&fakeCreateTorrent{}, WithStreamTorrent(stream))
+
+	req := httptest.NewRequest(http.MethodGet, "/torrents/t1/stream?fileIndex=0", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Header().Get("Connection") != "close" {
+		t.Fatalf("Connection header = %q, want close", w.Header().Get("Connection"))
+	}
+}
+
+func TestStreamTorrentNotConfigured(t *testing.T) {
+	server := NewServer(&fakeCreateTorrent{}) // no WithStreamTorrent
+
+	req := httptest.NewRequest(http.MethodGet, "/torrents/t1/stream?fileIndex=0", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", w.Code)
+	}
+	var resp errorEnvelope
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Error.Code != "internal_error" {
+		t.Fatalf("error code = %s", resp.Error.Code)
+	}
+}
+
+func TestStreamTorrentNilReader(t *testing.T) {
+	stream := &fakeStreamTorrent{
+		result: usecase.StreamResult{
+			Reader: nil,
+			File:   domain.FileRef{Index: 0, Path: "movie.mp4", Length: 100},
+		},
+	}
+	server := NewServer(&fakeCreateTorrent{}, WithStreamTorrent(stream))
+
+	req := httptest.NewRequest(http.MethodGet, "/torrents/t1/stream?fileIndex=0", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", w.Code)
+	}
+}
+
+func TestStreamTorrentDomainNotFound(t *testing.T) {
+	stream := &fakeStreamTorrent{err: domain.ErrNotFound}
+	server := NewServer(&fakeCreateTorrent{}, WithStreamTorrent(stream))
+
+	req := httptest.NewRequest(http.MethodGet, "/torrents/t1/stream?fileIndex=0", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", w.Code)
+	}
+}
+
+func TestStreamTorrentRangeSuffix(t *testing.T) {
+	data := []byte("hello world")
+	reader := &testStreamReader{Reader: bytes.NewReader(data)}
+	stream := &fakeStreamTorrent{
+		result: usecase.StreamResult{
+			Reader: reader,
+			File:   domain.FileRef{Index: 0, Path: "movie.mp4", Length: int64(len(data))},
+		},
+	}
+	server := NewServer(&fakeCreateTorrent{}, WithStreamTorrent(stream))
+
+	req := httptest.NewRequest(http.MethodGet, "/torrents/t1/stream?fileIndex=0", nil)
+	req.Header.Set("Range", "bytes=-5")
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusPartialContent {
+		t.Fatalf("status = %d, want 206", w.Code)
+	}
+	if got := w.Body.String(); got != "world" {
+		t.Fatalf("body = %q, want %q", got, "world")
+	}
+	if cr := w.Header().Get("Content-Range"); cr != "bytes 6-10/11" {
+		t.Fatalf("Content-Range = %s", cr)
+	}
+}
+
+func TestStreamTorrentRangeOpenEnd(t *testing.T) {
+	data := []byte("hello world")
+	reader := &testStreamReader{Reader: bytes.NewReader(data)}
+	stream := &fakeStreamTorrent{
+		result: usecase.StreamResult{
+			Reader: reader,
+			File:   domain.FileRef{Index: 0, Path: "movie.mp4", Length: int64(len(data))},
+		},
+	}
+	server := NewServer(&fakeCreateTorrent{}, WithStreamTorrent(stream))
+
+	req := httptest.NewRequest(http.MethodGet, "/torrents/t1/stream?fileIndex=0", nil)
+	req.Header.Set("Range", "bytes=6-")
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusPartialContent {
+		t.Fatalf("status = %d, want 206", w.Code)
+	}
+	if got := w.Body.String(); got != "world" {
+		t.Fatalf("body = %q, want %q", got, "world")
+	}
+}
+
+func TestStreamTorrentMalformedRange(t *testing.T) {
+	data := []byte("hello world")
+	reader := &testStreamReader{Reader: bytes.NewReader(data)}
+	stream := &fakeStreamTorrent{
+		result: usecase.StreamResult{
+			Reader: reader,
+			File:   domain.FileRef{Index: 0, Path: "movie.mp4", Length: int64(len(data))},
+		},
+	}
+	server := NewServer(&fakeCreateTorrent{}, WithStreamTorrent(stream))
+
+	req := httptest.NewRequest(http.MethodGet, "/torrents/t1/stream?fileIndex=0", nil)
+	req.Header.Set("Range", "invalid")
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestStreamTorrentContentLength(t *testing.T) {
+	data := []byte("hello world")
+	reader := &testStreamReader{Reader: bytes.NewReader(data)}
+	stream := &fakeStreamTorrent{
+		result: usecase.StreamResult{
+			Reader: reader,
+			File:   domain.FileRef{Index: 0, Path: "movie.mp4", Length: int64(len(data))},
+		},
+	}
+	server := NewServer(&fakeCreateTorrent{}, WithStreamTorrent(stream))
+
+	req := httptest.NewRequest(http.MethodGet, "/torrents/t1/stream?fileIndex=0", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if cl := w.Header().Get("Content-Length"); cl != "11" {
+		t.Fatalf("Content-Length = %s, want 11", cl)
+	}
+}
+
+func TestParseByteRange(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		size      int64
+		wantStart int64
+		wantEnd   int64
+		wantErr   error
+	}{
+		{"full range", "bytes=0-10", 100, 0, 10, nil},
+		{"open end", "bytes=5-", 100, 5, 99, nil},
+		{"suffix", "bytes=-10", 100, 90, 99, nil},
+		{"suffix larger than file", "bytes=-200", 100, 0, 99, nil},
+		{"single byte", "bytes=0-0", 100, 0, 0, nil},
+		{"last byte", "bytes=99-99", 100, 99, 99, nil},
+		{"start beyond file", "bytes=100-200", 100, 0, 0, errRangeNotSatisfiable},
+		{"end beyond file clamped", "bytes=50-200", 100, 50, 99, nil},
+		{"zero size", "bytes=0-10", 0, 0, 0, errRangeNotSatisfiable},
+		{"negative size", "bytes=0-10", -1, 0, 0, errRangeNotSatisfiable},
+		{"no bytes= prefix", "0-10", 100, 0, 0, errInvalidRange},
+		{"empty spec", "bytes=", 100, 0, 0, errInvalidRange},
+		{"both empty", "bytes=-", 100, 0, 0, errInvalidRange},
+		{"reversed range", "bytes=10-5", 100, 0, 0, errInvalidRange},
+		{"multi-range comma", "bytes=0-5,10-15", 100, 0, 0, errInvalidRange},
+		{"negative start", "bytes=-0", 100, 0, 0, errInvalidRange},
+		{"not a number", "bytes=abc-def", 100, 0, 0, errInvalidRange},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			start, end, err := parseByteRange(tc.value, tc.size)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if start != tc.wantStart || end != tc.wantEnd {
+				t.Fatalf("got (%d, %d), want (%d, %d)", start, end, tc.wantStart, tc.wantEnd)
+			}
+		})
+	}
+}
+
+func TestFallbackContentType(t *testing.T) {
+	tests := []struct {
+		ext  string
+		want string
+	}{
+		{".mp4", "video/mp4"},
+		{".mkv", "video/x-matroska"},
+		{".webm", "video/webm"},
+		{".avi", "video/x-msvideo"},
+		{".mov", "video/quicktime"},
+		{".m4v", "video/x-m4v"},
+		{".mp3", "audio/mpeg"},
+		{".flac", "audio/flac"},
+		{".ogg", "audio/ogg"},
+		{".xyz", "application/octet-stream"},
+		{"", "application/octet-stream"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.ext, func(t *testing.T) {
+			got := fallbackContentType(tc.ext)
+			if got != tc.want {
+				t.Fatalf("fallbackContentType(%q) = %q, want %q", tc.ext, got, tc.want)
+			}
+		})
+	}
+}

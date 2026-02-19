@@ -122,6 +122,466 @@ func (f *fakeStreamEngine) GetSession(ctx context.Context, id domain.TorrentID) 
 	return f.session, nil
 }
 
+// fakeStreamEngineWithOpen extends fakeStreamEngine with configurable Open() for repo fallback tests.
+type fakeStreamEngineWithOpen struct {
+	fakeStreamEngine
+	openSession ports.Session
+	openErr     error
+	openCalled  int
+	focusCalled int
+	focusID     domain.TorrentID
+}
+
+func (f *fakeStreamEngineWithOpen) Open(ctx context.Context, src domain.TorrentSource) (ports.Session, error) {
+	f.openCalled++
+	if f.openErr != nil {
+		return nil, f.openErr
+	}
+	return f.openSession, nil
+}
+
+func (f *fakeStreamEngineWithOpen) FocusSession(ctx context.Context, id domain.TorrentID) error {
+	f.focusCalled++
+	f.focusID = id
+	return nil
+}
+
+// fakeStreamSessionStartErr is a session that fails on Start().
+type fakeStreamSessionStartErr struct {
+	fakeStreamSession
+	startErr  error
+	stopCalls int
+}
+
+func (s *fakeStreamSessionStartErr) Start() error { return s.startErr }
+func (s *fakeStreamSessionStartErr) Stop() error  { s.stopCalls++; return nil }
+
+// fakeStreamRepo is a minimal TorrentRepository for stream tests.
+type fakeStreamRepo struct {
+	record domain.TorrentRecord
+	getErr error
+}
+
+func (r *fakeStreamRepo) Create(context.Context, domain.TorrentRecord) error                 { return nil }
+func (r *fakeStreamRepo) Update(context.Context, domain.TorrentRecord) error                 { return nil }
+func (r *fakeStreamRepo) UpdateProgress(context.Context, domain.TorrentID, domain.ProgressUpdate) error {
+	return nil
+}
+func (r *fakeStreamRepo) Get(_ context.Context, _ domain.TorrentID) (domain.TorrentRecord, error) {
+	return r.record, r.getErr
+}
+func (r *fakeStreamRepo) List(context.Context, domain.TorrentFilter) ([]domain.TorrentRecord, error) {
+	return nil, nil
+}
+func (r *fakeStreamRepo) GetMany(context.Context, []domain.TorrentID) ([]domain.TorrentRecord, error) {
+	return nil, nil
+}
+func (r *fakeStreamRepo) Delete(context.Context, domain.TorrentID) error          { return nil }
+func (r *fakeStreamRepo) UpdateTags(context.Context, domain.TorrentID, []string) error { return nil }
+
+func TestStreamTorrentNilEngine(t *testing.T) {
+	uc := StreamTorrent{}
+	_, err := uc.Execute(context.Background(), "t1", 0)
+	if err == nil || err.Error() != "engine not configured" {
+		t.Fatalf("expected engine not configured error, got %v", err)
+	}
+}
+
+func TestStreamTorrentEngineError(t *testing.T) {
+	engine := &fakeStreamEngine{err: errors.New("connection refused")}
+	uc := StreamTorrent{Engine: engine}
+	_, err := uc.Execute(context.Background(), "t1", 0)
+	if !errors.Is(err, ErrEngine) {
+		t.Fatalf("expected engine error, got %v", err)
+	}
+}
+
+func TestStreamTorrentRepoFallbackSuccess(t *testing.T) {
+	reader := &fakeStreamReader{}
+	session := &fakeStreamSession{
+		files:  []domain.FileRef{{Index: 0, Path: "movie.mp4", Length: 100}},
+		reader: reader,
+	}
+	engine := &fakeStreamEngineWithOpen{
+		fakeStreamEngine: fakeStreamEngine{err: domain.ErrNotFound},
+		openSession:      session,
+	}
+	repo := &fakeStreamRepo{
+		record: domain.TorrentRecord{
+			ID:     "t1",
+			Source: domain.TorrentSource{Magnet: "magnet:?xt=urn:btih:abc"},
+			Files:  []domain.FileRef{{Index: 0, Path: "movie.mp4", Length: 100}},
+		},
+	}
+
+	uc := StreamTorrent{Engine: engine, Repo: repo, ReadaheadBytes: 2 << 20}
+	result, err := uc.Execute(context.Background(), "t1", 0)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.File.Path != "movie.mp4" {
+		t.Fatalf("file path mismatch: %s", result.File.Path)
+	}
+	if engine.openCalled != 1 {
+		t.Fatalf("engine.Open should be called once, got %d", engine.openCalled)
+	}
+	if engine.focusCalled != 1 {
+		t.Fatalf("FocusSession should be called once, got %d", engine.focusCalled)
+	}
+}
+
+func TestStreamTorrentRepoFallbackNotFound(t *testing.T) {
+	engine := &fakeStreamEngineWithOpen{
+		fakeStreamEngine: fakeStreamEngine{err: domain.ErrNotFound},
+	}
+	repo := &fakeStreamRepo{getErr: domain.ErrNotFound}
+
+	uc := StreamTorrent{Engine: engine, Repo: repo}
+	_, err := uc.Execute(context.Background(), "t404", 0)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("expected not found, got %v", err)
+	}
+}
+
+func TestStreamTorrentRepoFallbackRepoError(t *testing.T) {
+	engine := &fakeStreamEngineWithOpen{
+		fakeStreamEngine: fakeStreamEngine{err: domain.ErrNotFound},
+	}
+	repo := &fakeStreamRepo{getErr: errors.New("db connection lost")}
+
+	uc := StreamTorrent{Engine: engine, Repo: repo}
+	_, err := uc.Execute(context.Background(), "t1", 0)
+	if !errors.Is(err, ErrRepository) {
+		t.Fatalf("expected repository error, got %v", err)
+	}
+}
+
+func TestStreamTorrentRepoFallbackNoRepo(t *testing.T) {
+	engine := &fakeStreamEngine{err: domain.ErrNotFound}
+	uc := StreamTorrent{Engine: engine} // no Repo
+	_, err := uc.Execute(context.Background(), "t1", 0)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("expected not found when no repo, got %v", err)
+	}
+}
+
+func TestStreamTorrentRepoFallbackMissingSource(t *testing.T) {
+	engine := &fakeStreamEngineWithOpen{
+		fakeStreamEngine: fakeStreamEngine{err: domain.ErrNotFound},
+	}
+	repo := &fakeStreamRepo{
+		record: domain.TorrentRecord{ID: "t1", Source: domain.TorrentSource{}}, // no magnet or torrent
+	}
+
+	uc := StreamTorrent{Engine: engine, Repo: repo}
+	_, err := uc.Execute(context.Background(), "t1", 0)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("expected not found for missing source, got %v", err)
+	}
+}
+
+func TestStreamTorrentRepoFallbackOpenError(t *testing.T) {
+	engine := &fakeStreamEngineWithOpen{
+		fakeStreamEngine: fakeStreamEngine{err: domain.ErrNotFound},
+		openErr:          errors.New("torrent engine unavailable"),
+	}
+	repo := &fakeStreamRepo{
+		record: domain.TorrentRecord{
+			ID:     "t1",
+			Source: domain.TorrentSource{Magnet: "magnet:?xt=urn:btih:abc"},
+		},
+	}
+
+	uc := StreamTorrent{Engine: engine, Repo: repo}
+	_, err := uc.Execute(context.Background(), "t1", 0)
+	if !errors.Is(err, ErrEngine) {
+		t.Fatalf("expected engine error, got %v", err)
+	}
+}
+
+func TestStreamTorrentRepoFallbackStartError(t *testing.T) {
+	session := &fakeStreamSessionStartErr{
+		fakeStreamSession: fakeStreamSession{
+			files:  []domain.FileRef{{Index: 0, Path: "movie.mp4", Length: 100}},
+			reader: &fakeStreamReader{},
+		},
+		startErr: errors.New("start failed"),
+	}
+	engine := &fakeStreamEngineWithOpen{
+		fakeStreamEngine: fakeStreamEngine{err: domain.ErrNotFound},
+		openSession:      session,
+	}
+	repo := &fakeStreamRepo{
+		record: domain.TorrentRecord{
+			ID:     "t1",
+			Source: domain.TorrentSource{Magnet: "magnet:?xt=urn:btih:abc"},
+		},
+	}
+
+	uc := StreamTorrent{Engine: engine, Repo: repo}
+	_, err := uc.Execute(context.Background(), "t1", 0)
+	if !errors.Is(err, ErrEngine) {
+		t.Fatalf("expected engine error from Start failure, got %v", err)
+	}
+	if session.stopCalls != 1 {
+		t.Fatalf("session.Stop should be called for cleanup, got %d calls", session.stopCalls)
+	}
+}
+
+func TestStreamTorrentNewReaderNil(t *testing.T) {
+	session := &fakeStreamSession{
+		files:  []domain.FileRef{{Index: 0, Path: "movie.mp4", Length: 100}},
+		reader: nil, // NewReader returns nil
+	}
+	engine := &fakeStreamEngine{session: session}
+	// NewReader returns nil, error — fakeStreamSession returns nil, "no reader"
+	uc := StreamTorrent{Engine: engine}
+	_, err := uc.Execute(context.Background(), "t1", 0)
+	if err == nil {
+		t.Fatalf("expected error for nil reader")
+	}
+}
+
+func TestStreamTorrentDefaultReadahead(t *testing.T) {
+	reader := &fakeStreamReader{}
+	session := &fakeStreamSession{
+		files:  []domain.FileRef{{Index: 0, Path: "movie.mp4", Length: 1 << 30}},
+		reader: reader,
+	}
+	engine := &fakeStreamEngine{session: session}
+
+	// ReadaheadBytes = 0 triggers defaultStreamReadahead.
+	uc := StreamTorrent{Engine: engine, ReadaheadBytes: 0}
+	result, err := uc.Execute(context.Background(), "t1", 0)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	expectedWindow := streamPriorityWindow(defaultStreamReadahead, 1<<30)
+	if reader.readahead != expectedWindow {
+		t.Fatalf("readahead = %d, want %d (default window)", reader.readahead, expectedWindow)
+	}
+	if result.ConsumptionRate == nil {
+		t.Fatalf("ConsumptionRate should be non-nil")
+	}
+}
+
+func TestExecuteRawSuccess(t *testing.T) {
+	reader := &fakeStreamReader{}
+	session := &fakeStreamSession{
+		files:  []domain.FileRef{{Index: 0, Path: "movie.mp4", Length: 100}},
+		reader: reader,
+	}
+	engine := &fakeStreamEngine{session: session}
+
+	uc := StreamTorrent{Engine: engine}
+	result, err := uc.ExecuteRaw(context.Background(), "t1", 0)
+	if err != nil {
+		t.Fatalf("ExecuteRaw: %v", err)
+	}
+	if result.File.Path != "movie.mp4" {
+		t.Fatalf("file mismatch: %s", result.File.Path)
+	}
+	// ExecuteRaw returns the raw reader (not a slidingPriorityReader).
+	if _, ok := result.Reader.(*slidingPriorityReader); ok {
+		t.Fatalf("ExecuteRaw should return raw reader, not slidingPriorityReader")
+	}
+	// ConsumptionRate should be nil for raw readers.
+	if result.ConsumptionRate != nil {
+		t.Fatalf("ConsumptionRate should be nil for ExecuteRaw")
+	}
+}
+
+func TestExecuteRawNilEngine(t *testing.T) {
+	uc := StreamTorrent{}
+	_, err := uc.ExecuteRaw(context.Background(), "t1", 0)
+	if err == nil || err.Error() != "engine not configured" {
+		t.Fatalf("expected engine not configured, got %v", err)
+	}
+}
+
+func TestExecuteRawNotFound(t *testing.T) {
+	engine := &fakeStreamEngine{err: domain.ErrNotFound}
+	uc := StreamTorrent{Engine: engine}
+	_, err := uc.ExecuteRaw(context.Background(), "t1", 0)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("expected not found, got %v", err)
+	}
+}
+
+func TestExecuteRawRepoFallback(t *testing.T) {
+	reader := &fakeStreamReader{}
+	session := &fakeStreamSession{
+		files:  []domain.FileRef{{Index: 0, Path: "movie.mkv", Length: 500}},
+		reader: reader,
+	}
+	engine := &fakeStreamEngineWithOpen{
+		fakeStreamEngine: fakeStreamEngine{err: domain.ErrNotFound},
+		openSession:      session,
+	}
+	repo := &fakeStreamRepo{
+		record: domain.TorrentRecord{
+			ID:     "t1",
+			Source: domain.TorrentSource{Magnet: "magnet:?xt=urn:btih:def"},
+		},
+	}
+
+	uc := StreamTorrent{Engine: engine, Repo: repo}
+	result, err := uc.ExecuteRaw(context.Background(), "t1", 0)
+	if err != nil {
+		t.Fatalf("ExecuteRaw: %v", err)
+	}
+	if result.File.Path != "movie.mkv" {
+		t.Fatalf("file mismatch: %s", result.File.Path)
+	}
+	if engine.openCalled != 1 {
+		t.Fatalf("engine.Open should be called once")
+	}
+}
+
+func TestExecuteRawInvalidFileIndex(t *testing.T) {
+	session := &fakeStreamSession{
+		files:  []domain.FileRef{{Index: 0, Path: "movie.mp4", Length: 100}},
+		reader: &fakeStreamReader{},
+	}
+	engine := &fakeStreamEngine{session: session}
+	uc := StreamTorrent{Engine: engine}
+
+	_, err := uc.ExecuteRaw(context.Background(), "t1", 99)
+	if !errors.Is(err, ErrInvalidFileIndex) {
+		t.Fatalf("expected invalid file index, got %v", err)
+	}
+}
+
+func TestExecuteRawNilReader(t *testing.T) {
+	session := &fakeStreamSession{
+		files:  []domain.FileRef{{Index: 0, Path: "movie.mp4", Length: 100}},
+		reader: nil,
+	}
+	engine := &fakeStreamEngine{session: session}
+	uc := StreamTorrent{Engine: engine}
+
+	_, err := uc.ExecuteRaw(context.Background(), "t1", 0)
+	if err == nil {
+		t.Fatalf("expected error for nil reader")
+	}
+}
+
+func TestExecuteRawEngineError(t *testing.T) {
+	engine := &fakeStreamEngine{err: errors.New("disk full")}
+	uc := StreamTorrent{Engine: engine}
+	_, err := uc.ExecuteRaw(context.Background(), "t1", 0)
+	if !errors.Is(err, ErrEngine) {
+		t.Fatalf("expected engine error, got %v", err)
+	}
+}
+
+func TestExecuteRawRepoFallbackStartError(t *testing.T) {
+	session := &fakeStreamSessionStartErr{
+		fakeStreamSession: fakeStreamSession{
+			files:  []domain.FileRef{{Index: 0, Path: "movie.mp4", Length: 100}},
+			reader: &fakeStreamReader{},
+		},
+		startErr: errors.New("cannot start"),
+	}
+	engine := &fakeStreamEngineWithOpen{
+		fakeStreamEngine: fakeStreamEngine{err: domain.ErrNotFound},
+		openSession:      session,
+	}
+	repo := &fakeStreamRepo{
+		record: domain.TorrentRecord{
+			ID:     "t1",
+			Source: domain.TorrentSource{Magnet: "magnet:?xt=urn:btih:abc"},
+		},
+	}
+
+	uc := StreamTorrent{Engine: engine, Repo: repo}
+	_, err := uc.ExecuteRaw(context.Background(), "t1", 0)
+	if !errors.Is(err, ErrEngine) {
+		t.Fatalf("expected engine error, got %v", err)
+	}
+	if session.stopCalls != 1 {
+		t.Fatalf("session.Stop should be called, got %d", session.stopCalls)
+	}
+}
+
+func TestStreamPriorityWindowCases(t *testing.T) {
+	tests := []struct {
+		name       string
+		readahead  int64
+		fileLength int64
+		want       int64
+	}{
+		{"default readahead", 0, 100, defaultStreamReadahead * priorityWindowMultiplier},              // 16MB×4=64MB
+		{"small readahead", 2 << 20, 100, minPriorityWindowBytes},                                    // 2MB×4=8MB→clamped to 32MB
+		{"large readahead", 128 << 20, 100, maxPriorityWindowBytes},                                  // 128MB×4=512MB→clamped to 256MB
+		{"1pct scaling", 16 << 20, 50 << 30, maxPriorityWindowBytes},                                 // 50GB file, 1% = 500MB, clamped to 256MB
+		{"1pct within bounds", 16 << 20, 10 << 30, 10 << 30 / 100},                                  // 10GB → 1% = ~107MB
+		{"negative readahead", -1, 100, defaultStreamReadahead * priorityWindowMultiplier},            // fallback to default: 16MB×4=64MB
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := streamPriorityWindow(tc.readahead, tc.fileLength)
+			if got != tc.want {
+				t.Fatalf("streamPriorityWindow(%d, %d) = %d, want %d", tc.readahead, tc.fileLength, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestApplyStartupGradientBands(t *testing.T) {
+	session := &fakeStreamSession{
+		files: []domain.FileRef{{Index: 0, Path: "movie.mkv", Length: 1 << 30}},
+	}
+	file := session.files[0]
+
+	// With a window of 64MB, expect 4 bands: High(4MB), Next(4MB), Readahead(14MB), Normal(42MB)
+	window := int64(64 << 20)
+	applyStartupGradient(session, file, window)
+
+	if len(session.prios) < 3 {
+		t.Fatalf("expected at least 3 bands, got %d", len(session.prios))
+	}
+	if session.prios[0] != domain.PriorityHigh {
+		t.Fatalf("band 0: got %d, want PriorityHigh", session.prios[0])
+	}
+	if session.prios[1] != domain.PriorityNext {
+		t.Fatalf("band 1: got %d, want PriorityNext", session.prios[1])
+	}
+	if session.prios[2] != domain.PriorityReadahead {
+		t.Fatalf("band 2: got %d, want PriorityReadahead", session.prios[2])
+	}
+
+	// Total coverage should equal window.
+	var total int64
+	for _, r := range session.ranges {
+		total += r.Length
+	}
+	if total != window {
+		t.Fatalf("total band coverage = %d, want %d", total, window)
+	}
+}
+
+func TestApplyStartupGradientSmallWindow(t *testing.T) {
+	session := &fakeStreamSession{
+		files: []domain.FileRef{{Index: 0, Path: "movie.mkv", Length: 1 << 30}},
+	}
+	file := session.files[0]
+
+	// With a window of 2MB (< 4MB high band), only a single High band should be produced.
+	window := int64(2 << 20)
+	applyStartupGradient(session, file, window)
+
+	if len(session.prios) != 1 {
+		t.Fatalf("expected 1 band for small window, got %d", len(session.prios))
+	}
+	if session.prios[0] != domain.PriorityHigh {
+		t.Fatalf("band 0: got %d, want PriorityHigh", session.prios[0])
+	}
+	if session.ranges[0].Length != window {
+		t.Fatalf("band length = %d, want %d", session.ranges[0].Length, window)
+	}
+}
+
 func TestStreamTorrentSuccess(t *testing.T) {
 	reader := &fakeStreamReader{}
 	session := &fakeStreamSession{

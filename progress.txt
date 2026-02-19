@@ -253,3 +253,44 @@ Format:
   - T-005 (middleware, medium, deps: T-003 ✅)
   - T-009 (settings repos, medium, deps: T-004 ✅)
 - Recommend T-018 next as it is critical and now fully unblocked, or T-012 as high priority
+
+## Iteration 7 — 2026-02-19 22:15
+**Task:** [T-019] Implement HLS core pipeline with FFmpeg transcoding
+**Status:** done
+**What was done:**
+- Verified implementation fully complete across 8 source files:
+  - hls_types.go: HLSConfig, qualityPresets (480p/1.5Mbps, 720p/3Mbps, 1080p/6Mbps), computeVariants(), computeProfileHash(), findLastSegment(), safeSegmentPath(), subtitleFilterArg(), buildMultiVariantFilterComplex(), parseM3U8Segments(), SeekMode, estimateByteOffset(), remuxCacheKey()
+  - hls_datasource.go: MediaDataSource interface with directFileSource (completed files) and streamPipeSource (RAMBuffer for incomplete files)
+  - streaming_ffmpeg.go: FFmpegArgConfig + buildStreamingFFmpegArgs pure function (single/multi-variant/stream-copy modes), FFmpegProcess wrapper with progress tracking
+  - streaming_rambuf.go: RAMBuffer ring buffer (default 16MB) with exponential backoff for transient EOF, prebuffer support, context cancellation
+  - streaming_manager.go (~1145 lines): StreamJobManager — job lifecycle (EnsureJob, SeekJob, StopJob, CleanupJob), encoding/HLS settings management, codec/resolution/FPS caches with LRU eviction, remux cache (MKV→MP4), health snapshot
+  - streaming_fsm.go (~798 lines): 8-state FSM (Idle→Loading→Ready→Playing→Buffering→Seeking→Completed→Error), StreamJob, WindowConfig, full FSM loop with cleanup
+  - streaming_priority.go: PriorityManager with 3-band priority window (High 4MB, Next 8MB, Readahead rest) + boundary protection (first/last 8MB)
+  - handlers_streaming.go: HLS endpoints (master/variant playlists, segments), seek (soft/hard mode), media info, direct playback, playlist rewriting
+- Verified routing in handlers_torrents.go: cases "hls", "stream", "direct", "media" all properly wired
+- Created comprehensive test suite hls_test.go (~1520 lines, 57+ test functions):
+  - hls_types.go tests: computeProfileHash (3), computeVariants (7), qualityPresetValues, playlistHasEndList (3), safeSegmentPath (5), subtitleFilterArg (5), buildMultiVariantFilterComplex (2), parseM3U8Segments (3), estimateByteOffset (8), seekModeString (3), remuxCacheKey, findLastSegment (5)
+  - streaming_ffmpeg.go tests: buildStreamingFFmpegArgs — single variant, stream copy (AAC/non-AAC), multi-variant, seek, subtitles, default seg dur, HTTP input, audio track, FPS keyframes (10 tests)
+  - streaming_rambuf.go tests: basic read/write, prebuffer, clear, close, default size, context cancellation (6 tests)
+  - streaming_fsm.go tests: StreamState.String() (9), DefaultWindowConfig, StreamJob.IsRunning (8), IsCompleted, signalReady, checkSeekRequested, StartPlayback idempotent (7 tests)
+  - streaming_priority.go tests: Apply, Deprioritize, nil engine, zero length, EnhanceHigh, boundary protection with mockEngine (6 tests)
+  - streaming_manager.go tests: encoding settings, defaults, HLS settings, profile hash, buildJobDir, healthSnapshot, shutdown, EnsureJob nil stream, countRunningJobs, chooseSeekMode (10 tests)
+  - hls_datasource.go tests: directFileSource (2), streamPipeSource, dataSourceFilePath (4 tests)
+  - handlers_streaming.go tests: rewritePlaylistSegmentURLs (4 sub-tests), HTTP handler tests — not configured, invalid file index, too few path segments, seek missing/invalid/negative time, seek method not allowed, segment path traversal (11 tests)
+- go vet ./... — clean, zero warnings
+- go build ./cmd/server/ — success
+- go test ./... — all packages pass (0 failures)
+**Issues found:**
+- None. Implementation was fully complete and correct per PRD; only comprehensive unit tests were missing.
+**Notes for next session:**
+- T-019 is done and unblocks: T-020 (HLS seek/watchdog/FSM, high, deps: T-019 ✅), T-021 (FFprobe media analysis, high, deps: T-008, T-019 ✅)
+- T-003, T-004, T-006, T-007, T-010, T-015, T-018, T-019 all done. Next tasks with all deps satisfied:
+  - T-020 (HLS seek/watchdog/FSM, high, deps: T-019 ✅) — NOW UNBLOCKED
+  - T-012 (torrent lifecycle start/stop/focus, high, deps: T-007 ✅, T-010 ✅)
+  - T-008 (FFprobe adapter, high, deps: T-004 ✅) — needed by T-021 and T-022
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅)
+  - T-017 (idle/dormancy, medium, deps: T-015 ✅)
+  - T-011 (list view modes, medium, deps: T-010 ✅)
+  - T-005 (middleware, medium, deps: T-003 ✅)
+  - T-009 (settings repos, medium, deps: T-004 ✅)
+- Recommend T-020 next as it is high priority and now fully unblocked, or T-008 as it unblocks T-021 and T-022
