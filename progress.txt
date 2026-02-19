@@ -385,3 +385,39 @@ Format:
   - T-016 (adaptive boosts, medium, deps: T-015 ✅)
   - T-017 (dormancy, medium, deps: T-015 ✅)
 - Recommend T-008, T-012, or T-020 next as they are high priority with all deps satisfied
+
+## Iteration 11 — 2026-02-20 00:00
+**Task:** [T-008] Implement FFprobe media analysis adapter
+**Status:** done
+**What was done:**
+- Verified FFprobe adapter already fully implemented in ffprobe.go (206 lines)
+- Prober struct wraps ffprobe binary with Probe(ctx, filePath) and ProbeReader(ctx, reader) methods
+- parseProbeOutput extracts video/audio/subtitle tracks with per-type indexing, codec, language, title, default flag, duration, startTime
+- Handles partially-downloaded files (ffprobe non-zero exit but valid metadata kept)
+- 30s default timeout with context deadline support
+- getTag does case-insensitive tag lookup (exact → UPPER → lower)
+- Cache layer in handlers_streaming.go: mediaProbeCacheKey (torrentID+fileIndex), mediaProbeCacheEntry with expiresAt, 5-minute TTL
+- lookupMediaProbeCache/storeMediaProbeCache/invalidateMediaProbeCache methods on Server
+- SubtitlesReady dynamically recomputed on cache hit via os.Stat
+- Codec compatibility (H.264+AAC) tracked in streaming_manager.go codecCache (isH264/isAAC)
+- Uncommitted improvements found: refactored parseProbeOutput (extracted from inline struct) + ~420 lines of new comprehensive tests
+- All 20 test functions pass: empty path, nil reader, case-insensitive tags, binary defaults, full track parsing, H264+AAC detection, HEVC non-compatibility, audio-only, no tracks, empty streams, unknown types, duration edge cases, invalid JSON, multiple video tracks, independent indexing, whitespace trimming, startTime, null JSON, minimal valid, non-existent binary, timeout, plus integration tests
+- go build, go vet, go test all pass clean
+**Issues found:**
+- None. Implementation was fully complete; uncommitted refactoring and tests from a prior session were validated and committed.
+**Notes for next session:**
+- T-008 is done and unblocks: T-021 (FFprobe media analysis endpoint, high, deps: T-008 ✅, T-019 ✅), T-022 (direct playback, high, deps: T-008 ✅, T-019 ✅)
+- 12 tasks now done: T-003, T-004, T-006, T-007, T-008, T-010, T-015, T-018, T-019, T-035, T-036, T-039
+- Next tasks with all deps satisfied:
+  - T-012 (torrent lifecycle start/stop/focus, high, deps: T-007 ✅, T-010 ✅)
+  - T-020 (HLS seek/watchdog/FSM, high, deps: T-019 ✅)
+  - T-021 (FFprobe media analysis endpoint, high, deps: T-008 ✅, T-019 ✅) — NOW UNBLOCKED
+  - T-022 (direct playback, high, deps: T-008 ✅, T-019 ✅) — NOW UNBLOCKED
+  - T-027 (scaffold torrent-search, high, deps: [])
+  - T-005 (middleware, medium, deps: T-003 ✅)
+  - T-009 (settings repos, medium, deps: T-004 ✅)
+  - T-011 (list view modes, medium, deps: T-010 ✅)
+  - T-014 (SyncState, medium, deps: T-006 ✅, T-007 ✅)
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅)
+  - T-017 (dormancy, medium, deps: T-015 ✅)
+- Recommend T-012 next as it is high priority with lowest ID among unblocked high-priority tasks

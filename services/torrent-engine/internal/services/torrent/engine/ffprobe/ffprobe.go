@@ -77,22 +77,8 @@ func (p *Prober) runProbe(ctx context.Context, args []string, stdin io.Reader) (
 
 	runErr := cmd.Run()
 
-	var payload struct {
-		Streams []struct {
-			CodecType   string            `json:"codec_type"`
-			CodecName   string            `json:"codec_name"`
-			Tags        map[string]string `json:"tags"`
-			Disposition struct {
-				Default int `json:"default"`
-			} `json:"disposition"`
-		} `json:"streams"`
-		Format struct {
-			Duration  string `json:"duration"`
-			StartTime string `json:"start_time"`
-		} `json:"format"`
-	}
-
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+	info, parseErr := parseProbeOutput(stdout.Bytes())
+	if parseErr != nil {
 		if runErr != nil {
 			msg := strings.TrimSpace(stderr.String())
 			if msg == "" {
@@ -100,15 +86,66 @@ func (p *Prober) runProbe(ctx context.Context, args []string, stdin io.Reader) (
 			}
 			return domain.MediaInfo{}, fmt.Errorf("ffprobe failed: %w: %s", runErr, msg)
 		}
-		return domain.MediaInfo{}, fmt.Errorf("ffprobe output parse failed: %w", err)
+		return domain.MediaInfo{}, fmt.Errorf("ffprobe output parse failed: %w", parseErr)
 	}
 
-	tracks := make([]domain.MediaTrack, 0)
+	// ffprobe can exit with non-zero for partially downloaded files, but still
+	// return usable stream metadata in stdout. Keep metadata if we have it.
+	if runErr != nil && len(info.Tracks) == 0 {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			return domain.MediaInfo{}, fmt.Errorf("ffprobe failed: %w", runErr)
+		}
+		return domain.MediaInfo{}, fmt.Errorf("ffprobe failed: %w: %s", runErr, msg)
+	}
+
+	return info, nil
+}
+
+// probePayload is the subset of ffprobe JSON output we parse.
+type probePayload struct {
+	Streams []probeStream `json:"streams"`
+	Format  probeFormat   `json:"format"`
+}
+
+type probeStream struct {
+	CodecType   string            `json:"codec_type"`
+	CodecName   string            `json:"codec_name"`
+	Tags        map[string]string `json:"tags"`
+	Disposition struct {
+		Default int `json:"default"`
+	} `json:"disposition"`
+}
+
+type probeFormat struct {
+	Duration  string `json:"duration"`
+	StartTime string `json:"start_time"`
+}
+
+// parseProbeOutput parses raw ffprobe JSON output into a domain.MediaInfo.
+func parseProbeOutput(data []byte) (domain.MediaInfo, error) {
+	var payload probePayload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return domain.MediaInfo{}, err
+	}
+
+	tracks := make([]domain.MediaTrack, 0, len(payload.Streams))
+	videoIndex := 0
 	audioIndex := 0
 	subtitleIndex := 0
 
 	for _, stream := range payload.Streams {
 		switch stream.CodecType {
+		case "video":
+			tracks = append(tracks, domain.MediaTrack{
+				Index:    videoIndex,
+				Type:     "video",
+				Codec:    stream.CodecName,
+				Language: strings.TrimSpace(getTag(stream.Tags, "language")),
+				Title:    strings.TrimSpace(getTag(stream.Tags, "title")),
+				Default:  stream.Disposition.Default == 1,
+			})
+			videoIndex++
 		case "audio":
 			tracks = append(tracks, domain.MediaTrack{
 				Index:    audioIndex,
@@ -130,16 +167,6 @@ func (p *Prober) runProbe(ctx context.Context, args []string, stdin io.Reader) (
 			})
 			subtitleIndex++
 		}
-	}
-
-	// ffprobe can exit with non-zero for partially downloaded files, but still
-	// return usable stream metadata in stdout. Keep metadata if we have it.
-	if runErr != nil && len(tracks) == 0 {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			return domain.MediaInfo{}, fmt.Errorf("ffprobe failed: %w", runErr)
-		}
-		return domain.MediaInfo{}, fmt.Errorf("ffprobe failed: %w: %s", runErr, msg)
 	}
 
 	var duration float64

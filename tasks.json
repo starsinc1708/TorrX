@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 11
+    "completedTasks": 12
   },
   "tasks": [
     {
@@ -243,8 +243,8 @@
         "services/torrent-engine/internal/services/torrent/engine/ffprobe/ffprobe.go",
         "services/torrent-engine/internal/services/torrent/engine/ffprobe/ffprobe_test.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Already fully implemented. FFprobe adapter in ffprobe.go (206 lines): Prober struct wrapping ffprobe binary with Probe(ctx, filePath) and ProbeReader(ctx, reader) methods. parseProbeOutput extracts video/audio/subtitle tracks with per-type indexing, codec, language, title, default flag, duration, startTime. Handles partially-downloaded files (non-zero exit but valid metadata). 30s timeout default. getTag does case-insensitive tag lookup. Cache layer lives in handlers_streaming.go: mediaProbeCacheKey (torrentID+fileIndex), mediaProbeCacheEntry with expiresAt, 5-minute TTL. lookupMediaProbeCache/storeMediaProbeCache/invalidateMediaProbeCache methods on Server. SubtitlesReady recomputed dynamically on cache hit via os.Stat. Codec compatibility (H.264+AAC) tracked in streaming_manager.go codecCache. Comprehensive test suite: 20 test functions covering empty path, nil reader, case-insensitive tags, binary defaults, full track parsing (video+audio+subtitle), H264+AAC detection, HEVC non-compatibility, audio-only, no tracks, empty streams, unknown types, duration edge cases, invalid JSON, multiple video tracks, independent track indexing, whitespace trimming, startTime, null JSON, minimal valid, non-existent binary, timeout constant, plus integration tests (real ffprobe+ffmpeg MKV generation, context timeout)."
     },
     {
       "id": "T-009",
