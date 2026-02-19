@@ -145,6 +145,68 @@ func (uc *StreamTorrent) Execute(ctx context.Context, id domain.TorrentID, fileI
 	}, nil
 }
 
+// ExecuteRaw is the same as Execute but returns the raw ports.StreamReader
+// without wrapping it in a slidingPriorityReader. Use this when the caller
+// manages download priorities externally (e.g. FSM-based streaming with
+// PriorityManager).
+func (uc *StreamTorrent) ExecuteRaw(ctx context.Context, id domain.TorrentID, fileIndex int) (StreamResult, error) {
+	if uc.Engine == nil {
+		return StreamResult{}, errors.New("engine not configured")
+	}
+
+	session, err := uc.Engine.GetSession(ctx, id)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) && uc.Repo != nil {
+			record, repoErr := uc.Repo.Get(ctx, id)
+			if repoErr != nil {
+				if errors.Is(repoErr, domain.ErrNotFound) {
+					return StreamResult{}, repoErr
+				}
+				return StreamResult{}, wrapRepo(repoErr)
+			}
+
+			session, err = openSessionFromRecord(ctx, uc.Engine, record)
+			if err != nil {
+				if errors.Is(err, errMissingSource) {
+					return StreamResult{}, domain.ErrNotFound
+				}
+				return StreamResult{}, wrapEngine(err)
+			}
+			if err := session.Start(); err != nil {
+				_ = session.Stop()
+				return StreamResult{}, wrapEngine(err)
+			}
+		} else if errors.Is(err, domain.ErrNotFound) {
+			return StreamResult{}, err
+		} else {
+			return StreamResult{}, wrapEngine(err)
+		}
+	}
+
+	_ = uc.Engine.FocusSession(ctx, id)
+
+	file, err := session.SelectFile(fileIndex)
+	if err != nil {
+		return StreamResult{}, ErrInvalidFileIndex
+	}
+
+	reader, err := session.NewReader(file)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return StreamResult{}, ErrInvalidFileIndex
+		}
+		return StreamResult{}, wrapEngine(err)
+	}
+	if reader == nil {
+		return StreamResult{}, errors.New("stream reader not available")
+	}
+
+	return StreamResult{
+		Reader: reader,
+		File:   file,
+	}, nil
+}
+
 // applyStartupGradient sets a graduated priority on the initial window instead
 // of a flat PriorityHigh. The first 4 MB gets PriorityHigh so those pieces
 // arrive fastest, then graduated bands so the torrent client focuses on the

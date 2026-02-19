@@ -52,8 +52,6 @@ func main() {
 		slog.String("httpAddr", cfg.HTTPAddr),
 		slog.String("logLevel", cfg.LogLevel),
 		slog.String("logFormat", cfg.LogFormat),
-		slog.String("storageMode", cfg.StorageMode),
-		slog.Int64("memoryLimitBytes", cfg.MemoryLimitBytes),
 		slog.String("hlsDir", cfg.HLSDir),
 		slog.String("dataDir", cfg.TorrentDataDir),
 	)
@@ -76,7 +74,6 @@ func main() {
 	}
 
 	repo := mongorepo.NewRepository(mongoClient, cfg.MongoDatabase, cfg.MongoCollection)
-	settingsRepo := mongorepo.NewStorageSettingsRepository(mongoClient, cfg.MongoDatabase)
 	watchHistoryRepo := sessionmongo.NewWatchHistoryRepository(mongoClient, cfg.MongoDatabase)
 	encodingSettingsRepo := mongorepo.NewEncodingSettingsRepository(mongoClient, cfg.MongoDatabase)
 	hlsSettingsRepo := mongorepo.NewHLSSettingsRepository(mongoClient, cfg.MongoDatabase)
@@ -84,12 +81,6 @@ func main() {
 
 	if err := repo.EnsureIndexes(ctx); err != nil {
 		logger.Warn("mongo ensure indexes failed", slog.String("error", err.Error()))
-	}
-
-	if limit, ok, err := settingsRepo.GetMemoryLimitBytes(ctx); err != nil {
-		logger.Warn("storage settings load failed", slog.String("error", err.Error()))
-	} else if ok {
-		cfg.MemoryLimitBytes = limit
 	}
 
 	if enc, ok, err := encodingSettingsRepo.GetEncodingSettings(ctx); err != nil {
@@ -103,14 +94,20 @@ func main() {
 	if hls, ok, err := hlsSettingsRepo.GetHLSSettings(ctx); err != nil {
 		logger.Warn("hls settings load failed", slog.String("error", err.Error()))
 	} else if ok {
-		if hls.MemBufSizeMB > 0 {
-			cfg.HLSMemBufSizeBytes = int64(hls.MemBufSizeMB) * 1024 * 1024
+		if hls.SegmentDuration > 0 {
+			cfg.HLSSegmentDuration = hls.SegmentDuration
 		}
-		if hls.CacheSizeMB > 0 {
-			cfg.HLSCacheSizeBytes = int64(hls.CacheSizeMB) * 1024 * 1024
+		if hls.RAMBufSizeMB > 0 {
+			cfg.HLSRAMBufSizeMB = hls.RAMBufSizeMB
 		}
-		if hls.CacheMaxAgeHours > 0 {
-			cfg.HLSCacheMaxAgeH = int64(hls.CacheMaxAgeHours)
+		if hls.PrebufferMB > 0 {
+			cfg.HLSPrebufferMB = hls.PrebufferMB
+		}
+		if hls.WindowBeforeMB > 0 {
+			cfg.HLSWindowBeforeMB = hls.WindowBeforeMB
+		}
+		if hls.WindowAfterMB > 0 {
+			cfg.HLSWindowAfterMB = hls.WindowAfterMB
 		}
 	}
 
@@ -122,11 +119,8 @@ func main() {
 	}
 
 	engine, err := anacrolix.New(anacrolix.Config{
-		DataDir:          cfg.TorrentDataDir,
-		StorageMode:      cfg.StorageMode,
-		MemoryLimitBytes: cfg.MemoryLimitBytes,
-		MemorySpillDir:   cfg.MemorySpillDir,
-		MaxSessions:      cfg.MaxSessions,
+		DataDir:     cfg.TorrentDataDir,
+		MaxSessions: cfg.MaxSessions,
 	})
 	if err != nil {
 		logger.Error("torrent engine init failed", slog.String("error", err.Error()))
@@ -163,22 +157,21 @@ func main() {
 	stateUC := usecase.GetTorrentState{Engine: engine}
 	listStateUC := usecase.ListActiveTorrentStates{Engine: engine}
 	mediaProbe := ffprobe.New(cfg.FFProbePath)
-	storageSettings := app.NewStorageSettingsManager(engine, settingsRepo)
 	playerSettings := player.NewPlayerSettingsManager(engine, playerSettingsRepo, currentTorrentID)
 
 	hlsCfg := apihttp.HLSConfig{
-		FFMPEGPath:        cfg.FFMPEGPath,
-		FFProbePath:       cfg.FFProbePath,
-		BaseDir:           cfg.HLSDir,
-		DataDir:           cfg.TorrentDataDir,
-		ListenAddr:        cfg.HTTPAddr,
-		Preset:            cfg.HLSPreset,
-		CRF:               cfg.HLSCRF,
-		AudioBitrate:      cfg.HLSAudioBitrate,
-		MaxCacheSizeBytes: cfg.HLSCacheSizeBytes,
-		MaxCacheAge:       time.Duration(cfg.HLSCacheMaxAgeH) * time.Hour,
-		MemBufSizeBytes:   cfg.HLSMemBufSizeBytes,
-		SegmentDuration:   cfg.HLSSegmentDuration,
+		FFMPEGPath:      cfg.FFMPEGPath,
+		FFProbePath:     cfg.FFProbePath,
+		BaseDir:         cfg.HLSDir,
+		DataDir:         cfg.TorrentDataDir,
+		Preset:          cfg.HLSPreset,
+		CRF:             cfg.HLSCRF,
+		AudioBitrate:    cfg.HLSAudioBitrate,
+		SegmentDuration: cfg.HLSSegmentDuration,
+		RAMBufSizeMB:    cfg.HLSRAMBufSizeMB,
+		PrebufferMB:     cfg.HLSPrebufferMB,
+		WindowBeforeMB:  cfg.HLSWindowBeforeMB,
+		WindowAfterMB:   cfg.HLSWindowAfterMB,
 	}
 
 	options := []apihttp.ServerOption{
@@ -190,7 +183,6 @@ func main() {
 		apihttp.WithStreamTorrent(streamUC),
 		apihttp.WithGetTorrentState(stateUC),
 		apihttp.WithListTorrentStates(listStateUC),
-		apihttp.WithStorageSettings(storageSettings),
 		apihttp.WithHLS(hlsCfg),
 		apihttp.WithMediaProbe(mediaProbe, cfg.TorrentDataDir),
 		apihttp.WithWatchHistory(watchHistoryRepo),

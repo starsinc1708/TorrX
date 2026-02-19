@@ -1,16 +1,8 @@
 package apihttp
 
 import (
-	"fmt"
 	"io"
-	"log/slog"
-	"os"
-	"strings"
-
-	"torrentstream/internal/usecase"
 )
-
-const quasiCompleteThreshold = 0.95
 
 // MediaDataSource abstracts how media data is provided to FFmpeg.
 type MediaDataSource interface {
@@ -41,171 +33,16 @@ func (s *directFileSource) Close() error {
 	return nil
 }
 
-// httpStreamSource serves via an internal HTTP range endpoint.
-type httpStreamSource struct {
-	url    string
-	reader io.ReadCloser
-}
-
-func (s *httpStreamSource) InputSpec() (string, io.ReadCloser) { return s.url, nil }
-func (s *httpStreamSource) SupportsSeek() bool                 { return false }
-func (s *httpStreamSource) SeekTo(int64) error                 { return nil }
-func (s *httpStreamSource) Close() error {
-	if s.reader != nil {
-		return s.reader.Close()
-	}
-	return nil
-}
-
-// pipeSource streams partial downloads through a buffered reader pipe.
-type pipeSource struct {
-	buffered *bufferedStreamReader
-}
-
-func (s *pipeSource) InputSpec() (string, io.ReadCloser) {
-	return "pipe:0", s.buffered
-}
-func (s *pipeSource) SupportsSeek() bool { return true }
-func (s *pipeSource) SeekTo(offset int64) error {
-	// The buffered reader wraps a seekable torrent reader.
-	// For seek, we'd need to close and reopen — not supported
-	// through the buffered reader. Return nil (no-op) and rely
-	// on FFmpeg's -ss flag for software seek.
-	return nil
-}
-func (s *pipeSource) Close() error {
-	return s.buffered.Close()
-}
-
-// BufferedReader returns the underlying bufferedStreamReader for rate limiting.
-func (s *pipeSource) BufferedReader() *bufferedStreamReader {
-	return s.buffered
-}
-
-// partialDirectSource reads a partially downloaded file from disk while
-// keeping the torrent reader open to continue downloading.
-type partialDirectSource struct {
-	path   string
-	reader io.ReadCloser
-}
-
-func (s *partialDirectSource) InputSpec() (string, io.ReadCloser) { return s.path, nil }
-func (s *partialDirectSource) SupportsSeek() bool                 { return false }
-func (s *partialDirectSource) SeekTo(int64) error                 { return nil }
-func (s *partialDirectSource) Close() error {
-	if s.reader != nil {
-		return s.reader.Close()
-	}
-	return nil
-}
-
-// newDataSource determines the best data source for the given stream result
-// and creates the appropriate MediaDataSource implementation.
-// Returns the data source and the subtitle source path (if any).
-func (m *hlsManager) newDataSource(result usecase.StreamResult, job *hlsJob, key hlsKey) (MediaDataSource, string) {
-	fileComplete := result.File.Length <= 0 ||
-		(result.File.BytesCompleted > 0 && result.File.BytesCompleted >= result.File.Length)
-
-	isQuasiComplete := !fileComplete &&
-		result.File.Length > 0 &&
-		result.File.BytesCompleted > 0 &&
-		float64(result.File.BytesCompleted)/float64(result.File.Length) >= quasiCompleteThreshold
-
-	subtitleSourcePath := ""
-
-	if m.dataDir != "" {
-		candidatePath, pathErr := resolveDataFilePath(m.dataDir, result.File.Path)
-		if pathErr == nil {
-			if info, statErr := os.Stat(candidatePath); statErr == nil && !info.IsDir() {
-				subtitleSourcePath = candidatePath
-				if fileComplete || isQuasiComplete {
-					// Fully downloaded (or quasi-complete) — direct file read.
-					m.logger.Info("hls using directFileSource",
-						slog.String("path", candidatePath),
-						slog.Bool("quasiComplete", isQuasiComplete),
-					)
-					return &directFileSource{path: candidatePath, reader: result.Reader}, subtitleSourcePath
-				}
-				if info.Size() >= 10*1024*1024 && info.Size() < result.File.Length {
-					// Partial download AND the physical file is shorter than declared
-					// (non-preallocating storage). Header region is available.
-					seekOK := job.seekSeconds == 0
-					if !seekOK {
-						// For seeks, estimate if the target byte offset falls within
-						// available data so FFmpeg can use fast input-seeking on a
-						// real file instead of slow output-seeking through a pipe.
-						_, _, dur := m.getVideoResolutionWithDuration(candidatePath)
-						if dur > 0 {
-							estByte := estimateByteOffset(job.seekSeconds, dur, result.File.Length)
-							seekOK = estByte >= 0 && estByte < int64(float64(info.Size())*0.9)
-						}
-					}
-					if seekOK {
-						m.logger.Info("hls using partialDirectSource",
-							slog.String("path", candidatePath),
-							slog.Int64("available", info.Size()),
-							slog.Int64("total", result.File.Length),
-							slog.Float64("seekSeconds", job.seekSeconds),
-						)
-						return &partialDirectSource{path: candidatePath, reader: result.Reader}, subtitleSourcePath
-					}
-				}
-			}
-		}
-	}
-
-	// When seeking and the file is not served directly from disk, use the
-	// internal HTTP stream endpoint so FFmpeg can use HTTP range requests
-	// (container-level seeking). This avoids output-seeking through the
-	// entire file from byte 0, which is infeasible for partial downloads.
-	if job.seekSeconds > 0 && m.listenAddr != "" {
-		host := m.listenAddr
-		if strings.HasPrefix(host, ":") {
-			host = "127.0.0.1" + host
-		}
-		url := fmt.Sprintf("http://%s/torrents/%s/stream?fileIndex=%d",
-			host, string(key.id), key.fileIndex)
-		m.logger.Info("hls using httpStreamSource",
-			slog.String("url", url),
-		)
-		return &httpStreamSource{url: url, reader: result.Reader}, subtitleSourcePath
-	}
-
-	// Default: pipe through buffered stream reader.
-	m.logger.Info("hls using pipeSource")
-	buffered := newBufferedStreamReader(result.Reader, defaultStreamBufSize, m.logger)
-	return &pipeSource{buffered: buffered}, subtitleSourcePath
-}
-
 // dataSourceFilePath extracts the file path from a data source, if it's a
-// local file source. Returns empty string for pipe and HTTP sources.
+// local file source. Returns empty string for pipe sources.
 func dataSourceFilePath(ds MediaDataSource) string {
 	switch s := ds.(type) {
 	case *directFileSource:
-		return s.path
-	case *partialDirectSource:
 		return s.path
 	default:
 		return ""
 	}
 }
 
-// dataSourceIsPartialDirect returns true if the data source is a partial direct read.
-func dataSourceIsPartialDirect(ds MediaDataSource) bool {
-	_, ok := ds.(*partialDirectSource)
-	return ok
-}
-
-// dataSourceIsPipe returns true if the data source is a pipe.
-func dataSourceIsPipe(ds MediaDataSource) bool {
-	_, ok := ds.(*pipeSource)
-	return ok
-}
-
 // Ensure all implementations satisfy the interface.
-var (
-	_ MediaDataSource = (*directFileSource)(nil)
-	_ MediaDataSource = (*httpStreamSource)(nil)
-	_ MediaDataSource = (*pipeSource)(nil)
-	_ MediaDataSource = (*partialDirectSource)(nil)
-)
+var _ MediaDataSource = (*directFileSource)(nil)

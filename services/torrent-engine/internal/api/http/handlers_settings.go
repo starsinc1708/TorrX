@@ -3,7 +3,6 @@ package apihttp
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -12,103 +11,12 @@ import (
 	"torrentstream/internal/domain"
 )
 
-type storageSettingsResponse struct {
-	Mode             string `json:"mode"`
-	MemoryLimitBytes int64  `json:"memoryLimitBytes"`
-	SpillToDisk      bool   `json:"spillToDisk"`
-	DataDir          string `json:"dataDir,omitempty"`
-	HLSDir           string `json:"hlsDir,omitempty"`
-}
-
-type updateStorageSettingsRequest struct {
-	MemoryLimitBytes *int64 `json:"memoryLimitBytes"`
-}
-
 type playerSettingsResponse struct {
 	CurrentTorrentID domain.TorrentID `json:"currentTorrentId,omitempty"`
 }
 
 type updatePlayerSettingsRequest struct {
 	CurrentTorrentID *string `json:"currentTorrentId"`
-}
-
-func (s *Server) handleStorageSettings(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.handleGetStorageSettings(w, r)
-	case http.MethodPatch, http.MethodPut:
-		s.handleUpdateStorageSettings(w, r)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-func (s *Server) handleGetStorageSettings(w http.ResponseWriter, _ *http.Request) {
-	if s.storage == nil {
-		writeError(w, http.StatusNotImplemented, "not_configured", "storage settings are not configured")
-		return
-	}
-	writeJSON(w, http.StatusOK, s.currentStorageSettings())
-}
-
-func (s *Server) handleUpdateStorageSettings(w http.ResponseWriter, r *http.Request) {
-	if s.storage == nil {
-		writeError(w, http.StatusNotImplemented, "not_configured", "storage settings are not configured")
-		return
-	}
-
-	var body updateStorageSettingsRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json")
-		return
-	}
-	if body.MemoryLimitBytes == nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "memoryLimitBytes is required")
-		return
-	}
-	if *body.MemoryLimitBytes < 0 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "memoryLimitBytes must be >= 0")
-		return
-	}
-
-	if err := s.storage.SetMemoryLimitBytes(*body.MemoryLimitBytes); err != nil {
-		if errors.Is(err, domain.ErrUnsupported) {
-			writeError(w, http.StatusConflict, "unsupported_operation", err.Error())
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to update storage settings")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, s.currentStorageSettings())
-}
-
-func (s *Server) currentStorageSettings() storageSettingsResponse {
-	mode := "disk"
-	limit := int64(0)
-	spill := false
-	if s.storage != nil {
-		mode = strings.TrimSpace(s.storage.StorageMode())
-		if mode == "" {
-			mode = "disk"
-		}
-		limit = s.storage.MemoryLimitBytes()
-		spill = s.storage.SpillToDisk()
-	}
-	dataDir := s.mediaDataDir
-	hlsDir := ""
-	if s.hls != nil {
-		hlsDir = s.hls.baseDir
-	}
-	return storageSettingsResponse{
-		Mode:             mode,
-		MemoryLimitBytes: limit,
-		SpillToDisk:      spill,
-		DataDir:          dataDir,
-		HLSDir:           hlsDir,
-	}
 }
 
 func (s *Server) handlePlayerSettings(w http.ResponseWriter, r *http.Request) {
@@ -361,34 +269,41 @@ func (s *Server) handleUpdateHLSSettings(w http.ResponseWriter, r *http.Request)
 
 	// Merge with current values for partial updates.
 	current := s.hlsSettingsCtrl.Get()
-	if body.MemBufSizeMB == 0 {
-		body.MemBufSizeMB = current.MemBufSizeMB
-	}
-	if body.CacheSizeMB == 0 {
-		body.CacheSizeMB = current.CacheSizeMB
-	}
-	if body.CacheMaxAgeHours == 0 {
-		body.CacheMaxAgeHours = current.CacheMaxAgeHours
-	}
 	if body.SegmentDuration == 0 {
 		body.SegmentDuration = current.SegmentDuration
 	}
+	if body.RAMBufSizeMB == 0 {
+		body.RAMBufSizeMB = current.RAMBufSizeMB
+	}
+	if body.PrebufferMB == 0 {
+		body.PrebufferMB = current.PrebufferMB
+	}
+	if body.WindowBeforeMB == 0 {
+		body.WindowBeforeMB = current.WindowBeforeMB
+	}
+	if body.WindowAfterMB == 0 {
+		body.WindowAfterMB = current.WindowAfterMB
+	}
 
 	// Validation.
-	if body.MemBufSizeMB < 0 || body.MemBufSizeMB > 4096 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "memBufSizeMB must be 0-4096")
-		return
-	}
-	if body.CacheSizeMB < 100 || body.CacheSizeMB > 102400 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "cacheSizeMB must be 100-102400")
-		return
-	}
-	if body.CacheMaxAgeHours < 1 || body.CacheMaxAgeHours > 8760 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "cacheMaxAgeHours must be 1-8760")
-		return
-	}
 	if body.SegmentDuration < 2 || body.SegmentDuration > 10 {
 		writeError(w, http.StatusBadRequest, "invalid_request", "segmentDuration must be 2-10")
+		return
+	}
+	if body.RAMBufSizeMB < 4 || body.RAMBufSizeMB > 4096 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "ramBufSizeMB must be 4-4096")
+		return
+	}
+	if body.PrebufferMB < 1 || body.PrebufferMB > 1024 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "prebufferMB must be 1-1024")
+		return
+	}
+	if body.WindowBeforeMB < 1 || body.WindowBeforeMB > 1024 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "windowBeforeMB must be 1-1024")
+		return
+	}
+	if body.WindowAfterMB < 4 || body.WindowAfterMB > 4096 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "windowAfterMB must be 4-4096")
 		return
 	}
 

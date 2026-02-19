@@ -6,19 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"runtime"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/anacrolix/torrent"
-	"github.com/anacrolix/torrent/storage"
 
 	"torrentstream/internal/domain"
 	"torrentstream/internal/domain/ports"
-	"torrentstream/internal/storage/memory"
 )
 
 var ErrSessionNotFound = domain.ErrNotFound
@@ -32,12 +28,9 @@ const defaultMaxConns = 55
 var ErrSessionLimitReached = errors.New("session limit reached")
 
 type Config struct {
-	DataDir          string
-	StorageMode      string
-	MemoryLimitBytes int64
-	MemorySpillDir   string
-	MaxSessions      int           // 0 = unlimited
-	IdleTimeout      time.Duration // auto-stop sessions idle longer than this; 0 = disabled
+	DataDir     string
+	MaxSessions int           // 0 = unlimited
+	IdleTimeout time.Duration // auto-stop sessions idle longer than this; 0 = disabled
 }
 
 type Engine struct {
@@ -56,33 +49,13 @@ type Engine struct {
 	rateLimits     map[domain.TorrentID]int64 // per-torrent download rate limit (bytes/sec); 0 = unlimited
 	maxSessions    int
 	idleTimeout    time.Duration
-	storageMode    string
-	memoryProvider *memory.Provider
 	reaperCancel   context.CancelFunc
 }
 
 func New(cfg Config) (*Engine, error) {
 	clientConfig := torrent.NewDefaultClientConfig()
-	mode := strings.ToLower(strings.TrimSpace(cfg.StorageMode))
-	if mode == "" {
-		mode = "disk"
-	}
-
-	var provider *memory.Provider
-	switch mode {
-	case "disk":
-		if cfg.DataDir != "" {
-			clientConfig.DataDir = cfg.DataDir
-		}
-	case "memory", "hybrid":
-		spillDir := resolveSpillDir(cfg.DataDir, cfg.MemorySpillDir)
-		provider = memory.NewProvider(
-			memory.WithMaxBytes(cfg.MemoryLimitBytes),
-			memory.WithSpillDir(spillDir),
-		)
-		clientConfig.DefaultStorage = storage.NewResourcePieces(provider)
-	default:
-		return nil, fmt.Errorf("unsupported storage mode: %s", cfg.StorageMode)
+	if cfg.DataDir != "" {
+		clientConfig.DataDir = cfg.DataDir
 	}
 
 	client, err := torrent.NewClient(clientConfig)
@@ -91,18 +64,16 @@ func New(cfg Config) (*Engine, error) {
 	}
 
 	e := &Engine{
-		client:         client,
-		sessions:       make(map[domain.TorrentID]*torrent.Torrent),
-		modes:          make(map[domain.TorrentID]domain.SessionMode),
-		speeds:         make(map[domain.TorrentID]speedSample),
-		peakCompleted:  make(map[domain.TorrentID]int64),
-		peakBitfield:   make(map[domain.TorrentID][]byte),
-		lastAccess:     make(map[domain.TorrentID]time.Time),
-		rateLimits:     make(map[domain.TorrentID]int64),
-		maxSessions:    cfg.MaxSessions,
-		idleTimeout:    cfg.IdleTimeout,
-		storageMode:    mode,
-		memoryProvider: provider,
+		client:        client,
+		sessions:      make(map[domain.TorrentID]*torrent.Torrent),
+		modes:         make(map[domain.TorrentID]domain.SessionMode),
+		speeds:        make(map[domain.TorrentID]speedSample),
+		peakCompleted: make(map[domain.TorrentID]int64),
+		peakBitfield:  make(map[domain.TorrentID][]byte),
+		lastAccess:    make(map[domain.TorrentID]time.Time),
+		rateLimits:    make(map[domain.TorrentID]int64),
+		maxSessions:   cfg.MaxSessions,
+		idleTimeout:   cfg.IdleTimeout,
 	}
 
 	if e.idleTimeout > 0 {
@@ -124,37 +95,7 @@ func NewWithClient(client *torrent.Client) *Engine {
 		peakBitfield:  make(map[domain.TorrentID][]byte),
 		lastAccess:    make(map[domain.TorrentID]time.Time),
 		rateLimits:    make(map[domain.TorrentID]int64),
-		storageMode:   "disk",
 	}
-}
-
-func (e *Engine) StorageMode() string {
-	if e == nil || e.storageMode == "" {
-		return "disk"
-	}
-	return e.storageMode
-}
-
-func (e *Engine) MemoryLimitBytes() int64 {
-	if e == nil || e.memoryProvider == nil {
-		return 0
-	}
-	return e.memoryProvider.MaxBytes()
-}
-
-func (e *Engine) SpillToDisk() bool {
-	if e == nil || e.memoryProvider == nil {
-		return false
-	}
-	return e.memoryProvider.SpillToDisk()
-}
-
-func (e *Engine) SetMemoryLimitBytes(limit int64) error {
-	if e == nil || e.memoryProvider == nil {
-		return domain.ErrUnsupported
-	}
-	e.memoryProvider.SetMaxBytes(limit)
-	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1048,14 +989,3 @@ func (e *Engine) evictIdleSessionLocked() (*torrent.Torrent, domain.TorrentID, e
 	return t, evictID, nil
 }
 
-func resolveSpillDir(dataDir, configured string) string {
-	dir := strings.TrimSpace(configured)
-	if dir != "" {
-		return dir
-	}
-	base := strings.TrimSpace(dataDir)
-	if base == "" {
-		return ""
-	}
-	return filepath.Join(base, ".ram-spill")
-}

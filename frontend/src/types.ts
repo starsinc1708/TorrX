@@ -86,18 +86,6 @@ export interface ApiErrorPayload {
   };
 }
 
-export interface StorageSettings {
-  mode: string;
-  memoryLimitBytes: number;
-  spillToDisk: boolean;
-  dataDir?: string;
-  hlsDir?: string;
-}
-
-export interface UpdateStorageSettingsInput {
-  memoryLimitBytes: number;
-}
-
 export interface EncodingSettings {
   preset: string;
   crf: number;
@@ -105,10 +93,11 @@ export interface EncodingSettings {
 }
 
 export interface HLSSettings {
-  memBufSizeMB: number;
-  cacheSizeMB: number;
-  cacheMaxAgeHours: number;
   segmentDuration: number;
+  ramBufSizeMB: number;
+  prebufferMB: number;
+  windowBeforeMB: number;
+  windowAfterMB: number;
 }
 
 export interface PlayerSettings {

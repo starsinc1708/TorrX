@@ -6,18 +6,20 @@ import (
 )
 
 type HLSSettings struct {
-	MemBufSizeMB     int `json:"memBufSizeMB"`
-	CacheSizeMB      int `json:"cacheSizeMB"`
-	CacheMaxAgeHours int `json:"cacheMaxAgeHours"`
-	SegmentDuration  int `json:"segmentDuration"`
+	SegmentDuration int `json:"segmentDuration"`
+	RAMBufSizeMB    int `json:"ramBufSizeMB"`
+	PrebufferMB     int `json:"prebufferMB"`
+	WindowBeforeMB  int `json:"windowBeforeMB"`
+	WindowAfterMB   int `json:"windowAfterMB"`
 }
 
 type HLSSettingsEngine interface {
-	MemBufSizeBytes() int64
-	CacheSizeBytes() int64
-	CacheMaxAge() time.Duration
 	SegmentDuration() int
-	UpdateHLSSettings(memBufSize, cacheSizeBytes, cacheMaxAgeHours int64, segmentDuration int)
+	RAMBufSizeBytes() int64
+	PrebufferBytes() int64
+	WindowBeforeBytes() int64
+	WindowAfterBytes() int64
+	UpdateHLSSettings(settings HLSSettings)
 }
 
 type HLSSettingsStore interface {
@@ -41,21 +43,17 @@ func NewHLSSettingsManager(engine HLSSettingsEngine, store HLSSettingsStore) *HL
 
 func (m *HLSSettingsManager) Get() HLSSettings {
 	return HLSSettings{
-		MemBufSizeMB:     int(m.engine.MemBufSizeBytes() / (1024 * 1024)),
-		CacheSizeMB:      int(m.engine.CacheSizeBytes() / (1024 * 1024)),
-		CacheMaxAgeHours: int(m.engine.CacheMaxAge().Hours()),
-		SegmentDuration:  m.engine.SegmentDuration(),
+		SegmentDuration: m.engine.SegmentDuration(),
+		RAMBufSizeMB:    int(m.engine.RAMBufSizeBytes() / (1024 * 1024)),
+		PrebufferMB:     int(m.engine.PrebufferBytes() / (1024 * 1024)),
+		WindowBeforeMB:  int(m.engine.WindowBeforeBytes() / (1024 * 1024)),
+		WindowAfterMB:   int(m.engine.WindowAfterBytes() / (1024 * 1024)),
 	}
 }
 
 func (m *HLSSettingsManager) Update(s HLSSettings) error {
 	prev := m.Get()
-	m.engine.UpdateHLSSettings(
-		int64(s.MemBufSizeMB)*1024*1024,
-		int64(s.CacheSizeMB)*1024*1024,
-		int64(s.CacheMaxAgeHours),
-		s.SegmentDuration,
-	)
+	m.engine.UpdateHLSSettings(s)
 
 	if m.store == nil {
 		return nil
@@ -64,12 +62,7 @@ func (m *HLSSettingsManager) Update(s HLSSettings) error {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 	if err := m.store.SetHLSSettings(ctx, s); err != nil {
-		m.engine.UpdateHLSSettings(
-			int64(prev.MemBufSizeMB)*1024*1024,
-			int64(prev.CacheSizeMB)*1024*1024,
-			int64(prev.CacheMaxAgeHours),
-			prev.SegmentDuration,
-		)
+		m.engine.UpdateHLSSettings(prev)
 		return err
 	}
 	return nil

@@ -38,6 +38,7 @@ type DeleteTorrentUseCase interface {
 
 type StreamTorrentUseCase interface {
 	Execute(ctx context.Context, id domain.TorrentID, fileIndex int) (usecase.StreamResult, error)
+	ExecuteRaw(ctx context.Context, id domain.TorrentID, fileIndex int) (usecase.StreamResult, error)
 }
 
 type GetTorrentStateUseCase interface {
@@ -46,13 +47,6 @@ type GetTorrentStateUseCase interface {
 
 type ListTorrentStatesUseCase interface {
 	Execute(ctx context.Context) ([]domain.SessionState, error)
-}
-
-type StorageSettingsController interface {
-	StorageMode() string
-	MemoryLimitBytes() int64
-	SpillToDisk() bool
-	SetMemoryLimitBytes(limit int64) error
 }
 
 type WatchHistoryStore interface {
@@ -103,10 +97,9 @@ type Server struct {
 	streamTorrent   StreamTorrentUseCase
 	getState        GetTorrentStateUseCase
 	listStates      ListTorrentStatesUseCase
-	storage         StorageSettingsController
 	repo            domainports.TorrentRepository
 	openAPIPath     string
-	hls             *hlsManager
+	hls             *StreamJobManager
 	hlsCfg          *HLSConfig
 	mediaProbe      MediaProbe
 	mediaDataDir    string
@@ -192,12 +185,6 @@ func WithListTorrentStates(uc ListTorrentStatesUseCase) ServerOption {
 	}
 }
 
-func WithStorageSettings(storage StorageSettingsController) ServerOption {
-	return func(s *Server) {
-		s.storage = storage
-	}
-}
-
 func WithWatchHistory(store WatchHistoryStore) ServerOption {
 	return func(s *Server) {
 		s.watchHistory = store
@@ -259,11 +246,9 @@ func (s *Server) SetHLSSettings(ctrl HLSSettingsController) {
 }
 
 // HLSCacheTotalSize returns the current total size of the HLS segment cache in bytes.
+// In the FSM architecture there is no persistent segment cache, so this always returns 0.
 func (s *Server) HLSCacheTotalSize() int64 {
-	if s.hls == nil || s.hls.cache == nil {
-		return 0
-	}
-	return s.hls.cache.TotalSize()
+	return 0
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -366,7 +351,7 @@ func NewServer(create CreateTorrentUseCase, opts ...ServerOption) *Server {
 		if s.hlsCfg != nil {
 			cfg = *s.hlsCfg
 		}
-		s.hls = newHLSManager(s.streamTorrent, s.engine, cfg, s.logger)
+		s.hls = newStreamJobManager(s.streamTorrent, s.engine, cfg, s.logger)
 	}
 
 	s.wsHub = newWSHub(s.logger)
@@ -375,7 +360,6 @@ func NewServer(create CreateTorrentUseCase, opts ...ServerOption) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/torrents", s.handleTorrents)
 	mux.HandleFunc("/torrents/", s.handleTorrentByID)
-	mux.HandleFunc("/settings/storage", s.handleStorageSettings)
 	mux.HandleFunc("/settings/encoding", s.handleEncodingSettings)
 	mux.HandleFunc("/settings/hls", s.handleHLSSettings)
 	mux.HandleFunc("/settings/player", s.handlePlayerSettings)

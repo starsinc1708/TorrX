@@ -211,10 +211,7 @@ services:
       MONGO_DB: "torrentstream"
       MONGO_COLLECTION: "torrents"
       TORRENT_DATA_DIR: "/data"
-      TORRENT_STORAGE_MODE: "hybrid"
-      TORRENT_MEMORY_LIMIT_BYTES: "1073741824"
       HLS_DIR: "/hls"
-      HLS_MEMBUF_SIZE_BYTES: "268435456"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
       OTEL_SERVICE_NAME: "torrent-engine"
     volumes:

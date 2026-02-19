@@ -13,6 +13,8 @@ export type TimelinePreviewState = {
 interface VideoTimelineProps {
   progressPercent: number;
   bufferedTimelineRanges: Array<{ start: number; end: number }>;
+  /** Fraction [0–1] of the torrent file already downloaded. Shows a subtle teal band. */
+  downloadPercent?: number;
   timelinePreview: TimelinePreviewState;
   onSeek: (e: React.MouseEvent<HTMLDivElement>) => void;
   onSeekStart: (e: React.MouseEvent<HTMLDivElement>) => void;
@@ -25,6 +27,7 @@ export const VideoTimeline = React.memo(forwardRef<HTMLDivElement, VideoTimeline
     {
       progressPercent,
       bufferedTimelineRanges,
+      downloadPercent,
       timelinePreview,
       onSeek,
       onSeekStart,
@@ -67,6 +70,13 @@ export const VideoTimeline = React.memo(forwardRef<HTMLDivElement, VideoTimeline
         </div>
       )}
       <div className="relative h-1 overflow-hidden rounded-full bg-white/20 transition-all duration-150 group-hover:h-1.5">
+        {/* Torrent download extent — teal band showing fraction of file downloaded */}
+        {downloadPercent !== undefined && downloadPercent > 0 && (
+          <div
+            className="absolute bottom-0 top-0 rounded-full bg-emerald-400/25 transition-[width] duration-500"
+            style={{ width: `${Math.min(100, downloadPercent * 100)}%` }}
+          />
+        )}
         <div className="pointer-events-none absolute inset-0 z-10 rounded-full">
           {bufferedTimelineRanges.map((range, index) => {
             const width = Math.max(0, range.end - range.start);

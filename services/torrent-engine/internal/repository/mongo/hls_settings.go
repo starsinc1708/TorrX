@@ -15,12 +15,13 @@ import (
 const hlsSettingsID = "hls"
 
 type hlsSettingsDoc struct {
-	ID               string `bson:"_id"`
-	MemBufSizeMB     int    `bson:"memBufSizeMB"`
-	CacheSizeMB      int    `bson:"cacheSizeMB"`
-	CacheMaxAgeHours int    `bson:"cacheMaxAgeHours"`
-	SegmentDuration  int    `bson:"segmentDuration"`
-	UpdatedAt        int64  `bson:"updatedAt"`
+	ID              string `bson:"_id"`
+	SegmentDuration int    `bson:"segmentDuration"`
+	RAMBufSizeMB    int    `bson:"ramBufSizeMB"`
+	PrebufferMB     int    `bson:"prebufferMB"`
+	WindowBeforeMB  int    `bson:"windowBeforeMB"`
+	WindowAfterMB   int    `bson:"windowAfterMB"`
+	UpdatedAt       int64  `bson:"updatedAt"`
 }
 
 type HLSSettingsRepository struct {
@@ -41,21 +42,23 @@ func (r *HLSSettingsRepository) GetHLSSettings(ctx context.Context) (app.HLSSett
 		return app.HLSSettings{}, false, err
 	}
 	return app.HLSSettings{
-		MemBufSizeMB:     doc.MemBufSizeMB,
-		CacheSizeMB:      doc.CacheSizeMB,
-		CacheMaxAgeHours: doc.CacheMaxAgeHours,
-		SegmentDuration:  doc.SegmentDuration,
+		SegmentDuration: doc.SegmentDuration,
+		RAMBufSizeMB:    doc.RAMBufSizeMB,
+		PrebufferMB:     doc.PrebufferMB,
+		WindowBeforeMB:  doc.WindowBeforeMB,
+		WindowAfterMB:   doc.WindowAfterMB,
 	}, true, nil
 }
 
 func (r *HLSSettingsRepository) SetHLSSettings(ctx context.Context, settings app.HLSSettings) error {
 	update := bson.M{
 		"$set": bson.M{
-			"memBufSizeMB":     settings.MemBufSizeMB,
-			"cacheSizeMB":      settings.CacheSizeMB,
-			"cacheMaxAgeHours": settings.CacheMaxAgeHours,
-			"segmentDuration":  settings.SegmentDuration,
-			"updatedAt":        time.Now().Unix(),
+			"segmentDuration": settings.SegmentDuration,
+			"ramBufSizeMB":    settings.RAMBufSizeMB,
+			"prebufferMB":     settings.PrebufferMB,
+			"windowBeforeMB":  settings.WindowBeforeMB,
+			"windowAfterMB":   settings.WindowAfterMB,
+			"updatedAt":       time.Now().Unix(),
 		},
 	}
 	_, err := r.collection.UpdateOne(

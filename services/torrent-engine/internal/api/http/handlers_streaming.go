@@ -1,14 +1,12 @@
 package apihttp
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"mime"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,18 +37,17 @@ func (s *Server) handleStreamTorrent(w http.ResponseWriter, r *http.Request, id 
 
 	// Fast path: serve complete files directly from disk, bypassing the
 	// torrent reader. This gives better Range handling, ETag support, and
-	// kernel-level sendfile.
-	if s.mediaDataDir != "" && s.getState != nil {
-		if state, stateErr := s.getState.Execute(r.Context(), domain.TorrentID(id)); stateErr == nil {
-			if fileIndex < len(state.Files) {
-				file := state.Files[fileIndex]
-				if file.Length > 0 && file.BytesCompleted >= file.Length {
-					filePath, pathErr := resolveDataFilePath(s.mediaDataDir, file.Path)
-					if pathErr == nil {
-						if info, statErr := os.Stat(filePath); statErr == nil && !info.IsDir() {
-							http.ServeFile(w, r, filePath)
-							return
-						}
+	// kernel-level sendfile. Works for both active and stopped/completed
+	// torrents by falling back to the repository when the live session is
+	// unavailable (see resolveFileRef).
+	if s.mediaDataDir != "" {
+		if file, ok := s.resolveFileRef(r.Context(), domain.TorrentID(id), fileIndex); ok {
+			if file.Length > 0 && file.BytesCompleted >= file.Length {
+				filePath, pathErr := resolveDataFilePath(s.mediaDataDir, file.Path)
+				if pathErr == nil {
+					if info, statErr := os.Stat(filePath); statErr == nil && !info.IsDir() {
+						http.ServeFile(w, r, filePath)
+						return
 					}
 				}
 			}
@@ -180,23 +177,7 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 		return
 	}
 
-	// Per-IP rate limiting for HLS segment and playlist requests.
-	clientIP, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if clientIP == "" {
-		clientIP = r.RemoteAddr
-	}
-	if s.hls != nil && s.hls.segLimiter != nil && !s.hls.segLimiter.Allow(clientIP) {
-		http.Error(w, "too many requests", http.StatusTooManyRequests)
-		return
-	}
-
 	segmentName := path.Join(tail[1:]...)
-	key := hlsKey{
-		id:            domain.TorrentID(id),
-		fileIndex:     fileIndex,
-		audioTrack:    audioTrack,
-		subtitleTrack: subtitleTrack,
-	}
 
 	// Handle seek request: POST /torrents/{id}/hls/{fileIndex}/seek
 	if segmentName == "seek" {
@@ -208,7 +189,7 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 		return
 	}
 
-	job, err := s.hls.ensureJob(domain.TorrentID(id), fileIndex, audioTrack, subtitleTrack)
+	job, err := s.hls.EnsureJob(domain.TorrentID(id), fileIndex, audioTrack, subtitleTrack)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to start hls")
 		return
@@ -223,22 +204,13 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 		}
 
 		if job.err != nil {
-			// The job may have been replaced by a seek — re-fetch the
-			// current job before attempting an auto-restart.
-			if current, _ := s.hls.ensureJob(domain.TorrentID(id), fileIndex, audioTrack, subtitleTrack); current != nil && current != job {
+			// The job may have been replaced by a seek — re-fetch.
+			if current, _ := s.hls.EnsureJob(domain.TorrentID(id), fileIndex, audioTrack, subtitleTrack); current != nil && current != job {
 				job = current
 				select {
 				case <-job.ready:
 				case <-time.After(90 * time.Second):
 					writeError(w, http.StatusServiceUnavailable, "stream_unavailable", "hls playlist not ready after seek")
-					return
-				}
-			} else if restarted, ok := s.hls.tryAutoRestart(key, job, "request_error"); ok && restarted != nil {
-				job = restarted
-				select {
-				case <-job.ready:
-				case <-time.After(90 * time.Second):
-					writeError(w, http.StatusServiceUnavailable, "stream_unavailable", "hls playlist not ready after auto-restart")
 					return
 				}
 			}
@@ -252,15 +224,8 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 				slog.Int("fileIndex", fileIndex),
 				slog.Int("requestedSubtitleTrack", subtitleTrack),
 			)
-			fallbackKey := hlsKey{
-				id:            domain.TorrentID(id),
-				fileIndex:     fileIndex,
-				audioTrack:    audioTrack,
-				subtitleTrack: -1,
-			}
-			key = fallbackKey
 			subtitleTrack = -1
-			job, err = s.hls.ensureJob(domain.TorrentID(id), fileIndex, audioTrack, -1)
+			job, err = s.hls.EnsureJob(domain.TorrentID(id), fileIndex, audioTrack, -1)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "internal_error", "failed to start hls without subtitles")
 				return
@@ -274,21 +239,16 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 		}
 
 		if job.err != nil {
-			// Return 503 for transient errors (context cancelled by seek, etc.)
-			// so the player retries instead of treating it as a permanent failure.
 			writeError(w, http.StatusServiceUnavailable, "stream_unavailable", "hls stream error: "+job.err.Error())
 			return
 		}
 
-		// For multi-variant jobs, job.playlist points to master.m3u8;
-		// for single-variant it points to index.m3u8. Both are rewritten
-		// with query params so the client forwards track selection.
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
 
-		if cached := cachedRewrittenPlaylist(job, job.playlist, audioTrack, subtitleTrack); cached != nil {
+		if cached := cachedRewrittenPlaylistStream(job, job.playlist, audioTrack, subtitleTrack); cached != nil {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(cached)
 			return
@@ -300,7 +260,7 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 			return
 		}
 		playlistBytes = rewritePlaylistSegmentURLs(playlistBytes, audioTrack, subtitleTrack)
-		storeRewrittenPlaylist(job, job.playlist, audioTrack, subtitleTrack, playlistBytes)
+		storeRewrittenPlaylistStream(job, job.playlist, audioTrack, subtitleTrack, playlistBytes)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(playlistBytes)
 		return
@@ -318,7 +278,7 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
 
-		if cached := cachedRewrittenPlaylist(job, variantPath, audioTrack, subtitleTrack); cached != nil {
+		if cached := cachedRewrittenPlaylistStream(job, variantPath, audioTrack, subtitleTrack); cached != nil {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(cached)
 			return
@@ -330,75 +290,24 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 			return
 		}
 		playlistBytes = rewritePlaylistSegmentURLs(playlistBytes, audioTrack, subtitleTrack)
-		storeRewrittenPlaylist(job, variantPath, audioTrack, subtitleTrack, playlistBytes)
+		storeRewrittenPlaylistStream(job, variantPath, audioTrack, subtitleTrack, playlistBytes)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(playlistBytes)
 		return
 	}
 
-	// Extract variant prefix for cache lookups (e.g. "v0" from "v0/seg-00001.ts").
-	variant := ""
-	if job.multiVariant {
-		if idx := strings.IndexByte(segmentName, '/'); idx > 0 && segmentName[0] == 'v' {
-			variant = segmentName[:idx]
-		}
-	}
-
+	// Serve segment from job working directory.
 	segmentPath, err := safeSegmentPath(job.dir, segmentName)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid segment path")
 		return
 	}
 
-	// 1. Try in-memory buffer (zero disk I/O).
-	if s.hls.memBuf != nil {
-		if data, ok := s.hls.memBuf.Get(segmentPath); ok {
-			w.Header().Set("Content-Type", "video/MP2T")
-			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
-			w.Header().Set("Pragma", "no-cache")
-			w.Header().Set("Expires", "0")
-			http.ServeContent(w, r, segmentName, time.Time{}, bytes.NewReader(data))
-			return
-		}
-	}
-
-	// 2. Try serving from job working directory.
 	if _, err := os.Stat(segmentPath); err != nil {
-		// Segment not in job dir — try the HLS cache.
-		if os.IsNotExist(err) && s.hls != nil && s.hls.cache != nil {
-			if timeSec, ok := segmentTimeOffset(job, segmentName); ok {
-				if cached, found := s.hls.cache.Lookup(string(id), fileIndex, audioTrack, subtitleTrack, s.hls.cacheVariant(variant), timeSec); found {
-					// 3a. Check memBuf under cache path.
-					if s.hls.memBuf != nil {
-						if data, memOk := s.hls.memBuf.Get(cached.Path); memOk {
-							w.Header().Set("Content-Type", "video/MP2T")
-							w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-							http.ServeContent(w, r, segmentName, time.Time{}, bytes.NewReader(data))
-							return
-						}
-					}
-					// 3b. Serve from disk cache, async promote to memBuf.
-					w.Header().Set("Content-Type", "video/MP2T")
-					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-					http.ServeFile(w, r, cached.Path)
-					if s.hls.memBuf != nil {
-						go func(p string) {
-							if raw, readErr := os.ReadFile(p); readErr == nil {
-								s.hls.memBuf.Put(p, raw)
-							}
-						}(cached.Path)
-					}
-					return
-				}
-			}
-			// Segment not yet produced by FFmpeg and not in cache.
-			// Return 503 (not 404) so HLS.js treats this as a retryable
-			// transient error rather than a permanent "not found".
-			w.Header().Set("Retry-After", "1")
-			writeError(w, http.StatusServiceUnavailable, "stream_unavailable", "segment not yet available")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "segment unavailable")
+		// Segment not yet produced by FFmpeg.
+		// Return 503 so HLS.js treats this as a retryable transient error.
+		w.Header().Set("Retry-After", "1")
+		writeError(w, http.StatusServiceUnavailable, "stream_unavailable", "segment not yet available")
 		return
 	}
 
@@ -407,14 +316,6 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request, id string, ta
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
 	http.ServeFile(w, r, segmentPath)
-	// Async promote to memBuf so subsequent requests (re-watch, multi-client) hit RAM.
-	if s.hls.memBuf != nil {
-		go func(p string) {
-			if raw, readErr := os.ReadFile(p); readErr == nil {
-				s.hls.memBuf.Put(p, raw)
-			}
-		}(segmentPath)
-	}
 }
 
 type seekResponse struct {
@@ -434,14 +335,14 @@ func (s *Server) handleHLSSeek(w http.ResponseWriter, r *http.Request, id domain
 		return
 	}
 
-	job, seekMode, err := s.hls.seekJob(id, fileIndex, audioTrack, subtitleTrack, seekTime)
+	job, seekMode, err := s.hls.SeekJob(id, fileIndex, audioTrack, subtitleTrack, seekTime)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to start hls seek")
 		return
 	}
 
-	// Cache or soft seek: no FFmpeg restart needed, return immediately.
-	if seekMode == SeekModeCache || seekMode == SeekModeSoft {
+	// Soft seek: no FFmpeg restart needed, return immediately.
+	if seekMode == SeekModeSoft {
 		writeJSON(w, http.StatusOK, seekResponse{
 			SeekTime: seekTime,
 			SeekMode: seekMode.String(),
@@ -476,7 +377,7 @@ func (s *Server) handleHLSSeek(w http.ResponseWriter, r *http.Request, id domain
 			slog.Int("requestedSubtitleTrack", subtitleTrack),
 			slog.Float64("seekTime", seekTime),
 		)
-		job, seekMode, err = s.hls.seekJob(id, fileIndex, audioTrack, -1, seekTime)
+		job, seekMode, err = s.hls.SeekJob(id, fileIndex, audioTrack, -1, seekTime)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal_error", "failed to start hls seek without subtitles")
 			return
@@ -723,9 +624,8 @@ func rewritePlaylistSegmentURLs(playlist []byte, audioTrack, subtitleTrack int) 
 // calls in the hot path when HLS.js polls the manifest rapidly.
 const playlistCacheTTL = 500 * time.Millisecond
 
-// cachedRewrittenPlaylist returns the cached rewritten playlist if the
-// source file hasn't changed and track parameters match. Returns nil on miss.
-func cachedRewrittenPlaylist(job *hlsJob, playlistPath string, audioTrack, subtitleTrack int) []byte {
+// cachedRewrittenPlaylistStream returns the cached rewritten playlist if the
+func cachedRewrittenPlaylistStream(job *StreamJob, playlistPath string, audioTrack, subtitleTrack int) []byte {
 	job.rewrittenMu.RLock()
 	defer job.rewrittenMu.RUnlock()
 
@@ -735,11 +635,9 @@ func cachedRewrittenPlaylist(job *hlsJob, playlistPath string, audioTrack, subti
 		job.rewrittenSubTrack != subtitleTrack {
 		return nil
 	}
-	// Within TTL, serve from cache without any disk I/O.
 	if time.Since(job.rewrittenCacheTime) < playlistCacheTTL {
 		return job.rewrittenPlaylist
 	}
-	// TTL expired — verify the underlying playlist file hasn't changed.
 	info, err := os.Stat(playlistPath)
 	if err != nil || info.ModTime().After(job.rewrittenPlaylistMod) {
 		return nil
@@ -747,8 +645,8 @@ func cachedRewrittenPlaylist(job *hlsJob, playlistPath string, audioTrack, subti
 	return job.rewrittenPlaylist
 }
 
-// storeRewrittenPlaylist caches the rewritten playlist bytes for future requests.
-func storeRewrittenPlaylist(job *hlsJob, playlistPath string, audioTrack, subtitleTrack int, data []byte) {
+// storeRewrittenPlaylistStream is the StreamJob variant of storeRewrittenPlaylist.
+func storeRewrittenPlaylistStream(job *StreamJob, playlistPath string, audioTrack, subtitleTrack int, data []byte) {
 	mod := time.Now()
 	if info, err := os.Stat(playlistPath); err == nil {
 		mod = info.ModTime()
@@ -764,6 +662,28 @@ func storeRewrittenPlaylist(job *hlsJob, playlistPath string, audioTrack, subtit
 	job.rewrittenMu.Unlock()
 }
 
+// resolveFileRef returns the FileRef for the given fileIndex from the live
+// engine session (most accurate BytesCompleted) or, if the torrent is not
+// active, from the persisted repository record. This allows the fast path
+// and direct-playback handler to work for stopped/completed torrents.
+func (s *Server) resolveFileRef(ctx context.Context, id domain.TorrentID, fileIndex int) (domain.FileRef, bool) {
+	if s.getState != nil {
+		if state, err := s.getState.Execute(ctx, id); err == nil {
+			if fileIndex < len(state.Files) {
+				return state.Files[fileIndex], true
+			}
+		}
+	}
+	if s.repo != nil {
+		if record, err := s.repo.Get(ctx, id); err == nil {
+			if fileIndex < len(record.Files) {
+				return record.Files[fileIndex], true
+			}
+		}
+	}
+	return domain.FileRef{}, false
+}
+
 // handleDirectPlayback serves a browser-ready file for direct playback.
 // For .mp4/.m4v files it serves the original. For .mkv files with H.264+AAC
 // it serves a cached remux (codec copy to MP4). Returns:
@@ -771,22 +691,16 @@ func storeRewrittenPlaylist(job *hlsJob, playlistPath string, audioTrack, subtit
 //   - 202: remux in progress (retry later)
 //   - 404: not available (incomplete file or unsupported format)
 func (s *Server) handleDirectPlayback(w http.ResponseWriter, r *http.Request, id string, fileIndex int) {
-	if s.getState == nil || s.mediaDataDir == "" {
+	if s.mediaDataDir == "" {
 		http.NotFound(w, r)
 		return
 	}
 
-	state, err := s.getState.Execute(r.Context(), domain.TorrentID(id))
-	if err != nil {
+	file, ok := s.resolveFileRef(r.Context(), domain.TorrentID(id), fileIndex)
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	if fileIndex >= len(state.Files) {
-		http.NotFound(w, r)
-		return
-	}
-
-	file := state.Files[fileIndex]
 	if file.Length <= 0 || file.BytesCompleted < file.Length {
 		http.NotFound(w, r)
 		return

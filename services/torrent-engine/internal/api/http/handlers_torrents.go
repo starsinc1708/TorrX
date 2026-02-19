@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -443,12 +442,8 @@ func (s *Server) handleDeleteTorrent(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 
-	if s.hls != nil && s.hls.cache != nil {
-		s.hls.cache.PurgeTorrent(id)
-	}
-	if s.hls != nil && s.hls.memBuf != nil {
-		s.hls.memBuf.PurgePrefix(filepath.Join(s.hls.baseDir, id))
-		s.hls.memBuf.PurgePrefix(filepath.Join(s.hls.cache.BaseDir(), id))
+	if s.hls != nil {
+		s.hls.PurgeTorrent(domain.TorrentID(id))
 	}
 
 	s.invalidateMediaProbeCache(domain.TorrentID(id))
@@ -574,12 +569,8 @@ func (s *Server) handleBulkDelete(w http.ResponseWriter, r *http.Request) {
 			results = append(results, bulkResultItem{ID: id, OK: false, Error: err.Error()})
 			continue
 		}
-		if s.hls != nil && s.hls.cache != nil {
-			s.hls.cache.PurgeTorrent(id)
-		}
-		if s.hls != nil && s.hls.memBuf != nil {
-			s.hls.memBuf.PurgePrefix(filepath.Join(s.hls.baseDir, id))
-			s.hls.memBuf.PurgePrefix(filepath.Join(s.hls.cache.BaseDir(), id))
+		if s.hls != nil {
+			s.hls.PurgeTorrent(domain.TorrentID(id))
 		}
 		s.invalidateMediaProbeCache(domain.TorrentID(id))
 		results = append(results, bulkResultItem{ID: id, OK: true})

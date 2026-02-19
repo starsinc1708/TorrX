@@ -15,9 +15,6 @@ type Config struct {
 	LogFormat          string
 	TorrentDataDir     string
 	OpenAPIPath        string
-	StorageMode        string
-	MemoryLimitBytes   int64
-	MemorySpillDir     string
 	MaxSessions        int   // 0 = unlimited
 	MinDiskSpaceBytes  int64 // minimum free disk space; 0 = disabled (default 1 GB)
 	FFMPEGPath         string
@@ -26,10 +23,11 @@ type Config struct {
 	HLSPreset          string
 	HLSCRF             int
 	HLSAudioBitrate    string
-	HLSCacheSizeBytes  int64
-	HLSCacheMaxAgeH    int64
-	HLSMemBufSizeBytes   int64
-	HLSSegmentDuration   int
+	HLSSegmentDuration int
+	HLSRAMBufSizeMB    int
+	HLSPrebufferMB     int
+	HLSWindowBeforeMB  int
+	HLSWindowAfterMB   int
 	CORSAllowedOrigins []string // empty = allow all (dev mode)
 }
 
@@ -43,9 +41,6 @@ func LoadConfig() Config {
 		LogFormat:         strings.ToLower(getEnv("LOG_FORMAT", "text")),
 		TorrentDataDir:    getEnv("TORRENT_DATA_DIR", "data"),
 		OpenAPIPath:       getEnv("OPENAPI_PATH", ""),
-		StorageMode:       strings.ToLower(getEnv("TORRENT_STORAGE_MODE", "disk")),
-		MemoryLimitBytes:   getEnvInt64("TORRENT_MEMORY_LIMIT_BYTES", 0),
-		MemorySpillDir:     getEnv("TORRENT_MEMORY_SPILL_DIR", ""),
 		MaxSessions:        int(getEnvInt64("TORRENT_MAX_SESSIONS", 0)),
 		MinDiskSpaceBytes:  getEnvInt64("TORRENT_MIN_DISK_SPACE_BYTES", 0),
 		FFMPEGPath:        getEnv("FFMPEG_PATH", "ffmpeg"),
@@ -54,10 +49,11 @@ func LoadConfig() Config {
 		HLSPreset:         getEnv("HLS_PRESET", "veryfast"),
 		HLSCRF:            int(getEnvInt64("HLS_CRF", 23)),
 		HLSAudioBitrate:   getEnv("HLS_AUDIO_BITRATE", "128k"),
-		HLSCacheSizeBytes:  getEnvInt64("HLS_CACHE_SIZE_BYTES", 10<<30),
-		HLSCacheMaxAgeH:    getEnvInt64("HLS_CACHE_MAX_AGE_HOURS", 168),
-		HLSMemBufSizeBytes:  getEnvInt64("HLS_MEMBUF_SIZE_BYTES", 256<<20),
-		HLSSegmentDuration:  int(getEnvInt64("HLS_SEGMENT_DURATION", 2)),
+		HLSSegmentDuration: int(getEnvInt64("HLS_SEGMENT_DURATION", 2)),
+		HLSRAMBufSizeMB:    int(getEnvInt64("HLS_RAMBUF_SIZE_MB", 16)),
+		HLSPrebufferMB:     int(getEnvInt64("HLS_PREBUFFER_MB", 4)),
+		HLSWindowBeforeMB:  int(getEnvInt64("HLS_WINDOW_BEFORE_MB", 8)),
+		HLSWindowAfterMB:   int(getEnvInt64("HLS_WINDOW_AFTER_MB", 32)),
 		CORSAllowedOrigins: parseCSV(getEnv("CORS_ALLOWED_ORIGINS", "")),
 	}
 }

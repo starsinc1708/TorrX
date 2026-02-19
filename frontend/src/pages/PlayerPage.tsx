@@ -13,6 +13,7 @@ import { useVideoPlayer } from '../hooks/useVideoPlayer';
 import { getTorrentPlayerPreferences, patchTorrentPlayerPreferences } from '../playerPreferences';
 import type { PlayerHealth, TorrentRecord, WatchPosition } from '../types';
 import { formatTime, isVideoFile } from '../utils';
+import { cn } from '../lib/cn';
 import { getTorrentWatchState, upsertTorrentWatchState, type TorrentWatchState } from '../watchState';
 import { useToast } from '../app/providers/ToastProvider';
 
@@ -38,6 +39,7 @@ const PlayerPage: React.FC = () => {
   const [resumeHintDismissed, setResumeHintDismissed] = useState(false);
   const [playerHealth, setPlayerHealth] = useState<PlayerHealth | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [filesPanelOpen, setFilesPanelOpen] = useState(true);
   const { toast } = useToast();
 
   const lastWatchKey = 'lastWatch';
@@ -497,8 +499,14 @@ const PlayerPage: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      <div className="grid h-full grid-rows-[1fr_auto] lg:grid-cols-[minmax(0,1fr)_minmax(320px,34vw)] lg:grid-rows-1">
-        <div className="relative min-h-0">
+      {/* Two independent blocks: player takes remaining space, files panel is fixed-size. */}
+      <div className="flex h-full flex-col overflow-hidden lg:flex-row">
+
+        {/* ── Player block ── explicit calc height on mobile so it never pushes into the files panel */}
+        <div className={cn(
+          'relative flex-none overflow-hidden lg:h-full lg:flex-1',
+          filesPanelOpen ? 'h-[calc(100%-35dvh)]' : 'h-full',
+        )}>
           <VideoPlayer
             videoRef={videoRef}
             streamUrl={streamUrl}
@@ -529,6 +537,8 @@ const PlayerPage: React.FC = () => {
             onOpenInfo={() => setInfoOpen(true)}
             playerHealth={playerHealth}
             onShowHealth={handleShowHealth}
+            filesPanelOpen={filesPanelOpen}
+            onToggleFilesPanel={() => setFilesPanelOpen((p) => !p)}
             resumeRequest={resumeRequest}
             onResumeHandled={(requestId) => {
               setResumeRequest((prev) => (prev && prev.requestId === requestId ? null : prev));
@@ -570,15 +580,19 @@ const PlayerPage: React.FC = () => {
           ) : null}
         </div>
 
-        <div className="min-h-0 overflow-hidden border-t border-border/70 lg:border-l lg:border-t-0">
-          <PlayerFilesPanel
-            files={availableFiles}
-            selectedFileIndex={selectedFileIndex}
-            sessionState={effectiveSessionState}
-            onSelectFile={handleSelectFile}
-            className="h-full max-h-[35dvh] lg:max-h-none"
-          />
-        </div>
+        {/* ── Files panel block ── fixed height on mobile, fixed width on desktop */}
+        {filesPanelOpen && (
+          <div className="h-[35dvh] flex-none overflow-hidden border-t border-border/70 lg:h-full lg:w-[clamp(300px,34vw,440px)] lg:border-l lg:border-t-0">
+            <PlayerFilesPanel
+              files={availableFiles}
+              selectedFileIndex={selectedFileIndex}
+              sessionState={effectiveSessionState}
+              onSelectFile={handleSelectFile}
+              className="h-full"
+            />
+          </div>
+        )}
+
       </div>
     </div>
   );

@@ -88,6 +88,10 @@ func (f *fakeStreamTorrent) Execute(ctx context.Context, id domain.TorrentID, fi
 	return f.result, f.err
 }
 
+func (f *fakeStreamTorrent) ExecuteRaw(ctx context.Context, id domain.TorrentID, fileIndex int) (usecase.StreamResult, error) {
+	return f.Execute(ctx, id, fileIndex)
+}
+
 type fakeGetTorrentState struct {
 	called int
 	id     domain.TorrentID
@@ -110,35 +114,6 @@ type fakeListTorrentStates struct {
 func (f *fakeListTorrentStates) Execute(ctx context.Context) ([]domain.SessionState, error) {
 	f.called++
 	return f.result, f.err
-}
-
-type fakeStorageSettings struct {
-	mode      string
-	limit     int64
-	spill     bool
-	setCalled int
-	setErr    error
-}
-
-func (f *fakeStorageSettings) StorageMode() string {
-	return f.mode
-}
-
-func (f *fakeStorageSettings) MemoryLimitBytes() int64 {
-	return f.limit
-}
-
-func (f *fakeStorageSettings) SpillToDisk() bool {
-	return f.spill
-}
-
-func (f *fakeStorageSettings) SetMemoryLimitBytes(limit int64) error {
-	f.setCalled++
-	if f.setErr != nil {
-		return f.setErr
-	}
-	f.limit = limit
-	return nil
 }
 
 type fakePlayerSettings struct {
@@ -924,74 +899,6 @@ func TestListTorrentStatesMissingStatus(t *testing.T) {
 	server.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d", w.Code)
-	}
-}
-
-func TestGetStorageSettings(t *testing.T) {
-	storage := &fakeStorageSettings{
-		mode:  "memory",
-		limit: 512 << 20,
-		spill: true,
-	}
-	server := NewServer(&fakeCreateTorrent{}, WithStorageSettings(storage))
-
-	req := httptest.NewRequest(http.MethodGet, "/settings/storage", nil)
-	w := httptest.NewRecorder()
-	server.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d", w.Code)
-	}
-	var resp struct {
-		Mode             string `json:"mode"`
-		MemoryLimitBytes int64  `json:"memoryLimitBytes"`
-		SpillToDisk      bool   `json:"spillToDisk"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.Mode != "memory" || resp.MemoryLimitBytes != storage.limit || !resp.SpillToDisk {
-		t.Fatalf("unexpected response: %+v", resp)
-	}
-}
-
-func TestUpdateStorageSettings(t *testing.T) {
-	storage := &fakeStorageSettings{
-		mode:  "memory",
-		limit: 128 << 20,
-		spill: true,
-	}
-	server := NewServer(&fakeCreateTorrent{}, WithStorageSettings(storage))
-
-	req := httptest.NewRequest(http.MethodPatch, "/settings/storage", bytes.NewBufferString(`{"memoryLimitBytes":268435456}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d", w.Code)
-	}
-	if storage.setCalled != 1 || storage.limit != 268435456 {
-		t.Fatalf("storage settings not updated: called=%d limit=%d", storage.setCalled, storage.limit)
-	}
-}
-
-func TestUpdateStorageSettingsUnsupported(t *testing.T) {
-	storage := &fakeStorageSettings{
-		mode:   "disk",
-		limit:  0,
-		spill:  false,
-		setErr: domain.ErrUnsupported,
-	}
-	server := NewServer(&fakeCreateTorrent{}, WithStorageSettings(storage))
-
-	req := httptest.NewRequest(http.MethodPatch, "/settings/storage", bytes.NewBufferString(`{"memoryLimitBytes":1048576}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.ServeHTTP(w, req)
-
-	if w.Code != http.StatusConflict {
 		t.Fatalf("status = %d", w.Code)
 	}
 }

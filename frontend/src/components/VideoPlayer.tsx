@@ -4,6 +4,8 @@ import {
   Activity,
   MonitorPlay,
   AlertTriangle,
+  PanelRightClose,
+  PanelRightOpen,
 } from 'lucide-react';
 import type { FileRef, MediaTrack, PlayerHealth, SessionState } from '../types';
 import type { HlsSeekResult, PrebufferPhase } from '../hooks/useVideoPlayer';
@@ -50,6 +52,8 @@ interface VideoPlayerProps {
   onOpenInfo?: () => void;
   playerHealth?: PlayerHealth | null;
   onShowHealth?: () => void;
+  filesPanelOpen?: boolean;
+  onToggleFilesPanel?: () => void;
   resumeRequest?: {
     requestId: number;
     fileIndex: number;
@@ -142,6 +146,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onOpenInfo,
   playerHealth,
   onShowHealth,
+  filesPanelOpen = true,
+  onToggleFilesPanel,
   resumeRequest,
   onResumeHandled,
   prebufferPhase = 'idle',
@@ -1368,6 +1374,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // runs past its reported mediaDuration (e.g. FFprobe underestimated VBR content).
   const displayDuration = Math.max(rawDisplayDuration, displayCurrentTime);
   const progressPercent = displayDuration > 0 ? Math.min(displayCurrentTime / displayDuration * 100, 100) : 0;
+  // Download fraction [0–1] for the currently playing file.
+  const downloadPercent = useMemo(() => {
+    const total = selectedFile?.length;
+    if (!total || total <= 0) return undefined;
+    const done = selectedFile?.bytesCompleted ?? 0;
+    return Math.min(1, done / total);
+  }, [selectedFile?.length, selectedFile?.bytesCompleted]);
   const indicatorStatus: RuntimePlaybackStatus | 'seeking' =
     seekStatus !== 'idle' ? seekStatus : runtimeStatus;
   const showStatusIndicator = indicatorStatus !== 'idle' && Boolean(streamUrl);
@@ -1470,6 +1483,17 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                         ) : null}
                       </Button>
                     ) : null}
+                    {onToggleFilesPanel ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                        onClick={onToggleFilesPanel}
+                        title={filesPanelOpen ? 'Hide files panel' : 'Show files panel'}
+                      >
+                        {filesPanelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+                      </Button>
+                    ) : null}
                   </div>
                 </div>
 
@@ -1521,6 +1545,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       ref={progressRef}
                       progressPercent={progressPercent}
                       bufferedTimelineRanges={bufferedTimelineRanges}
+                      downloadPercent={downloadPercent}
                       timelinePreview={timelinePreview}
                       onSeek={handleSeek}
                       onSeekStart={handleSeekStart}

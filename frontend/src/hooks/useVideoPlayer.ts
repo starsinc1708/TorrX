@@ -250,7 +250,13 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
     setPrebufferPhase('probing');
 
     const resumePos = resumePositionRef.current;
-    const fileComplete = sessionState?.progress != null && sessionState.progress >= 0.99;
+    // Per-file completion: check the selected file's own bytesCompleted rather
+    // than the overall torrent progress (which may be low in multi-file torrents
+    // even when one specific file is 100% done).
+    const fileTotal = selectedFile?.length ?? 0;
+    const liveFile = sessionState?.files?.find((f) => f.index === selectedFileIndex);
+    const fileDone = Math.max(liveFile?.bytesCompleted ?? 0, selectedFile?.bytesCompleted ?? 0);
+    const fileComplete = fileTotal > 0 && fileDone >= fileTotal;
 
     const maxRetries = 5;
     void (async () => {

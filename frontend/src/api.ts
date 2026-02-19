@@ -7,7 +7,6 @@ import type {
   MediaInfo,
   SessionState,
   SessionStateList,
-  StorageSettings,
   PlayerSettings,
   TorrentListFull,
   TorrentListSummary,
@@ -17,7 +16,6 @@ import type {
   TorrentSortBy,
   TorrentStatusFilter,
   TorrentView,
-  UpdateStorageSettingsInput,
   WatchPosition,
   PlayerHealth,
   SearchProviderInfo,
@@ -548,24 +546,6 @@ export const getMediaInfo = async (id: string, fileIndex: number): Promise<Media
     undefined,
     POLL_REQUEST_TIMEOUT_MS,
   );
-  return handleResponse(response);
-};
-
-export const getStorageSettings = async (): Promise<StorageSettings> => {
-  const response = await fetch(buildUrl('/settings/storage'));
-  return handleResponse(response);
-};
-
-export const updateStorageSettings = async (
-  input: UpdateStorageSettingsInput,
-): Promise<StorageSettings> => {
-  const response = await fetch(buildUrl('/settings/storage'), {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(input),
-  });
   return handleResponse(response);
 };
 

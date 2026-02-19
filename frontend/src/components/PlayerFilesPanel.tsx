@@ -3,7 +3,7 @@ import { File, FileImage, FileMusic, FileVideo } from 'lucide-react';
 
 import type { FileRef, SessionState } from '../types';
 import { cn } from '../lib/cn';
-import { formatBytes, formatPercent, isAudioFile, isImageFile, isVideoFile } from '../utils';
+import { decodePieceBitfield, formatBytes, formatPercent, formatSpeed, isAudioFile, isImageFile, isVideoFile } from '../utils';
 
 import PieceBar from './PieceBar';
 
@@ -21,6 +21,47 @@ const fileIcon = (file: FileRef) => {
   if (isImageFile(file.path)) return <FileImage className="h-4 w-4 text-primary" />;
   return <File className="h-4 w-4 text-muted-foreground" />;
 };
+
+function PiecesBlock({ sessionState }: { sessionState: SessionState }) {
+  const { numPieces, pieceBitfield, downloadSpeed, progress } = sessionState;
+
+  const downloadedPieces = useMemo(() => {
+    if (!pieceBitfield || !numPieces) return 0;
+    const pieces = decodePieceBitfield(pieceBitfield, numPieces);
+    return pieces.filter(Boolean).length;
+  }, [pieceBitfield, numPieces]);
+
+  const progressPercent = progress != null ? progress * 100 : numPieces ? (downloadedPieces / numPieces) * 100 : 0;
+  const isComplete = progressPercent >= 100;
+
+  return (
+    <div className="rounded-xl border border-border/70 bg-muted/10 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-baseline gap-2">
+          <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Pieces</span>
+          {numPieces ? (
+            <span className="text-[11px] tabular-nums text-muted-foreground">
+              <span className={cn('font-semibold', isComplete ? 'text-emerald-500' : 'text-foreground')}>
+                {downloadedPieces}
+              </span>
+              {' / '}
+              {numPieces}
+            </span>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-2 text-[11px] tabular-nums text-muted-foreground">
+          {downloadSpeed != null && downloadSpeed > 0 && !isComplete ? (
+            <span className="font-medium text-sky-500 dark:text-sky-400">↓ {formatSpeed(downloadSpeed)}</span>
+          ) : null}
+          <span className={cn('font-semibold', isComplete ? 'text-emerald-500' : '')}>
+            {progressPercent.toFixed(1)}%
+          </span>
+        </div>
+      </div>
+      <PieceBar numPieces={numPieces!} pieceBitfield={pieceBitfield!} height={14} />
+    </div>
+  );
+}
 
 export default function PlayerFilesPanel({
   files,
@@ -58,10 +99,7 @@ export default function PlayerFilesPanel({
       </div>
 
       {sessionState?.numPieces && sessionState.pieceBitfield ? (
-        <div className="rounded-xl border border-border/70 bg-muted/10 p-3">
-          <div className="mb-2 text-xs font-medium text-muted-foreground">Pieces</div>
-          <PieceBar numPieces={sessionState.numPieces} pieceBitfield={sessionState.pieceBitfield} height={8} />
-        </div>
+        <PiecesBlock sessionState={sessionState} />
       ) : null}
 
       {files.length === 0 ? (
@@ -115,9 +153,14 @@ export default function PlayerFilesPanel({
                     </div>
                   </div>
 
-                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-muted/80">
                     <div
-                      className={cn('h-full bg-primary', fileProg >= 1 ? 'bg-emerald-500' : '')}
+                      className={cn(
+                        'h-full transition-[width] duration-500',
+                        fileProg >= 1
+                          ? 'bg-emerald-500'
+                          : 'bg-gradient-to-r from-primary/80 to-primary',
+                      )}
                       style={{ width: `${Math.max(0, Math.min(100, fileProg * 100))}%` }}
                     />
                   </div>
