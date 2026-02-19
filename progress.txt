@@ -323,3 +323,36 @@ Format:
   - T-008 (FFprobe adapter, high, deps: T-004 ✅)
   - T-027 (scaffold torrent-search, high, deps: [])
 - Recommend T-036 or T-039 next as they are critical and newly unblocked
+
+## Iteration 9 — 2026-02-19 23:30
+**Task:** [T-036] Implement CatalogPage with torrent list and management
+**Status:** done
+**What was done:**
+- Verified all 7 components already fully implemented — no code changes needed
+- CatalogPage.tsx (203 lines): root page with selected torrent state, auto-refresh, navigation, bulk selection, tag management
+- TorrentList.tsx (517 lines): status filter tabs (All/Active/Completed/Stopped), text search, tag filter with autocomplete, sort controls (5 fields + asc/desc), bulk select with start/stop/delete, torrent tiles with PieceBar progress, speed badges, peer count, resume chips
+- TorrentDetails.tsx (265 lines): side panel with torrent info + PieceBar, session state (speed/peers), Start/Stop/Delete controls, dates, tag management, files list with per-file progress
+- AddTorrentModal.tsx (172 lines): dialog with Magnet tab (textarea) + File tab (upload), optional name, error handling, API integration
+- PieceBar.tsx (126 lines): canvas-based piece bitfield visualization, responsive with ResizeObserver, high DPI support
+- TagInput.tsx (151 lines): comma-separated input, autocomplete suggestions, removable chips, keyboard support
+- useTorrents.ts (517 lines): REST polling (5s/60s) + WebSocket, filtering/sorting, bulk/individual operations, circuit breaker, status counts
+- Ran npx tsc --noEmit — 0 errors
+- Ran npm run build — success (13.90s)
+**Issues found:**
+- None. Implementation was complete.
+**Notes for next session:**
+- T-036 is done and unblocks: T-046 (e2e integration, high, deps: T-036 ✅, T-037 ❌, T-039 ❌)
+- 10 tasks now done: T-003, T-004, T-006, T-007, T-010, T-015, T-018, T-019, T-035, T-036
+- Next tasks with all deps satisfied:
+  - T-039 (PlayerPage, critical, deps: T-035 ✅, T-019 ✅) — CRITICAL, UNBLOCKED
+  - T-008 (FFprobe adapter, high, deps: T-004 ✅)
+  - T-012 (torrent lifecycle, high, deps: T-007 ✅, T-010 ✅)
+  - T-020 (HLS seek/watchdog, high, deps: T-019 ✅)
+  - T-027 (scaffold torrent-search, high, deps: [])
+  - T-005 (middleware, medium, deps: T-003 ✅)
+  - T-009 (settings repos, medium, deps: T-004 ✅)
+  - T-011 (list view modes, medium, deps: T-010 ✅)
+  - T-014 (SyncState, medium, deps: T-006 ✅, T-007 ✅)
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅)
+  - T-017 (dormancy, medium, deps: T-015 ✅)
+- Recommend T-039 next as it is the remaining critical task with all deps satisfied
