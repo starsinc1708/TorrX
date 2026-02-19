@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 19
+    "completedTasks": 20
   },
   "tasks": [
     {
@@ -1238,8 +1238,8 @@
         "frontend/src/components/VideoTimeline.tsx",
         "frontend/src/hooks/useTimelinePreview.ts"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. All T-040 features already fully implemented — no code changes needed. (1) Audio track selection: VideoControls.tsx (lines 214-233) renders audio dropdown via DropdownMenu with track labels and active check marks. useVideoPlayer.ts (lines 96-99) derives audioTracks from mediaInfo, selectAudioTrack (lines 521-561) triggers server-side hlsSeek with new audio track in HLS mode before switching URL. (2) Subtitle selection with server-side burn-in: VideoControls.tsx (lines 237-267) renders subtitle dropdown with Off option and 'not loaded' indicator. selectSubtitleTrack (lines 563-597) calls hlsSeek with subtitleTrack param, triggering FFmpeg re-encode with subtitle burn-in. Both track switches synchronously destroy HLS.js instance before seek to prevent stale manifest requests. (3) Server seek integration: hlsSeekTo (lines 599-705 in useVideoPlayer.ts) implements debounced (300ms) seek with 3-attempt retry, handles 4 seek modes (soft/cache → local video.currentTime adjustment, hard/restart → update seekOffset + poll manifest + reload HLS). HlsSeekResult type exposes seekMode and localTarget to UI. (4) Timeline preview: useTimelinePreview.ts (311 lines) creates hidden video element with HLS.js attachment, canvas frame capture with 140ms throttle, token-based request deduplication, 900ms timeout, cleanup on unmount. VideoTimeline.tsx (107 lines) renders preview popup with frame image, loading spinner, and time label positioned at mouse cursor. (5) Media info fetching: useVideoPlayer.ts (lines 356-422) calls getMediaInfo on file selection, polls every 5s until tracks found (max 12 retries), handles startTime offset for PTS compensation. Build verified in T-039 (npx tsc --noEmit: 0 errors, npm run build: success) — no frontend code changed since (git diff clean)."
     },
     {
       "id": "T-041",

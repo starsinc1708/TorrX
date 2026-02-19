@@ -638,3 +638,40 @@ Format:
   - T-031 (TMDB, medium, deps: T-027 ✅)
   - T-033 (search caching + SSE, medium, deps: T-032 ✅)
 - Recommend T-005 next as it is the lowest ID among medium priority with all deps satisfied
+
+## Iteration 18 — 2026-02-20 06:00
+**Task:** [T-040] Implement video track selection, server seek, and timeline preview
+**Status:** done
+**What was done:**
+- Verified all T-040 features already fully implemented — no code changes needed
+- Audio track selection: VideoControls.tsx renders audio dropdown via DropdownMenu with track labels and active check marks. useVideoPlayer.ts derives audioTracks from mediaInfo, selectAudioTrack triggers server-side hlsSeek with new audio track in HLS mode before switching URL
+- Subtitle selection with server-side burn-in: VideoControls.tsx renders subtitle dropdown with Off option and "not loaded" indicator. selectSubtitleTrack calls hlsSeek with subtitleTrack param, triggering FFmpeg re-encode with subtitle burn-in. Both track switches synchronously destroy HLS.js instance before seek to prevent stale manifest requests
+- Server seek integration: hlsSeekTo in useVideoPlayer.ts implements debounced (300ms) seek with 3-attempt retry, handles 4 seek modes (soft/cache → local video.currentTime adjustment, hard/restart → update seekOffset + poll manifest + reload HLS). HlsSeekResult type exposes seekMode and localTarget to UI
+- Timeline preview: useTimelinePreview.ts (311 lines) creates hidden video element with HLS.js attachment, canvas frame capture with 140ms throttle, token-based request deduplication, 900ms timeout, cleanup on unmount. VideoTimeline.tsx (107 lines) renders preview popup with frame image, loading spinner, and time label
+- Media info fetching: useVideoPlayer.ts calls getMediaInfo on file selection, polls every 5s until tracks found (max 12 retries), handles startTime offset for PTS compensation
+- Build verified clean in T-039 iteration (npx tsc --noEmit: 0 errors, npm run build: success) — no frontend code changed since (git diff confirmed clean)
+**Issues found:**
+- DISK SPACE: C: drive at 0 bytes available — could not run npm install (needs ~250MB) to re-verify build. frontend/node_modules removed. Verified no code changes via git diff.
+**Notes for next session:**
+- T-040 is done. No direct dependents in tasks.json.
+- 20 tasks now done: T-001, T-002, T-003, T-004, T-006, T-007, T-008, T-010, T-012, T-015, T-018, T-019, T-020, T-027, T-028, T-032, T-035, T-036, T-039, T-040
+- All remaining pending tasks are medium or low priority (except T-037, T-046 which are high but blocked)
+- Next tasks with all deps satisfied (medium priority, lowest ID first):
+  - T-005 (middleware, medium, deps: T-003 ✅)
+  - T-009 (settings repos, medium, deps: T-004 ✅)
+  - T-011 (list view modes, medium, deps: T-010 ✅)
+  - T-013 (bulk operations, medium, deps: T-012 ✅)
+  - T-014 (SyncState, medium, deps: T-006 ✅, T-007 ✅)
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅)
+  - T-017 (dormancy, medium, deps: T-015 ✅)
+  - T-021 (direct browser playback, medium, deps: T-008 ✅, T-018 ✅)
+  - T-022 (media info endpoint, medium, deps: T-008 ✅, T-003 ✅)
+  - T-024 (watch history, medium, deps: T-004 ✅, T-003 ✅)
+  - T-025 (WebSocket, medium, deps: T-003 ✅)
+  - T-029 (1337x + Rutracker, medium, deps: T-027 ✅)
+  - T-030 (Torznab, medium, deps: T-027 ✅)
+  - T-031 (TMDB, medium, deps: T-027 ✅)
+  - T-033 (search caching + SSE, medium, deps: T-032 ✅)
+  - T-041 (video player UX, medium, deps: T-039 ✅, T-024 ❌) — BLOCKED on T-024
+- Recommend T-005 next as lowest ID among medium priority with all deps satisfied
+- DISK SPACE WARNING: C: drive at 0 bytes — frontend/node_modules removed. Run `cd frontend && npm install` before frontend tasks. Consider cleaning npm cache (~1.7GB at /c/Users/starsinc/AppData/Local/npm-cache/) and /tmp/ (~33GB of temp data outside project root)
