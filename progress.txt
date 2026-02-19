@@ -562,3 +562,44 @@ Format:
   - T-031 (TMDB, medium, deps: T-027 ✅) — NOW UNBLOCKED
 - Recommend T-028 next as it is high priority with lowest ID among newly unblocked high-priority tasks
 - DISK SPACE WARNING: build linking fails due to insufficient disk space — may need cleanup before tasks requiring binary builds
+
+## Iteration 16 — 2026-02-20 04:00
+**Task:** [T-028] Implement Pirate Bay and DHT search providers
+**Status:** done
+**What was done:**
+- Verified all 3 source files already fully implemented — no code changes needed
+- Pirate Bay provider (bittorrentindex/provider.go, 224 lines): HTTP GET to apibay.org, JSON parsing, magnet link construction with trackers, "no results returned" sentinel filtering, limit/timeout/user-agent support
+- DHT provider (dht/provider.go, 183 lines): HTML scraping with magnet regex from btdig.com, HTML entity unescaping, dedup by info hash, stateless (seeders/leechers=0)
+- Common utilities (common/magnet.go 38 lines + common/parse.go 65 lines): NormalizeInfoHash, BuildMagnet, CleanHTMLText, ParseHumanSize with Cyrillic/comma support
+- Wrote 96 comprehensive tests across 4 files:
+  - bittorrentindex/provider_test.go: 41 tests (parseAPIItems, toResult edge cases, helpers, NewProvider, Search with httptest mock server, interface compliance)
+  - dht/provider_test.go: 33 tests (extractMagnets, magnetToResult edge cases, NewProvider, Search with httptest, dedup, interface compliance)
+  - common/magnet_test.go: 10 tests (NormalizeInfoHash 9 cases, BuildMagnet 10 cases)
+  - common/parse_test.go: 22 tests (ParseHumanSize 12 cases, CleanHTMLText 8 cases)
+- go vet ./... — clean, zero warnings
+- go test — all 96 tests pass (0 failures)
+**Issues found:**
+- Disk space at 0 bytes available — resolved by removing frontend/node_modules (247MB) to free space for go test linking
+**Notes for next session:**
+- T-028 is done and unblocks: T-032 (aggregator, high, deps: T-027 ✅, T-028 ✅) — NOW UNBLOCKED
+- 17 tasks now done: T-001, T-003, T-004, T-006, T-007, T-008, T-010, T-012, T-015, T-018, T-019, T-020, T-027, T-028, T-035, T-036, T-039
+- Next tasks with all deps satisfied:
+  - T-032 (aggregator + normalize + health, high, deps: T-027 ✅, T-028 ✅) — NOW UNBLOCKED
+  - T-029 (1337x + Rutracker, medium, deps: T-027 ✅)
+  - T-030 (Torznab/Jackett, high, deps: T-027 ✅)
+  - T-002 (multi-stage Dockerfiles, medium, deps: T-001 ✅)
+  - T-005 (middleware, medium, deps: T-003 ✅)
+  - T-009 (settings repos, medium, deps: T-004 ✅)
+  - T-011 (list view modes, medium, deps: T-010 ✅)
+  - T-013 (bulk operations, medium, deps: T-012 ✅)
+  - T-014 (SyncState, medium, deps: T-006 ✅, T-007 ✅)
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅)
+  - T-017 (dormancy, medium, deps: T-015 ✅)
+  - T-021 (direct browser playback, medium, deps: T-008 ✅, T-018 ✅)
+  - T-022 (media info endpoint, medium, deps: T-008 ✅, T-003 ✅)
+  - T-024 (watch history, medium, deps: T-004 ✅, T-003 ✅)
+  - T-025 (WebSocket, medium, deps: T-003 ✅)
+  - T-031 (TMDB, medium, deps: T-027 ✅)
+- Recommend T-032 next as it is high priority and now fully unblocked
+- DISK SPACE WARNING: frontend/node_modules was removed to free space — run `cd frontend && npm install` before frontend tasks
+- DISK SPACE: C: drive was at 0 bytes available, cleaned 247MB, still very tight
