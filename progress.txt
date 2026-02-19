@@ -456,3 +456,35 @@ Format:
   - T-016 (adaptive boosts, medium, deps: T-015 ✅)
   - T-017 (dormancy, medium, deps: T-015 ✅)
 - Recommend T-020 next as it is high priority with lowest ID among unblocked high-priority tasks
+
+## Iteration 13 — 2026-02-20 01:00
+**Task:** [T-020] Implement HLS seek, watchdog, and FSM state management
+**Status:** done
+**What was done:**
+- Verified all HLS seek, watchdog, and FSM functionality already fully implemented — no code changes needed
+- Seek endpoint: POST /torrents/{id}/hls/{fileIndex}/seek?time=&audioTrack=&subtitleTrack= returns JSON {seekTime, seekMode}
+- Soft seek: within 2×segDur or forward gap < 12s restart cost → returns existing job, no FFmpeg restart
+- Hard seek: kills old FFmpeg, creates new job directory, starts new StreamJob from byte offset, anti-seek-storm (150ms debounce), pre-boosts priority
+- Subtitle fallback: retries without subtitles if subtitle source unavailable during seek
+- FSM (streaming_fsm.go, 798 lines): 8 states (Idle/Loading/Ready/Playing/Buffering/Seeking/Completed/Error), run() loop with doLoading/doReady/doPlaying/doBuffering/doSeeking
+- Watchdog (doPlaying): 5s interval, L1 escalation at 30s (priority boost), L2 at 60s (→Buffering), hard stall at 90s/5min (→Error)
+- doBuffering: enhanced priority, 3s poll, 90s timeout, seek check
+- 19 test functions covering seek mode, FSM states, watchdog behavior, HTTP handler edge cases
+- go build, go vet, go test ./... all pass clean (0 failures)
+**Issues found:**
+- None. Implementation was fully complete with comprehensive test coverage.
+**Notes for next session:**
+- T-020 is done and unblocks: (no direct dependents in tasks.json)
+- 14 tasks now done: T-003, T-004, T-006, T-007, T-008, T-010, T-012, T-015, T-018, T-019, T-020, T-035, T-036, T-039
+- Next tasks with all deps satisfied:
+  - T-021 (direct browser playback, medium, deps: T-008 ✅, T-018 ✅)
+  - T-022 (direct playback, high, deps: T-008 ✅, T-019 ✅) — check actual deps
+  - T-027 (scaffold torrent-search, high, deps: [])
+  - T-005 (middleware, medium, deps: T-003 ✅)
+  - T-009 (settings repos, medium, deps: T-004 ✅)
+  - T-011 (list view modes, medium, deps: T-010 ✅)
+  - T-013 (bulk operations, medium, deps: T-012 ✅)
+  - T-014 (SyncState, medium, deps: T-006 ✅, T-007 ✅)
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅)
+  - T-017 (dormancy, medium, deps: T-015 ✅)
+- Recommend T-027 next as it is high priority with no dependencies, or T-022 if deps are met

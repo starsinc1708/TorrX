@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 13
+    "completedTasks": 14
   },
   "tasks": [
     {
@@ -610,8 +610,8 @@
         "services/torrent-engine/internal/api/http/streaming_fsm.go",
         "services/torrent-engine/internal/api/http/handlers_streaming.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. All HLS seek, watchdog, and FSM functionality already fully implemented — no code changes needed.\n\n**Seek implementation:**\n- handleHLSSeek (handlers_streaming.go:326): POST /torrents/{id}/hls/{fileIndex}/seek?time=&audioTrack=&subtitleTrack= endpoint. Returns seekResponse{SeekTime, SeekMode} JSON.\n- SeekJob (streaming_manager.go:287): Orchestrates seek — pre-computes mode without write lock, handles soft/hard seek, anti-seek-storm (150ms debounce), pre-boosts priority at seek target.\n- chooseSeekMode (streaming_manager.go:443): Soft if within 2×segDur of current position, or forward gap < 12s restart cost. Otherwise hard.\n- Soft seek: returns existing job immediately, no FFmpeg restart.\n- Hard seek: stops old job, creates new directory, starts new StreamJob from byte offset. Deferred old-job cleanup (5s drain + RemoveAll).\n- Subtitle fallback: if subtitle source unavailable during seek, retries without subtitles.\n\n**FSM (streaming_fsm.go, 798 lines):**\n- 8 states: Idle→Loading→Ready→Playing→Buffering→Seeking→Completed→Error\n- StreamJob.run(): FSM loop calling doLoading/doReady/doPlaying/doBuffering/doSeeking per state\n- doLoading: gets torrent reader (ExecuteRaw), creates data source (file or pipe), prebuffers, sets up PriorityManager\n- doReady: builds FFmpeg args (codec detection, multi-variant), starts FFmpeg, waits 120s for first segment\n- doPlaying: 5s watchdog interval, seek request check, FFmpeg exit/ENDLIST detection, priority window update, stall detection with 3-tier escalation\n- doSeeking: stops FFmpeg, closes data source, creates new directory, resets state, transitions to Loading\n- doBuffering: enhanced priority, 3s poll for new segments, 90s timeout\n\n**Watchdog (in doPlaying, streaming_fsm.go:494):**\n- Escalation L1 (30s stall): enhances priority window via PriorityManager.EnhanceHigh()\n- Escalation L2 (60s stall): transitions to Buffering state\n- Hard stall threshold: 90s (file source) / 5min (pipe source) → error\n- Segment tracking: detects new segment production by path+size changes\n\n**Tests (19 test functions covering seek, FSM, watchdog):**\n- TestSeekModeString (3 cases), TestStreamStateString (9 cases), TestDefaultWindowConfig, TestStreamJobIsRunning (8 states), TestStreamJobIsCompleted (2 cases), TestStreamJobSignalReady, TestStreamJobCheckSeekRequested (3 cases), TestStreamJobStartPlaybackIdempotent, TestStreamJobManagerChooseSeekMode (3 cases: nil/soft/hard), TestHLSSeekMissingTime, TestHLSSeekInvalidTime, TestHLSSeekNegativeTime, TestHLSSeekMethodNotAllowed, TestHLSSeekRouteAllowsPost, TestBuildStreamingFFmpegArgsSeek, plus integration tests.\n- go build, go vet, go test ./... all pass clean."
     },
     {
       "id": "T-021",
