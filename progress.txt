@@ -1243,3 +1243,23 @@ Format:
 - None
 **Notes for next session:**
 - T-038 done. 40 tasks complete. Next eligible medium-priority tasks: T-041 (video player UX), T-042 (SettingsPage encoding), T-043 (SettingsPage providers/theme), T-045 (WebSocket), T-051-T-053 (tests), T-055 (Docker health)
+
+## Iteration 21 — 2026-02-20 15:00
+**Task:** [T-041] Implement video player UX: shortcuts, auto-hide, screenshot, resume
+**Status:** done
+**What was done:**
+- Verified all 8 files already fully implemented: VideoPlayer.tsx, VideoOverlays.tsx, PlayerFilesPanel.tsx, useKeyboardShortcuts.ts, useAutoHideControls.ts, useScreenshot.ts, useWatchPositionSave.ts, useFullscreen.ts
+- Keyboard shortcuts (useKeyboardShortcuts.ts): space/k=play/pause, arrows=seek, m=mute, f=fullscreen, s=screenshot. Input-aware (ignores when typing)
+- Auto-hide controls (useAutoHideControls.ts): 3s timeout, shows on mouse move, pins visible when menu open or paused
+- Screenshot (useScreenshot.ts): canvas capture at native resolution, clipboard API with download fallback, flash overlay
+- Watch position save (useWatchPositionSave.ts): 5s interval autosave via API + local watchState, saves on unmount, supports seekOffset
+- Fullscreen (useFullscreen.ts): cross-browser with webkit/moz/ms prefixes, tracks fullscreenchange events
+- Resume prompt (PlayerPage.tsx): fetches watch position on load, shows banner with time + filename, resume/dismiss buttons, auto-recovery mode
+- Video overlays (VideoOverlays.tsx): loading/retrying/error states with spinner/retry button, track switch indicator, color-coded status indicator
+- File browser panel (PlayerFilesPanel.tsx): file list with type icons, per-file progress bars, PieceBar visualization, download speed
+- All hooks wired into VideoPlayer.tsx (lines 13-17 imports, 194-226 usage, 1346 keyboard shortcuts)
+- TypeScript compiles clean (npx tsc --noEmit), production build succeeds (npm run build)
+**Issues found:**
+- None. All acceptance criteria satisfied by existing implementation.
+**Notes for next session:**
+- T-041 done. 41 tasks complete. Next eligible pending tasks: T-042 (SettingsPage encoding, medium), T-045 (WebSocket integration, medium), T-051 (torrent-engine unit tests, medium), T-052 (torrent-engine integration tests, medium), T-053 (torrent-search tests, medium), T-055 (Docker health checks, medium), T-026 (metrics/swagger, low)

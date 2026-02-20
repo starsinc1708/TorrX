@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 40
+    "completedTasks": 41
   },
   "tasks": [
     {
@@ -1365,8 +1365,8 @@
         "frontend/src/hooks/useWatchPositionSave.ts",
         "frontend/src/hooks/useFullscreen.ts"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. All 8 files fully implemented. **Keyboard shortcuts** (useKeyboardShortcuts.ts, 74 lines): space/k=play/pause, ArrowLeft/Right=seek, m=mute, f/F=fullscreen, s=screenshot. Ignores input when user is typing in input/textarea. Wired into VideoPlayer.tsx:1346. **Auto-hide controls** (useAutoHideControls.ts, 76 lines): hides controls+cursor after 3000ms of inactivity while playing. Shows on mouse movement, pauses timer when menu is open or playback stops. Integrated at VideoPlayer.tsx:196. **Screenshot** (useScreenshot.ts, 37 lines): captures video frame to canvas at native resolution, tries clipboard API first (ClipboardItem), falls back to download as PNG. Shows 400ms white flash overlay. Integrated at VideoPlayer.tsx:195. **Watch position save** (useWatchPositionSave.ts, 113 lines): auto-saves every 5s while playing via saveWatchPosition API. Saves on unmount. Supports seekOffset for absolute position. Also updates local watchState via upsertTorrentWatchState. Integrated at VideoPlayer.tsx:226. **Fullscreen** (useFullscreen.ts, 54 lines): cross-browser requestFullscreen/exitFullscreen with webkit/moz/ms prefixes. Tracks fullscreenchange event. Integrated at VideoPlayer.tsx:194. **Resume prompt** (PlayerPage.tsx): fetches watch position on load, shows resume hint banner with position time and filename. 'Resume' button triggers HLS seek to saved position. Auto-recovery mode for returning users. Dismissible. **Video overlays** (VideoOverlays.tsx, 119 lines): shows loading spinner during probing/retrying, error with retry button, track switch indicator, status indicator with color-coded borders (buffering=emerald, transcoding=orange, recovering=sky, error=rose). Screenshot flash overlay. **File browser panel** (PlayerFilesPanel.tsx, 177 lines): lists all files with icons (video/audio/image/generic), shows per-file progress bar, piece visualization via PieceBar component, download speed, selection state. TypeScript compiles clean, production build succeeds."
     },
     {
       "id": "T-042",
