@@ -928,3 +928,31 @@ Format:
   - T-052 (API + streaming integration tests, medium, deps: T-010 ✅, T-018 ✅)
   - T-055 (Docker health checks, medium, deps: T-001 ✅, T-002 ✅)
 - Recommend T-021 next as lowest ID among medium priority with all deps satisfied
+
+## Iteration 26 — 2026-02-20 14:00
+**Task:** [T-021] Implement direct browser playback with MP4 remux
+**Status:** done
+**What was done:**
+- Verified T-021 was already fully implemented (Phase 2.5 check):
+  - handleDirectPlayback handler (handlers_streaming.go:687-766): MP4/M4V served directly via http.ServeFile, MKV with H.264 triggers background FFmpeg remux (codec copy), 202 Accepted with Retry-After:3 during remux, 404 for non-H.264 / unsupported / incomplete files
+  - Route wired at handlers_torrents.go:353 (case "direct":) for GET/HEAD /torrents/{id}/direct/{fileIndex}
+  - resolveFileRef (handlers_streaming.go:669): dual-source file resolution (live engine session → repo fallback)
+  - Remux pipeline (streaming_manager.go:830-947): checkRemux/triggerRemux/runRemux with FFmpeg -c:v copy, atomic rename, error cleanup
+  - isH264FileWithCache / isAACAudioWithCache: codec detection with LRU cache
+- Created comprehensive test suite (direct_playback_test.go, 30 tests):
+  - Handler tests (15): no data dir, method not allowed (4 methods), missing/invalid file index, file not found, incomplete file, serve MP4/M4V, HEAD request, unsupported ext, MKV nil HLS, repo fallback, index out of range, missing from disk, zero length
+  - resolveFileRef tests (5): from state, from repo, not found, nil sources, index out of range
+  - resolveDataFilePath tests (4): valid, nested, empty base, traversal
+  - Remux tests (10): checkRemux states (not started, ready, in-progress, errored), triggerRemux idempotency, concurrent 10-goroutine test, getRemuxPath, runRemux error paths (mkdir, ffmpeg)
+  - MKV integration tests (4): remux 202 with Retry-After, non-H264 rejection, ready remux served, ready HEAD
+- All tests pass: go build, go vet, go test ./... clean (14 packages, 0 failures)
+**Issues found:**
+- None. Implementation was complete; only tests were missing.
+**Notes for next session:**
+- T-021 is done. Next eligible medium-priority tasks (lowest ID first):
+  - T-022 (media info endpoint, deps: T-008 ✅, T-003 ✅)
+  - T-023 (dynamic settings API, deps: T-009 ✅, T-003 ✅)
+  - T-024 (watch history, deps: T-004 ✅, T-003 ✅)
+  - T-025 (WebSocket hub, deps: T-003 ✅)
+  - T-029 (1337x + RuTracker, deps: T-027 ✅)
+- Recommend T-022 next as lowest ID among eligible medium-priority tasks
