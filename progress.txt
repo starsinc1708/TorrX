@@ -1534,3 +1534,29 @@ Format:
 **Notes for next session:**
 - T-050 done. 54 tasks complete out of 55.
 - Remaining 1 task (low priority): T-054 (frontend unit tests, deps T-036+T-039 both done)
+
+## Iteration 54 — 2026-02-20 16:30
+**Task:** [T-054] Write frontend unit tests for components and hooks
+**Status:** done
+**What was done:**
+- Created 12 new test files with 91 new tests (151 total across 20 files, up from 60 tests in 9 files)
+- **UI component render tests (9 files, 53 tests):**
+  - button.test.tsx (7): render, default type, type override, click, disabled, className, ref
+  - card.test.tsx (8): all 6 sub-components + className + full composition
+  - input.test.tsx (7): render, typing, onChange, disabled, type, className, ref
+  - badge.test.tsx (6): render + 4 variants + className
+  - alert.test.tsx (5): role=alert, className, AlertTitle, AlertDescription, composition
+  - textarea.test.tsx (6): render, typing, onChange, disabled, className, ref
+  - switch.test.tsx (5): unchecked default, checked, toggle, disabled, className
+  - tabs.test.tsx (4): triggers, default content, switching, className
+  - select.test.tsx (5): render, default value, onChange, disabled, className
+- **Hook tests (2 new files, 19 tests):**
+  - useSessionState.test.ts (8): null init, autoRefresh default, reset on ID change, fetch, no-fetch-null, wsStates match/miss, toggle
+  - useVideoPlayer.test.ts (11): null init, files from record, selectFile, torrent change reset, empty tracks, idle prebuffer, direct mode, track selection, retry, session fallback
+- **API client tests (expanded api.test.ts from 3 to 22 tests):**
+  - Mock global fetch, verify URLs/methods/bodies for listTorrents, getTorrent, createTorrentFromMagnet, startTorrent, stopTorrent, deleteTorrent, getEncodingSettings, saveWatchPosition, getWatchPosition, URL builders, error handling
+- All 151 tests pass (vitest run). TypeScript strict mode passes (tsc --noEmit, 0 errors).
+**Issues found:**
+- None
+**Notes for next session:**
+- All 55 tasks are now complete. T-054 was the final remaining task.

@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 54
+    "completedTasks": 55
   },
   "tasks": [
     {
@@ -1778,8 +1778,8 @@
         "frontend/src/api.test.ts",
         "frontend/vitest.config.ts"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Implemented 2026-02-20. Created 12 new test files with 91 new tests (151 total across 20 files, up from 60 tests in 9 files).\n\n**UI component render tests (9 files, 53 tests):**\n- button.test.tsx (7): render, default type=button, type override, click handler, disabled, custom className, ref forwarding\n- card.test.tsx (8): Card/CardHeader/CardTitle/CardDescription/CardContent/CardFooter render, custom className, full composition\n- input.test.tsx (7): render, typing, onChange, disabled, type attribute, custom className, ref forwarding\n- badge.test.tsx (6): render, default/success/warning/danger variants, custom className\n- alert.test.tsx (5): role=alert, custom className, AlertTitle, AlertDescription, full composition\n- textarea.test.tsx (6): render, typing, onChange, disabled, custom className, ref forwarding\n- switch.test.tsx (5): unchecked default, defaultChecked, toggle click, disabled, custom className\n- tabs.test.tsx (4): render triggers, default content, tab switching, custom className\n- select.test.tsx (5): render with options, default value, onChange, disabled, custom className\n\n**Hook tests (2 new files, 19 tests):**\n- useSessionState.test.ts (8): null initial state, autoRefreshState default, reset on ID change, refreshSessionState fetch, no fetch when null, wsStates matching, wsStates non-matching, setAutoRefreshState toggle\n- useVideoPlayer.test.ts (11): null init, availableFiles from record, selectFile, reset on torrent change, empty audio/subtitle tracks, idle prebuffer, direct mode for mp4, selectAudioTrack, selectSubtitleTrack, retryStreamInitialization, session state file fallback\n\n**API client tests (expanded api.test.ts, 22 tests):**\n- buildUrl (3), listTorrents (3), getTorrent (1), createTorrentFromMagnet (1), startTorrent (1), stopTorrent (1), deleteTorrent (2), getEncodingSettings (1), saveWatchPosition (1), getWatchPosition (2), URL builders (4), error handling (2)\n- All API tests mock global fetch and verify correct URLs, methods, request bodies, and error handling\n\n**Verification:** All 151 tests pass (vitest run). TypeScript strict mode passes (tsc --noEmit, 0 errors). Production build was not tested (npm run build) since no production code was modified."
     },
     {
       "id": "T-055",
