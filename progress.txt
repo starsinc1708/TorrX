@@ -1030,3 +1030,27 @@ Format:
   - T-033 (search caching + SSE, deps: T-032 done)
   - T-042 (SettingsPage encoding/HLS, deps: T-035 done, T-023 done)
   - T-041 now unblocked for depends_on T-024
+
+## Iteration 31 — 2026-02-20 11:10
+**Task:** [T-025] Implement WebSocket hub for real-time updates
+**Status:** done
+**What was done:**
+- Verified WebSocket hub already fully implemented in ws_hub.go (175 lines) and wired in server.go
+- Hub uses channel-based event loop pattern: register/unregister/broadcast/done channels, single goroutine processes all mutations
+- Supports 4 event types: "states" (session progress/peers/speeds), "torrents" (full torrent list), "player_settings" (currentTorrentId), "health" (player diagnostics)
+- writePump: 30s ping ticker, 10s write deadline. readPump: 512 byte limit, 60s read deadline, pong handler refreshes. Slow clients dropped on full buffer.
+- All server Broadcast* methods nil-safe (skip if wsHub/repo/player is nil)
+- Created ws_hub_test.go with 36 tests: hub unit tests (15), integration tests with real WS connections (15), nil safety tests (6), JSON structure table-driven tests (6 sub-tests)
+- Fakes: fakeWSRepo (8 TorrentRepository methods), fakeWSPlayerCtrl
+- go build, go vet, and all tests pass clean
+**Issues found:**
+- None
+**Notes for next session:**
+- T-025 done. Next eligible medium-priority tasks (lowest ID first):
+  - T-029 (1337x + RuTracker, deps: T-027 done)
+  - T-030 (Torznab provider, deps: T-027 done)
+  - T-031 (TMDB enrichment, deps: T-027 done)
+  - T-033 (search caching + SSE, deps: T-032 done)
+  - T-041 (video player UX, deps: T-039 done, T-024 done)
+  - T-042 (SettingsPage encoding/HLS, deps: T-035 done, T-023 done)
+  - T-045 (WebSocket frontend integration) now unblocked by T-025

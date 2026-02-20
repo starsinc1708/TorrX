@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 31
+    "completedTasks": 32
   },
   "tasks": [
     {
@@ -754,8 +754,8 @@
         "services/torrent-engine/internal/api/http/ws_hub.go",
         "services/torrent-engine/internal/api/http/handlers_ws.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. WebSocket hub already fully implemented in ws_hub.go (175 lines) — added comprehensive test suite.\n\n**Hub architecture** (ws_hub.go):\n- wsHub: central pub/sub with channel-based event loop (register/unregister/broadcast/done). Clients map with concurrent access via single goroutine pattern. Broadcast channel buffered to 64.\n- wsClient: per-connection struct with send channel (buffered 256), writePump (30s ping ticker, 10s write deadline), readPump (512 byte limit, 60s read deadline, pong handler refreshes deadline).\n- wsMessage: JSON envelope {type: string, data: any} for all event types.\n- wsUpgrader: gorilla/websocket v1.5.0, 1KB read/write buffers, allow all origins.\n- Graceful shutdown: Close() sends CloseGoingAway frame to all clients, closes send channels.\n- Slow client handling: broadcast drops clients with full send buffers.\n\n**Server integration** (server.go):\n- Hub created in NewServer(), goroutine started immediately.\n- Route: /ws → handleWS (upgrade + register + start pumps).\n- BroadcastStates([]SessionState): type \"states\" — session progress/peers/speeds.\n- BroadcastTorrents(): type \"torrents\" — fetches from repo, converts to torrentSummary.\n- BroadcastPlayerSettings(): type \"player_settings\" — currentTorrentId.\n- BroadcastHealth(ctx): type \"health\" — player health diagnostics.\n- All broadcast methods nil-safe (skip if wsHub/repo/player is nil).\n- Close() shuts down hub in Server.Close().\n\n**Test suite** (ws_hub_test.go, 36 tests):\n- Hub unit tests (15): initialization, clientCount, register, unregister, unregister unknown, broadcast to 3 clients, drop slow client, BroadcastStates no clients, BroadcastStates with clients (verifies JSON array), Broadcast generic message, Broadcast no clients, Broadcast marshal failure, BroadcastStates nil slice, Close disconnects clients, multiple register/unregister.\n- Integration tests (15): upgrade succeeds, 3 concurrent clients all receive broadcast, client disconnect (no server error), BroadcastTorrents (fakeRepo, verifies 2-item array), BroadcastPlayerSettings (verifies currentTorrentId field), BroadcastHealth (verifies type), non-WS request → 400, ping/pong (verify automatic pong), concurrent broadcasts (10 goroutines), server Close with active connection.\n- Nil safety tests (6): BroadcastStates nil hub, BroadcastTorrents nil hub, BroadcastTorrents nil repo, BroadcastTorrents repo error (deadline exceeded), BroadcastPlayerSettings nil hub, BroadcastPlayerSettings nil player, BroadcastHealth nil hub.\n- JSON structure tests (6 sub-tests): states/torrents/player_settings/health/nil_data/empty_string roundtrip.\n- Fake types: fakeWSRepo (8 TorrentRepository methods), fakeWSPlayerCtrl (CurrentTorrentID/SetCurrentTorrentID).\n\ngo build, go vet, and all tests pass clean."
     },
     {
       "id": "T-026",
