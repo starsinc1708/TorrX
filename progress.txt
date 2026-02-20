@@ -1345,3 +1345,32 @@ Format:
 - Remaining medium-priority unblocked: T-051 (engine unit tests), T-052 (engine integration tests), T-053 (search tests), T-055 (Docker health checks)
 - Low priority unblocked: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage), T-048 (Prometheus config), T-050 (OTEL tracing), T-054 (frontend unit tests)
 - T-049 (Grafana dashboards) remains blocked on T-048
+
+## Iteration 45 — 2026-02-20 14:00
+**Task:** [T-051] Write torrent-engine unit tests for domain and use cases
+**Status:** done
+**What was done:**
+- Fixed 2 compilation errors in disk_pressure_test.go that prevented usecase tests from building:
+  (1) Removed duplicate discardLogger/nopWriter declarations (conflicted with sync_state_test.go in same package)
+  (2) Fixed `return 0` to `return ""` for SessionMode string type in fakeDiskEngine.GetSessionMode
+- Verified all domain tests pass with 100% coverage (models_test.go: 30 state transitions, 7 ToStatus, 13 Validate, StreamReader interface, JSON tag tests)
+- Verified all usecase tests pass with 93.9% coverage across 10 test files:
+  - create_torrent_test.go: CreateTorrent with magnet/file/concurrent paths
+  - control_torrent_test.go: Start/Stop with error paths (11 tests)
+  - state_torrent_test.go: GetState/ListActive (4 tests)
+  - stream_torrent_test.go: streaming with repo fallback (22 tests)
+  - sliding_priority_reader_test.go: gradient math, window sizing, 4-tier bands, boundary protection (50+ tests)
+  - sync_state_test.go: progress updates, $max regression prevention (20 tests)
+  - session_restore_test.go: hasSource + open operations (5 tests)
+  - disk_pressure_test.go: stop/resume cycles, focused protection (12 tests)
+  - errors_test.go: wrapEngine, wrapRepo, sentinels (3 tests)
+  - reader_dormancy_test.go: integration dormancy tests (4 tests)
+- All tests table-driven per project conventions, 20 distinct fake/mock port implementations
+- go vet clean, go test ./... all 14 packages pass
+**Issues found:**
+- disk_pressure_test.go had compilation errors (duplicate declarations + wrong zero value for string type) — both fixed
+**Notes for next session:**
+- T-051 done. 46 tasks complete out of 55.
+- Remaining medium-priority unblocked: T-052 (engine integration tests), T-053 (search tests), T-055 (Docker health checks)
+- Low priority unblocked: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage), T-048 (Prometheus config), T-050 (OTEL tracing), T-054 (frontend unit tests)
+- T-049 (Grafana dashboards) remains blocked on T-048

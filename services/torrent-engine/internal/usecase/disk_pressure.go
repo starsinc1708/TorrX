@@ -20,6 +20,9 @@ type DiskPressure struct {
 	MinFreeBytes int64 // threshold below which downloads are paused
 	ResumeBytes  int64 // threshold above which downloads may resume
 	Interval     time.Duration
+
+	// diskFreeFunc overrides the platform disk space check (used in tests).
+	diskFreeFunc func(string) (int64, error)
 }
 
 // Run starts the periodic disk pressure check loop. It blocks until ctx is
@@ -44,7 +47,11 @@ func (dp DiskPressure) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			free, err := diskFreeBytes(dp.DataDir)
+			freeFn := dp.diskFreeFunc
+			if freeFn == nil {
+				freeFn = diskFreeBytes
+			}
+			free, err := freeFn(dp.DataDir)
 			if err != nil {
 				dp.Logger.Warn("disk_pressure: failed to check disk space",
 					slog.String("path", dp.DataDir),

@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 45
+    "completedTasks": 46
   },
   "tasks": [
     {
@@ -1681,8 +1681,8 @@
         "services/torrent-engine/internal/domain/*_test.go",
         "services/torrent-engine/internal/usecase/*_test.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. Domain and usecase tests already comprehensive — only compilation fixes needed. Fixed 2 issues in disk_pressure_test.go: (1) removed duplicate discardLogger/nopWriter declarations (conflicted with sync_state_test.go in same package), (2) changed return 0 to return \"\" for SessionMode string type in fakeDiskEngine.GetSessionMode. Domain coverage: 100% of statements. Usecase coverage: 93.9% of statements — both well above the 70% target. Domain tests: models_test.go with 30-case TestCanTransition covering all 6 SessionMode states (valid + invalid transitions), TestToStatus (7 cases), TestTorrentRecordValidate (13 cases), TestStreamReaderInterface, JSON tag tests. Usecase tests across 10 test files: create_torrent_test.go (CreateTorrent with magnet/file/concurrent paths, 20+ fakes for ports.Engine, ports.Session, ports.TorrentRepository), control_torrent_test.go (Start/Stop with error paths, 11 tests), state_torrent_test.go (4 tests), stream_torrent_test.go (22 tests including raw streaming, repo fallback), sliding_priority_reader_test.go (50+ tests: gradient math, window sizing, 4-tier bands, boundary protection, startup gradient, seek/buffer-low boosts, EMA rate calculation, dormancy), sync_state_test.go (20 tests: progress updates, $max regression prevention, status/file changes, name derivation), session_restore_test.go (5 tests: hasSource 9 sub-cases, open with magnet/torrent/error), disk_pressure_test.go (12 tests: stop/resume cycles, focused protection, error handling), errors_test.go (3 tests: wrapEngine, wrapRepo, sentinel distinctness), reader_dormancy_test.go (4 integration tests). All tests table-driven per project conventions. All use mocked port interfaces (20 distinct fake implementations). go vet clean. go test ./... all packages pass."
     },
     {
       "id": "T-052",
