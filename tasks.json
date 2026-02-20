@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 33
+    "completedTasks": 34
   },
   "tasks": [
     {
@@ -45,7 +45,9 @@
       "title": "Create multi-stage Dockerfiles for all three services",
       "description": "Create multi-stage Dockerfiles: torrent-engine (Go 1.25 Alpine build → Alpine 3.20 + FFmpeg runtime), torrent-search (Go 1.25 Alpine build → Alpine 3.20 runtime), web-client (Node 20 Alpine build → Nginx 1.27 Alpine with gzip, SPA fallback, asset caching 1y).",
       "prd_section": "12.3 Build Pipeline",
-      "depends_on": ["T-001"],
+      "depends_on": [
+        "T-001"
+      ],
       "verification_steps": [
         "Run docker build -f build/torrent-engine/Dockerfile and verify it completes",
         "Run docker build -f build/torrent-search/Dockerfile and verify it completes",
@@ -139,7 +141,9 @@
       "title": "Implement HTTP middleware stack",
       "description": "Create middleware chain: CORS (whitelist-based origin validation, empty=allow all), rate limiting (token bucket 100 RPS burst 200, skip health/metrics), panic recovery with stack trace logging, structured request logging (method, path, status, bytes, duration, client IP) with noisy paths at debug level.",
       "prd_section": "10 Middleware & Security",
-      "depends_on": ["T-003"],
+      "depends_on": [
+        "T-003"
+      ],
       "verification_steps": [
         "Send request with disallowed Origin header and verify CORS rejection",
         "Send 201+ requests in rapid succession and verify 429 response after burst",
@@ -166,7 +170,9 @@
       "title": "Implement MongoDB torrent repository adapter",
       "description": "Implement Repository port interface with MongoDB driver. CRUD operations: Insert, FindByID, FindAll (with status filter, text search, tag filter, sortBy/sortOrder, limit/offset), Update, Delete. Create indexes: text index on name, indexes on tags, createdAt, updatedAt, progress. Use atomic $max for progress updates in SyncState.",
       "prd_section": "4.1 Technical Implementation, 7.1 MongoDB Collections (torrents)",
-      "depends_on": ["T-004"],
+      "depends_on": [
+        "T-004"
+      ],
       "verification_steps": [
         "Run unit tests with MongoDB test container",
         "Insert a TorrentRecord and retrieve it by ID — verify all fields roundtrip",
@@ -196,7 +202,9 @@
       "title": "Implement anacrolix/torrent engine adapter",
       "description": "Wrap anacrolix/torrent library implementing Engine port. Operations: AddMagnet, AddTorrentFile, Remove, Start (AllowDataDownload), Stop (DisallowData), GetState (progress, peers, speeds, bitfield), NewReader (responsive reader). Configure MaxEstablishedConns=35. Support Focus mode (SetMaxEstablishedConns(0) for non-focused torrents).",
       "prd_section": "4.1 Technical Implementation, 6 Technical Stack",
-      "depends_on": ["T-004"],
+      "depends_on": [
+        "T-004"
+      ],
       "verification_steps": [
         "Run unit tests — verify adapter compiles and initializes client",
         "Add a torrent via magnet and verify InfoHash is returned",
@@ -225,7 +233,9 @@
       "title": "Implement FFprobe media analysis adapter",
       "description": "Wrap FFprobe binary to analyze media files. Extract: video tracks (codec, resolution, fps), audio tracks (codec, channels, language), subtitle tracks (codec, language), duration. Determine codec compatibility for direct playback (H.264 video + AAC audio). In-memory cache with 5-minute TTL. Check subtitle file readiness on disk.",
       "prd_section": "4.3 Media Detection",
-      "depends_on": ["T-004"],
+      "depends_on": [
+        "T-004"
+      ],
       "verification_steps": [
         "Run FFprobe on a sample MKV file and verify tracks are enumerated",
         "Verify H.264+AAC file is detected as direct-playback compatible",
@@ -254,7 +264,9 @@
       "title": "Implement MongoDB settings repositories",
       "description": "Create MongoDB repositories for dynamic configuration: encoding-settings (preset, crf, audioBitrate), hls-settings (segmentDuration, ramBufSizeMB, prebufferMB, windowBeforeMB, windowAfterMB), player-settings (currentTorrentId). Each is a single-document collection with Get and Update operations. Apply validation ranges from PRD section 9.2.",
       "prd_section": "7.1 MongoDB Collections, 9.2 Dynamic Configuration",
-      "depends_on": ["T-004"],
+      "depends_on": [
+        "T-004"
+      ],
       "verification_steps": [
         "Get encoding settings with no document — verify defaults returned",
         "Update encoding preset to 'medium' and verify it persists",
@@ -283,7 +295,11 @@
       "title": "Implement torrent CRUD vertical slice with API handlers",
       "description": "Implement CreateTorrent use case (magnet link via JSON body + .torrent file via multipart max 5MB), GetTorrent, ListTorrents (filter by status/search/tags, sort by name/createdAt/updatedAt/totalBytes/progress, paginate), DeleteTorrent (with optional file cleanup + path traversal protection). Wire handlers: POST /torrents, GET /torrents, GET /torrents/{id}, DELETE /torrents/{id}?deleteFiles=.",
       "prd_section": "4.1 Capabilities, 5.1 Torrent Management",
-      "depends_on": ["T-003", "T-006", "T-007"],
+      "depends_on": [
+        "T-003",
+        "T-006",
+        "T-007"
+      ],
       "verification_steps": [
         "POST /torrents with {\"magnet\": \"magnet:?xt=...\"} — verify 201 with torrent ID",
         "POST /torrents with multipart .torrent file (< 5MB) — verify 201",
@@ -318,7 +334,9 @@
       "title": "Implement torrent list view modes and advanced filtering",
       "description": "Extend ListTorrents with view parameter support (compact vs full), tag-based filtering with multi-tag AND/OR logic, text search via MongoDB text index. Ensure sort by progress field uses the cached float64 (0.0-1.0) for efficient sorting.",
       "prd_section": "4.1 Capabilities, 5.1 Torrent Management",
-      "depends_on": ["T-010"],
+      "depends_on": [
+        "T-010"
+      ],
       "verification_steps": [
         "GET /torrents?view=compact — verify minimal fields returned",
         "GET /torrents?tags=movie,hd — verify tag filter works",
@@ -346,7 +364,10 @@
       "title": "Implement torrent lifecycle: start, stop, focus with session state",
       "description": "Implement StartTorrent, StopTorrent use cases with SessionMode state machine transitions. Implement Focus (ModeFocused: 100% bandwidth, pause others via DisallowData+SetMaxEstablishedConns(0)) and Unfocus. Wire handlers: POST /torrents/{id}/start, POST /torrents/{id}/stop, POST /torrents/{id}/focus, POST /torrents/unfocus. Implement session state endpoints: GET /torrents/state?status=active, GET /torrents/{id}/state (progress, peers, speeds, bitfield).",
       "prd_section": "4.1 Session State Machine, 4.2 Focus Mode, 5.1 Torrent Management",
-      "depends_on": ["T-007", "T-010"],
+      "depends_on": [
+        "T-007",
+        "T-010"
+      ],
       "verification_steps": [
         "Create torrent, POST /start — verify status changes to active",
         "POST /stop on active torrent — verify status changes to stopped",
@@ -379,7 +400,9 @@
       "title": "Implement bulk operations and tag management",
       "description": "Implement bulk start/stop/delete for up to 100 torrent IDs per request. Implement tag management via PUT /torrents/{id}/tags. Wire handlers: POST /torrents/bulk/start, POST /torrents/bulk/stop, POST /torrents/bulk/delete, PUT /torrents/{id}/tags.",
       "prd_section": "4.1 Capabilities, 5.1 Torrent Management",
-      "depends_on": ["T-012"],
+      "depends_on": [
+        "T-012"
+      ],
       "verification_steps": [
         "POST /torrents/bulk/start with 5 IDs — verify all start",
         "POST /torrents/bulk/delete with 3 IDs — verify all deleted",
@@ -408,7 +431,10 @@
       "title": "Implement SyncState background loop and SessionRestore",
       "description": "SyncState: background goroutine running every 10s that synchronizes engine state to MongoDB using atomic $max for progress (prevents overwriting higher values). SessionRestore: on startup, load all active/downloading torrents from MongoDB and re-add them to the engine. Implement LRU session eviction when MaxSessions is reached.",
       "prd_section": "4.1 Technical Implementation",
-      "depends_on": ["T-006", "T-007"],
+      "depends_on": [
+        "T-006",
+        "T-007"
+      ],
       "verification_steps": [
         "Start a torrent, wait 10s — verify MongoDB record has updated progress",
         "Verify $max is used (manually set higher progress in DB, run sync, confirm not overwritten)",
@@ -436,7 +462,9 @@
       "title": "Implement SlidingPriorityReader base with 4-tier gradient",
       "description": "Implement the core sliding priority window: base window size = readahead x 4, clamped [32MB, 256MB], scaled to 1% of file length. Four-tier priority gradient: [pos, pos+2MB) → PriorityHigh, [pos+2MB, pos+4MB) → PriorityNext, [pos+4MB, pos+~6MB) → PriorityReadahead, [pos+~6MB, pos+window) → PriorityNormal. File boundary protection: first and last 8MB never deprioritized (MP4 moov, MKV SeekHead/Cues). Startup gradient: tail 16MB + 4-tier on first fragments.",
       "prd_section": "4.2 SlidingPriorityReader, 4.2 Priority Levels",
-      "depends_on": ["T-004"],
+      "depends_on": [
+        "T-004"
+      ],
       "verification_steps": [
         "Create reader for 1GB file — verify window size is clamped between 32-256MB",
         "Set position at offset 100MB — verify pieces in [100, 102MB) are PriorityHigh",
@@ -467,7 +495,9 @@
       "title": "Implement adaptive boosts for SlidingPriorityReader",
       "description": "Add three adaptive boost modes: Seek Boost (2x window for 10s after seek), Buffer-Low Boost (6MB high band for 5s when downstream buffer < 30%), Dynamic Window (EMA-smoothed throughput α=0.3, updated every 500ms, target 30s buffered content). Boosts are additive and decay automatically.",
       "prd_section": "4.2 Adaptive Boosts",
-      "depends_on": ["T-015"],
+      "depends_on": [
+        "T-015"
+      ],
       "verification_steps": [
         "Trigger seek — verify window doubles for 10 seconds then reverts",
         "Simulate buffer < 30% — verify high band expands to 6MB for 5s",
@@ -496,7 +526,9 @@
       "title": "Implement dormancy system for idle readers",
       "description": "Track multiple readers per torrent. Detect idle readers (no Read/Seek for 60s) and put them to sleep: set readahead to 0, deprioritize window pieces. Wake on next Read/Seek access. Use generation counter for HLS stale detection. Prevents idle readers from stealing bandwidth.",
       "prd_section": "4.2 Dormancy System",
-      "depends_on": ["T-015"],
+      "depends_on": [
+        "T-015"
+      ],
       "verification_steps": [
         "Create two readers, keep one active — verify idle one sleeps after 60s",
         "Verify sleeping reader has readahead=0",
@@ -526,7 +558,10 @@
       "title": "Implement StreamTorrent use case and raw stream handler",
       "description": "StreamTorrent use case: open responsive reader on a torrent file, integrate with SlidingPriorityReader. Raw stream handler: GET /torrents/{id}/stream?fileIndex= with HTTP Range request support (206 Partial Content), HEAD request support, responsive reader (EOF instead of blocking). Use kernel-level sendfile for completed files.",
       "prd_section": "4.3 Mode 3: Direct Raw Stream, 5.2 Streaming",
-      "depends_on": ["T-007", "T-015"],
+      "depends_on": [
+        "T-007",
+        "T-015"
+      ],
       "verification_steps": [
         "GET /torrents/{id}/stream?fileIndex=0 — verify file content returned",
         "Send Range: bytes=0-1023 header — verify 206 with Content-Range",
@@ -556,7 +591,10 @@
       "title": "Implement HLS core pipeline with FFmpeg transcoding",
       "description": "FFmpeg child process spawning for H.264 transcoding into HLS. RAM buffer for FFmpeg input (configurable 4-4096 MB). Generate m3u8 master playlist with multi-variant quality (480p/1.5Mbps, 720p/3Mbps, 1080p/6Mbps). Generate variant playlists per quality level. Serve MPEG-TS segments. HLS job lifecycle management. Wire endpoints: GET .../index.m3u8 (master), GET .../v{n}/index.m3u8 (variant), GET .../{segment}.ts.",
       "prd_section": "4.3 Mode 1: HLS Adaptive Bitrate, 5.2 Streaming",
-      "depends_on": ["T-018", "T-003"],
+      "depends_on": [
+        "T-018",
+        "T-003"
+      ],
       "verification_steps": [
         "Request HLS master playlist — verify it contains variant entries for 480p/720p/1080p",
         "Request 720p variant playlist — verify EXTINF segments are listed",
@@ -590,7 +628,9 @@
       "title": "Implement HLS seek, watchdog, and FSM state management",
       "description": "Server-side seek: soft mode (within current FFmpeg job, adjust position) and hard mode (kill FFmpeg, restart from new byte offset). POST /torrents/{id}/hls/{fileIndex}/seek?time=&audioTrack=&subtitleTrack= endpoint returns seekMode. HLS watchdog: detect stalls, boost priority window, restart FFmpeg. FSM for HLS job state transitions.",
       "prd_section": "4.3 Mode 1: HLS — seek, watchdog",
-      "depends_on": ["T-019"],
+      "depends_on": [
+        "T-019"
+      ],
       "verification_steps": [
         "POST seek to nearby position — verify soft seek (no FFmpeg restart)",
         "POST seek to far position — verify hard seek (FFmpeg restarted from new offset)",
@@ -621,7 +661,10 @@
       "title": "Implement direct browser playback with MP4 remux",
       "description": "For completed files with H.264+AAC codecs: MP4/M4V files served directly, MKV files auto-remuxed to MP4 (codec copy, no re-encoding). Return HTTP 202 Accepted with Retry-After while remux is in progress. GET /torrents/{id}/direct/{fileIndex} endpoint. Zero CPU overhead for direct playback.",
       "prd_section": "4.3 Mode 2: Direct Browser Playback",
-      "depends_on": ["T-008", "T-018"],
+      "depends_on": [
+        "T-008",
+        "T-018"
+      ],
       "verification_steps": [
         "Request direct playback for completed MP4 with H.264+AAC — verify raw file served",
         "Request direct playback for completed MKV with H.264+AAC — verify MP4 remux triggered",
@@ -650,7 +693,10 @@
       "title": "Implement media info endpoint with track enumeration",
       "description": "GET /torrents/{id}/media/{fileIndex} endpoint: run FFprobe analysis, return video/audio/subtitle tracks with codec/language info, duration, fps, and codec compatibility flag. Support audio/subtitle track selection via query params for HLS burn-in subtitles (-vf subtitles=...).",
       "prd_section": "4.3 Media Detection, 5.2 Streaming",
-      "depends_on": ["T-008", "T-003"],
+      "depends_on": [
+        "T-008",
+        "T-003"
+      ],
       "verification_steps": [
         "GET /media/{fileIndex} — verify JSON with tracks array",
         "Verify video track has codec, resolution, fps fields",
@@ -678,7 +724,10 @@
       "title": "Implement dynamic settings API endpoints",
       "description": "Implement GET/PATCH for encoding settings (preset, crf, audioBitrate), HLS settings (segmentDuration, ramBufSizeMB, prebufferMB, windowBeforeMB, windowAfterMB), and player settings (currentTorrentId). PATCH applies partial updates with validation. Settings stored in MongoDB via settings repositories.",
       "prd_section": "5.4 Settings, 9.2 Dynamic Configuration",
-      "depends_on": ["T-009", "T-003"],
+      "depends_on": [
+        "T-009",
+        "T-003"
+      ],
       "verification_steps": [
         "GET /settings/encoding — verify default values",
         "PATCH /settings/encoding with {\"preset\": \"medium\"} — verify update",
@@ -706,7 +755,10 @@
       "title": "Implement watch history with position persistence",
       "description": "WatchPosition domain model + MongoDB adapter with UNIQUE(torrentId, fileIndex). Endpoints: GET /watch-history (list recent, ?limit default 20), GET /watch-history/{torrentId}/{fileIndex} (get position), PUT /watch-history/{torrentId}/{fileIndex} (save position, duration, torrentName, filePath).",
       "prd_section": "4.5 Watch History, 5.3 Watch History, 7.1 MongoDB Collections",
-      "depends_on": ["T-004", "T-003"],
+      "depends_on": [
+        "T-004",
+        "T-003"
+      ],
       "verification_steps": [
         "PUT watch position — verify 200",
         "GET same position — verify saved values returned",
@@ -735,7 +787,9 @@
       "title": "Implement WebSocket hub for real-time updates",
       "description": "WebSocket endpoint at /ws. Hub broadcasts events: torrent state changes (status, progress, speeds), player_settings updates, health events. Clients receive JSON messages with event type and payload. Support multiple concurrent clients.",
       "prd_section": "4.1 Real-time updates, 5.5 System",
-      "depends_on": ["T-003"],
+      "depends_on": [
+        "T-003"
+      ],
       "verification_steps": [
         "Connect to ws://localhost:8080/ws — verify upgrade succeeds",
         "Start a torrent — verify WebSocket receives state change event",
@@ -765,7 +819,9 @@
       "title": "Implement metrics, health endpoint, and Swagger",
       "description": "Prometheus metrics: request counts/durations by route/method/status, active sessions, HLS job stats. Player health endpoint: GET /internal/health/player (active sessions, HLS diagnostics, issues). Swagger: GET /swagger (UI), GET /swagger/openapi.json (OpenAPI 3.0 spec). GET /metrics for Prometheus scraping.",
       "prd_section": "5.5 System, 11.1 Metrics, 11.4 Health Checks",
-      "depends_on": ["T-003"],
+      "depends_on": [
+        "T-003"
+      ],
       "verification_steps": [
         "GET /metrics — verify Prometheus format output",
         "Make API requests, GET /metrics — verify request counters increment",
@@ -825,7 +881,9 @@
       "title": "Implement Pirate Bay and DHT search providers",
       "description": "Pirate Bay (bittorrentindex): HTTP GET to apibay.org, parse JSON response, extract magnet links, seeders, leechers, size. DHT (BtDig): HTML scraping with magnet regex, stateless (no seeders/leechers). Common provider utilities (HTTP client, user-agent, timeout).",
       "prd_section": "4.4 Search Providers",
-      "depends_on": ["T-027"],
+      "depends_on": [
+        "T-027"
+      ],
       "verification_steps": [
         "Pirate Bay: search 'ubuntu' — verify results with name, magnet, seeders",
         "DHT: search 'linux' — verify results with name and magnet link",
@@ -855,7 +913,9 @@
       "title": "Implement 1337x and RuTracker search providers",
       "description": "1337x: two-pass HTML scraping (search results page → detail pages for magnet links), multi-mirror support (x1337x.ws, 1337x.to, 1377x.to). RuTracker: HTML scraping with Windows-1251 encoding, cookie-based authentication, HTTP proxy support.",
       "prd_section": "4.4 Search Providers",
-      "depends_on": ["T-027"],
+      "depends_on": [
+        "T-027"
+      ],
       "verification_steps": [
         "1337x: search 'ubuntu' — verify results from any available mirror",
         "1337x: verify two-pass scraping (detail page fetched for magnet)",
@@ -885,7 +945,9 @@
       "title": "Implement Torznab provider with FlareSolverr integration",
       "description": "Torznab: XML API for Jackett/Prowlarr with per-indexer fan-out, dynamic configuration (add/remove indexers at runtime). FlareSolverr: Cloudflare bypass via POST to FlareSolverr service. Runtime config storage for indexer URLs and API keys.",
       "prd_section": "4.4 Search Providers, 4.4 FlareSolverr",
-      "depends_on": ["T-027"],
+      "depends_on": [
+        "T-027"
+      ],
       "verification_steps": [
         "Configure a Torznab indexer — verify it appears in provider list",
         "Search via Torznab — verify XML response is parsed correctly",
@@ -907,8 +969,8 @@
         "services/torrent-search/internal/providers/torznab/runtime.go",
         "services/torrent-search/internal/providers/torznab/runtime_store.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Already implemented. Verified comprehensive Torznab provider with FlareSolverr integration across 6 files (~2400 lines total). provider.go: Core Torznab provider with Name/Info/Search, XML parsing, magnet extraction, infohash normalization, parallel torrent file prefetch. indexers.go: Per-indexer fan-out for Jackett with 5min cache, concurrent goroutine queries, dedup merging. flaresolverr.go: FlareSolverr config for Jackett and Prowlarr (get/apply). runtime.go: RuntimeConfigService with UpdateProviderConfig, AutoDetect (Jackett/Prowlarr API key probing), proxy support. runtime_store.go: Redis-backed persistence. torrent_infohash.go: Pure bencode parser for SHA1 infohash extraction. 8 tests pass."
     },
     {
       "id": "T-031",
@@ -918,7 +980,9 @@
       "title": "Implement TMDB enrichment client and suggest endpoint",
       "description": "TMDB REST API client: search movies/TV by title, fetch poster URL, rating, overview, year, dubbing info. GET /search/suggest?q= endpoint for autocomplete suggestions. TMDB API key is optional (enrichment skipped when not configured).",
       "prd_section": "4.4 TMDB Enrichment, 5.6 Search",
-      "depends_on": ["T-027"],
+      "depends_on": [
+        "T-027"
+      ],
       "verification_steps": [
         "Search TMDB for 'Matrix' — verify poster, rating, overview returned",
         "GET /search/suggest?q=matr — verify autocomplete results",
@@ -946,7 +1010,9 @@
       "title": "Implement search aggregator with normalization and health",
       "description": "Aggregator: concurrent fan-out to up to 10 providers with per-provider timeout, error handling. Normalization: deduplicate by info_hash (primary) and title+size (fallback), apply ranking with configurable weights (freshness, seeders, quality, language, size). Query expansion: dubbing detection, season/episode parsing, Cyrillic transliteration. Circuit breaker: 3 consecutive failures → exponential backoff (2min × 2^n, max 15min). Wire GET /search endpoint.",
       "prd_section": "4.4 Capabilities, 5.6 Search",
-      "depends_on": ["T-028"],
+      "depends_on": [
+        "T-028"
+      ],
       "verification_steps": [
         "GET /search?q=ubuntu — verify aggregated results from multiple providers",
         "Verify duplicate results (same info_hash) are merged",
@@ -979,7 +1045,9 @@
       "title": "Implement search caching and SSE streaming",
       "description": "Two-tier cache: in-memory (400 entries) + Redis (optional). Fresh TTL: 6h, stale TTL: 18h with stale-while-revalidate. Background warmer: refresh top-12 popular queries every 5 min. Popular query tracking (hit count + recency, max 200 entries). SSE streaming endpoint: GET /search/stream with bootstrap → update per provider → done events.",
       "prd_section": "4.4 Caching Strategy, 5.6 Search",
-      "depends_on": ["T-032"],
+      "depends_on": [
+        "T-032"
+      ],
       "verification_steps": [
         "Search, then search again — verify second request hits cache",
         "Verify cache TTL of 6 hours (fresh period)",
@@ -1012,7 +1080,10 @@
       "title": "Implement search API handlers and settings endpoints",
       "description": "Wire remaining search API: GET /search/providers (list), GET /search/providers/health (diagnostics), POST /search/providers/test (connectivity), GET/PATCH /search/settings/providers (runtime config), POST /search/settings/providers/autodetect, GET/POST /search/settings/flaresolverr, GET /search/image?url= (image proxy), GET /health, GET /metrics.",
       "prd_section": "5.6 Search",
-      "depends_on": ["T-033", "T-031"],
+      "depends_on": [
+        "T-033",
+        "T-031"
+      ],
       "verification_steps": [
         "GET /search/providers — verify list of available providers",
         "GET /search/providers/health — verify per-provider circuit breaker status",
@@ -1087,7 +1158,10 @@
       "title": "Implement CatalogPage with torrent list and management",
       "description": "CatalogPage (/): TorrentList with status filter tabs (all/active/completed/stopped), text search, tag filter, sort controls. TorrentDetails panel showing files with per-file progress (PieceBar), session state (peers, speeds). AddTorrentModal (magnet link + .torrent file upload). Bulk select with bulk start/stop/delete. TagInput component. useTorrents hook for polling.",
       "prd_section": "4.6 Screens — Catalog",
-      "depends_on": ["T-035", "T-010"],
+      "depends_on": [
+        "T-035",
+        "T-010"
+      ],
       "verification_steps": [
         "Navigate to / — verify torrent list loads",
         "Click Add — enter magnet link — verify torrent appears in list",
@@ -1125,7 +1199,10 @@
       "title": "Implement SearchPage with basic search and results",
       "description": "SearchPage (/discover): search input, provider selection checkboxes, result list with torrent name/size/seeders/leechers. TMDB enrichment display (poster, rating, overview). One-click 'Add to catalog' button per result. useSearch hook for search API integration.",
       "prd_section": "4.6 Screens — Search",
-      "depends_on": ["T-035", "T-034"],
+      "depends_on": [
+        "T-035",
+        "T-034"
+      ],
       "verification_steps": [
         "Navigate to /discover — verify search page renders",
         "Type search query and submit — verify results appear",
@@ -1156,7 +1233,9 @@
       "title": "Implement SearchPage SSE streaming and advanced features",
       "description": "Extend SearchPage with SSE streaming (results appear incrementally as providers respond), expanded filters (quality, content type, dubbing, year range, min seeders), ranking profile weights UI, saved search presets.",
       "prd_section": "4.6 Screens — Search (advanced)",
-      "depends_on": ["T-037"],
+      "depends_on": [
+        "T-037"
+      ],
       "verification_steps": [
         "Search — verify results stream in incrementally (not all at once)",
         "Verify per-provider progress indicators during SSE",
@@ -1185,7 +1264,10 @@
       "title": "Implement PlayerPage with core HLS.js video playback",
       "description": "PlayerPage (/watch/:torrentId/:fileIndex?): initialize HLS.js, load master playlist, basic play/pause/seek/volume controls, quality level selection (480p/720p/1080p), fullscreen toggle. VideoControls component with progress bar, time display. useVideoPlayer hook managing HLS.js lifecycle and playback state.",
       "prd_section": "4.6 Screens — Player",
-      "depends_on": ["T-035", "T-019"],
+      "depends_on": [
+        "T-035",
+        "T-019"
+      ],
       "verification_steps": [
         "Navigate to /watch/{id}/0 — verify player loads",
         "Verify HLS.js initializes and loads master playlist",
@@ -1218,7 +1300,10 @@
       "title": "Implement video track selection, server seek, and timeline preview",
       "description": "Audio track selection dropdown. Subtitle track selection (triggers server-side burn-in). Server-side seek integration: soft/hard mode detection, seek feedback in UI. Timeline preview canvas (useTimelinePreview). Media info fetching from GET /torrents/{id}/media/{fileIndex}.",
       "prd_section": "4.6 Screens — Player (tracks, seek, preview)",
-      "depends_on": ["T-039", "T-020"],
+      "depends_on": [
+        "T-039",
+        "T-020"
+      ],
       "verification_steps": [
         "Open multi-audio file — verify audio track dropdown appears",
         "Switch audio track — verify audio changes",
@@ -1249,7 +1334,10 @@
       "title": "Implement video player UX: shortcuts, auto-hide, screenshot, resume",
       "description": "Keyboard shortcuts (space=play/pause, arrows=seek, m=mute, f=fullscreen). Auto-hide controls after 3s of inactivity. Screenshot capture. Watch position auto-save (useWatchPositionSave). Resume position prompt on load. Video overlays (loading, error, resume prompt). File browser panel within player.",
       "prd_section": "4.6 Screens — Player (UX)",
-      "depends_on": ["T-039", "T-024"],
+      "depends_on": [
+        "T-039",
+        "T-024"
+      ],
       "verification_steps": [
         "Press space — verify play/pause toggles",
         "Press arrow right — verify seek forward",
@@ -1288,7 +1376,10 @@
       "title": "Implement SettingsPage for encoding and HLS configuration",
       "description": "SettingsPage (/settings) — encoding section: preset selector (ultrafast→medium), CRF slider (0-51), audio bitrate selector (96k-256k). HLS section: segment duration, RAM buffer size, prebuffer, window before/after. All settings save via PATCH API and reflect immediately.",
       "prd_section": "4.6 Screens — Settings, 9.2 Dynamic Configuration",
-      "depends_on": ["T-035", "T-023"],
+      "depends_on": [
+        "T-035",
+        "T-023"
+      ],
       "verification_steps": [
         "Navigate to /settings — verify settings form renders",
         "Change preset to 'medium' — verify PATCH sent and saved",
@@ -1317,7 +1408,10 @@
       "title": "Implement SettingsPage for providers, FlareSolverr, and theme",
       "description": "Extend SettingsPage: search provider configuration (enable/disable, credentials, endpoints). FlareSolverr URL setting. Theme toggle (light/dark) and accent color picker (7 presets + custom hex). Theme stored in localStorage.",
       "prd_section": "4.6 Screens — Settings (providers, theme)",
-      "depends_on": ["T-035", "T-034"],
+      "depends_on": [
+        "T-035",
+        "T-034"
+      ],
       "verification_steps": [
         "Verify search provider list shows all configured providers",
         "Toggle a provider — verify enable/disable persists",
@@ -1348,7 +1442,10 @@
       "title": "Implement ProviderDiagnosticsPage",
       "description": "ProviderDiagnosticsPage (/diagnostics): display per-provider health status (circuit breaker state, consecutive failures, latency). Test button per provider to check connectivity. Auto-refresh health data.",
       "prd_section": "4.6 Screens — Provider Diagnostics",
-      "depends_on": ["T-035", "T-034"],
+      "depends_on": [
+        "T-035",
+        "T-034"
+      ],
       "verification_steps": [
         "Navigate to /diagnostics — verify provider list loads",
         "Verify circuit breaker status shown per provider",
@@ -1376,7 +1473,10 @@
       "title": "Implement WebSocket integration for real-time updates",
       "description": "WebSocketProvider context and useWebSocket hook. Connect to ws://host/ws on app mount. Handle torrent state change events (update catalog list), player settings events, health events. Auto-reconnect on disconnect.",
       "prd_section": "4.6 State Management — WebSocket",
-      "depends_on": ["T-035", "T-025"],
+      "depends_on": [
+        "T-035",
+        "T-025"
+      ],
       "verification_steps": [
         "Load app — verify WebSocket connects to /ws",
         "Start a torrent — verify catalog list updates in real-time (no poll)",
@@ -1405,7 +1505,11 @@
       "title": "End-to-end integration: search, add, start, and stream",
       "description": "Validate the complete user journey: search for a torrent via search service, add it to catalog via torrent-engine, start downloading, and play video via HLS in the browser player. Verify cross-service communication through Traefik routing.",
       "prd_section": "1.1 Vision, 1.2 Core Goals",
-      "depends_on": ["T-036", "T-037", "T-039"],
+      "depends_on": [
+        "T-036",
+        "T-037",
+        "T-039"
+      ],
       "verification_steps": [
         "Search for content on /discover page",
         "Click 'Add' on a search result — verify it appears in catalog",
@@ -1432,7 +1536,10 @@
       "title": "End-to-end: watch history resume and quality switching",
       "description": "Validate watch history flow: play video, seek to middle, close player, reopen — verify resume prompt with correct position. Test quality switching during playback (480p→1080p). Test focus mode during concurrent downloads.",
       "prd_section": "4.5 Watch History, 4.3 Mode 1 HLS",
-      "depends_on": ["T-041", "T-012"],
+      "depends_on": [
+        "T-041",
+        "T-012"
+      ],
       "verification_steps": [
         "Play video, seek to 5:00, close player",
         "Reopen same file — verify resume prompt at 5:00",
@@ -1458,7 +1565,9 @@
       "title": "Configure Prometheus scrape config, SLO rules, and alerting",
       "description": "Prometheus scrape config for torrent-engine, torrent-search, Traefik. SLO recording rules: search availability (99.0% 7d), search latency (P95 <5s), API availability (99.5% 7d), API latency (P95 <1.2s). Alert rules for error rate and budget exhaustion.",
       "prd_section": "11.1 Metrics, 11.2 SLO Rules & Alerting",
-      "depends_on": ["T-001"],
+      "depends_on": [
+        "T-001"
+      ],
       "verification_steps": [
         "Verify Prometheus scrapes all 3 targets",
         "Verify SLO recording rules generate slo:* metrics",
@@ -1487,7 +1596,9 @@
       "title": "Configure Grafana dashboards",
       "description": "Grafana dashboards: Traefik RED metrics (request rate, error rate, duration), SLO overview (budget burn rate, availability), custom service dashboards. Datasource provisioning for Prometheus. Default admin/admin credentials.",
       "prd_section": "11.1 Metrics, 3.2 Services (Grafana)",
-      "depends_on": ["T-048"],
+      "depends_on": [
+        "T-048"
+      ],
       "verification_steps": [
         "Access Grafana at :3000 — verify login with admin/admin",
         "Verify Prometheus datasource is auto-configured",
@@ -1516,7 +1627,10 @@
       "title": "Integrate OpenTelemetry tracing in both Go services",
       "description": "Add OTEL SDK to torrent-engine and torrent-search. Configure OTLP/HTTP exporter to Jaeger. Instrument HTTP handlers with trace propagation. Configure Traefik → Jaeger tracing (10% sample rate). Verify traces appear in Jaeger UI at :16686.",
       "prd_section": "11.3 Distributed Tracing",
-      "depends_on": ["T-003", "T-027"],
+      "depends_on": [
+        "T-003",
+        "T-027"
+      ],
       "verification_steps": [
         "Make API request — verify trace appears in Jaeger",
         "Verify span includes HTTP method, path, status",
@@ -1546,7 +1660,11 @@
       "title": "Write torrent-engine unit tests for domain and use cases",
       "description": "Table-driven unit tests for: domain value object validation, SessionMode state machine transitions, CreateTorrent/DeleteTorrent/ListTorrents use cases with mocked ports, SyncState logic, SlidingPriorityReader gradient calculations.",
       "prd_section": "Key Conventions — Go testing",
-      "depends_on": ["T-010", "T-014", "T-015"],
+      "depends_on": [
+        "T-010",
+        "T-014",
+        "T-015"
+      ],
       "verification_steps": [
         "Run go test ./internal/domain/... — verify all pass",
         "Run go test ./internal/usecase/... — verify all pass",
@@ -1574,7 +1692,10 @@
       "title": "Write torrent-engine integration tests for API and streaming",
       "description": "Integration tests for HTTP handlers: torrent CRUD endpoints, settings endpoints, watch history endpoints. Streaming tests: HLS playlist generation, segment serving, seek behavior. Use httptest.Server and MongoDB test container.",
       "prd_section": "Key Conventions — Go testing",
-      "depends_on": ["T-019", "T-020"],
+      "depends_on": [
+        "T-019",
+        "T-020"
+      ],
       "verification_steps": [
         "Run go test ./internal/api/http/... — verify all pass",
         "Verify CRUD endpoints return correct status codes",
@@ -1601,7 +1722,10 @@
       "title": "Write torrent-search unit and integration tests",
       "description": "Unit tests for: provider implementations (mock HTTP responses), aggregator fan-out logic, normalization/dedup, cache (in-memory + Redis mock), circuit breaker, query expansion. Integration tests for search API handlers.",
       "prd_section": "Key Conventions — Go testing",
-      "depends_on": ["T-032", "T-033"],
+      "depends_on": [
+        "T-032",
+        "T-033"
+      ],
       "verification_steps": [
         "Run go test ./... in torrent-search — verify all pass",
         "Verify provider tests mock HTTP responses (no real network)",
@@ -1631,7 +1755,10 @@
       "title": "Write frontend unit tests for components and hooks",
       "description": "Vitest + React Testing Library tests for: UI kit components (render, interaction), useTorrents hook, useSearch hook, useVideoPlayer hook, API client (mock fetch). Verify TypeScript strict mode passes.",
       "prd_section": "Key Conventions — Frontend testing",
-      "depends_on": ["T-036", "T-039"],
+      "depends_on": [
+        "T-036",
+        "T-039"
+      ],
       "verification_steps": [
         "Run npm test — verify all tests pass",
         "Verify UI components render without errors",
@@ -1662,7 +1789,9 @@
       "title": "Configure Docker health checks and startup dependencies",
       "description": "Add health checks to all services in Docker Compose. Configure depends_on with condition: service_healthy for startup ordering (mongo before torrentstream, redis before torrent-search). Set restart policies. Configure resource limits for FFmpeg-heavy torrentstream service.",
       "prd_section": "12.1 Services",
-      "depends_on": ["T-002"],
+      "depends_on": [
+        "T-002"
+      ],
       "verification_steps": [
         "docker compose up — verify services start in correct order",
         "Verify MongoDB is healthy before torrentstream starts",

@@ -1077,5 +1077,32 @@ Format:
   - T-042 (SettingsPage encoding/HLS, deps: T-035/T-023 done)
   - T-045 (WebSocket frontend, deps: T-035/T-025 done)
   - T-051 (torrent-engine unit tests, deps: T-010/T-014/T-015 done)
+
+## Iteration 33 — 2026-02-20 18:00
+**Task:** [T-030] Implement Torznab provider with FlareSolverr integration
+**Status:** done
+**What was done:**
+- Verified Torznab provider already fully implemented across 6 files (~2400 lines) — no code changes needed
+- provider.go (648 lines): Core Torznab provider implementing Provider interface (Name, Info, Search). Parses XML responses via parseTorznabResponse into domain.SearchResult. Handles magnet extraction, infohash normalization, bencode torrent file parsing for missing infohashes (parallel prefetch with bounded concurrency via semaphore). Deduplicates results by infohash/magnet. Thread-safe via RWMutex snapshots.
+- indexers.go (324 lines): Per-indexer fan-out for Jackett. resolveIndexers fetches configured indexers via Jackett admin API (cached 5 min). searchFanOut queries each indexer concurrently via goroutines, merges and deduplicates results. searchSingleEndpoint extracted for reuse per-indexer.
+- flaresolverr.go (618 lines): Full FlareSolverr integration for both Jackett and Prowlarr. GetFlareSolverrSettings reads current config from both providers. ApplyFlareSolverr configures FlareSolverr URL on Jackett (via server config API) and Prowlarr (via indexerProxy API with schema creation fallback). Handles stale API key re-detection for Prowlarr.
+- runtime.go (534 lines): RuntimeConfigService manages provider configs at runtime. UpdateProviderConfig patches endpoint/apiKey/proxyURL. AutoDetect probes Jackett/Prowlarr for API keys (JSON endpoints, XML/regex body patterns). Persists runtime settings via RuntimeConfigStore. Supports proxy URL configuration with HTTP transport cloning.
+- runtime_store.go (98 lines): Redis-backed persistence for runtime provider state using HSET/HGETALL. Restores settings on service startup.
+- torrent_infohash.go (157 lines): Pure bencode parser for extracting infohash (SHA1 of info dict) from torrent file bytes.
+- Tests: 8 test cases covering XML parsing (namespaced attrs), field mapping (core fields, seeders/leechers/size/source/tracker/publishedAt), magnet construction from infohash only, page URL filtering (original vs aggregator URLs), config-dependent enabled state. All pass.
+- go build, go vet pass clean. All tests pass (0.5s).
+**Issues found:**
+- None
+**Notes for next session:**
+- T-030 done. 34 tasks now done.
+- Next eligible medium-priority tasks (lowest ID first):
+  - T-031 (TMDB enrichment, deps: T-027 done)
+  - T-033 (search caching + SSE, deps: T-032 done)
+  - T-041 (video player UX, deps: T-039/T-024 done)
+  - T-042 (SettingsPage encoding/HLS, deps: T-035/T-023 done)
+  - T-045 (WebSocket frontend, deps: T-035/T-025 done)
+  - T-051 (torrent-engine unit tests, deps: T-010/T-014/T-015 done)
+  - T-052 (torrent-engine integration tests, deps: T-019/T-020 done)
+  - T-055 (Docker health checks, deps: T-002 done)
   - T-052 (torrent-engine integration tests, deps: T-019/T-020 done)
   - T-055 (Docker health checks, deps: T-002 done)
