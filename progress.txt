@@ -1494,3 +1494,22 @@ Format:
 - T-048 done. 52 tasks complete out of 55. T-048 unblocks T-049 (Grafana dashboards).
 - Remaining 3 tasks (all low priority): T-049 (Grafana dashboards, NOW UNBLOCKED), T-050 (OTEL tracing), T-054 (frontend unit tests)
 - Recommend T-049 next as it was previously blocked and is now unblocked
+
+## Iteration 52 — 2026-02-20 22:00
+**Task:** [T-049] Configure Grafana dashboards
+**Status:** done
+**What was done:**
+- Verified task was ALREADY FULLY IMPLEMENTED (Phase 2.5 check) — no code changes needed
+- **Prometheus datasource provisioning:** `deploy/grafana/provisioning/datasources/prometheus.yml` — auto-configures Prometheus datasource (uid: prometheus, url: http://prometheus:9090, isDefault: true, POST method, 15s scrape interval). Mounted read-only at /etc/grafana/provisioning.
+- **Dashboard provisioning:** `deploy/grafana/provisioning/dashboards/dashboards.yml` — file-based provider loading from /var/lib/grafana/dashboards into 'Observability' folder, 30s update interval, no UI updates allowed.
+- **Traefik RED dashboard:** `deploy/grafana/dashboards/traefik-red-overview.json` (654 lines, uid: traefik-red) — 8 panels covering RED metrics: Request Rate (RPS) stat, Error Rate (5xx %) stat, P95 Latency stat, 5xx Rate stat, Request Rate by Service time series, Response Codes (2xx/4xx/5xx) time series, Latency Quantiles (P50/P95/P99) time series, Top Services by 5xx table. Service template variable with multi-select + 'All'. 15s auto-refresh.
+- **SLO Overview dashboard:** `deploy/grafana/dashboards/slo-overview.json` (826 lines, uid: slo-overview) — 15 panels in 5 row sections: Search SLO (availability, P95 latency, error budget gauge, RPS), API SLO (same 4 panels for torrent-engine), Error Budget Burn (Search + API time series with 0% threshold), Error Rates (Search <1% SLO + API <0.5% SLO), Latency (Search P50/P95/P99 SLO P95<5s + API P50/P95/P99 SLO P95<1.2s), Active SLO Alerts table with severity color mapping. Uses SLO recording rules (slo:search:*, slo:api:*). 30s auto-refresh, 6h default window. Cross-links to Traefik RED dashboard.
+- **Custom service dashboard:** `deploy/grafana/dashboards/torrent-engine.json` — bonus dashboard with torrent-engine specific metrics (active torrents, download/upload speeds, etc.)
+- **Docker Compose:** Grafana service with admin/admin defaults (GF_SECURITY_ADMIN_USER/GF_SECURITY_ADMIN_PASSWORD env vars), persistent grafana_data volume, healthcheck (wget --spider on /api/health), depends_on prometheus with service_healthy condition, read-only volume mounts for provisioning and dashboards
+- `docker compose config` validates clean
+**Issues found:**
+- None. All 4 acceptance criteria fully satisfied by existing configuration.
+**Notes for next session:**
+- T-049 done. 53 tasks complete out of 55.
+- Remaining 2 tasks (all low priority): T-050 (OTEL tracing, deps T-003+T-027 both done), T-054 (frontend unit tests, deps T-036+T-039 both done)
+- Recommend T-050 next as lowest ID among remaining tasks

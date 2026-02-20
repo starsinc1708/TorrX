@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 52
+    "completedTasks": 53
   },
   "tasks": [
     {
@@ -1616,8 +1616,8 @@
         "deploy/grafana/provisioning/dashboards/dashboard.yml",
         "deploy/grafana/dashboards/"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Already fully implemented. Grafana configured in Docker Compose (grafana/grafana:latest) with admin/admin credentials (GF_SECURITY_ADMIN_USER/GF_SECURITY_ADMIN_PASSWORD env vars defaulting to admin), persistent storage (grafana_data volume), healthcheck (wget --spider on /api/health), and depends_on prometheus with service_healthy condition.\n\n**Prometheus datasource provisioning:** deploy/grafana/provisioning/datasources/prometheus.yml — auto-configures Prometheus datasource (uid: prometheus, url: http://prometheus:9090, default, POST method, 15s interval). Mounted read-only at /etc/grafana/provisioning.\n\n**Dashboard provisioning:** deploy/grafana/provisioning/dashboards/dashboards.yml — file-based provider loading from /var/lib/grafana/dashboards into 'Observability' folder with 30s update interval.\n\n**Traefik RED dashboard:** deploy/grafana/dashboards/traefik-red-overview.json (654 lines, uid: traefik-red) — 8 panels: Request Rate stat (RPS), Error Rate stat (5xx %), P95 Latency stat, 5xx Rate stat, Request Rate by Service time series, Response Codes (2xx/4xx/5xx) time series, Latency Quantiles (P50/P95/P99) time series, Top Services by 5xx table. Service template variable with multi-select and 'All' option. 15s auto-refresh.\n\n**SLO Overview dashboard:** deploy/grafana/dashboards/slo-overview.json (826 lines, uid: slo-overview) — 15 panels in 5 rows: (1) Search SLO row with Availability stat, P95 Latency stat, Error Budget gauge, RPS stat; (2) API SLO row with same 4 panels for torrent-engine API; (3) Error Budget Burn row with Search and API budget burn time series (threshold at 0%); (4) Error Rates row with Search (SLO: <1%) and API (SLO: <0.5%) error rate time series; (5) Latency row with Search (P50/P95/P99, SLO P95<5s) and API (P50/P95/P99, SLO P95<1.2s) time series; (6) Alerts row with Active SLO Alerts table (firing alerts with severity color mapping). Uses SLO recording rules (slo:search:*, slo:api:*) from Prometheus. 30s auto-refresh, 6h default window. Cross-links to Traefik RED dashboard.\n\n**Custom service dashboard:** deploy/grafana/dashboards/torrent-engine.json — additional dashboard with torrent-engine specific metrics (active torrents, download/upload speeds, etc.).\n\nDocker Compose config validates clean. All 4 acceptance criteria met."
     },
     {
       "id": "T-050",
