@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 36
+    "completedTasks": 37
   },
   "tasks": [
     {
@@ -1105,8 +1105,8 @@
         "services/torrent-search/internal/api/http/handlers_image.go",
         "services/torrent-search/internal/api/http/handlers_health.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. All search API handlers and settings endpoints are fully implemented in services/torrent-search/internal/api/http/server.go (927 lines) with image proxy in image_proxy.go (181 lines). Routes registered in Handler(): /health (GET), /metrics (promhttp), /search/providers (GET - list), /search/providers/health (GET - diagnostics with circuit breaker status), /search/providers/test (GET - connectivity test with sample results), /search/settings/providers (GET list + PATCH update runtime config), /search/settings/providers/autodetect (POST - single or bulk API key detection), /search/settings/flaresolverr (GET current + POST apply), /search/stream (GET SSE), /search/suggest (GET TMDB), /search/image (GET image proxy), /search (GET). Server uses functional options pattern (WithLogger, WithTMDB, WithProviderSettings). Image proxy (image_proxy.go) has comprehensive SSRF protection: blocks private IPs, loopback, localhost, Docker internal hostnames, .local domains; validates DNS resolution; limits to 20MB; validates content-type is image/*. Middleware stack: recovery → rate-limit (50 RPS, burst 100, skip health/metrics) → metrics (Prometheus counters/histograms) → OTEL tracing → logging. All 10 handler tests pass (server_test.go, 453 lines) using fake search/settings services. go build, go vet clean."
     },
     {
       "id": "T-035",

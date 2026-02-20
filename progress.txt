@@ -1148,3 +1148,25 @@ Format:
 **Notes for next session:**
 - T-033 done. 36 tasks now complete. T-033 unblocks T-034 (search API handlers).
 - Next eligible: T-034 (high, now unblocked), T-041/T-042/T-045/T-051/T-052/T-055 (medium)
+
+## Iteration 36 — 2026-02-20 21:00
+**Task:** [T-034] Implement search API handlers and settings endpoints
+**Status:** done
+**What was done:**
+- Verified T-034 already fully implemented — no code changes needed (Phase 2.5 check)
+- All search API handlers in server.go (927 lines) with image proxy in image_proxy.go (181 lines)
+- Routes in Handler(): /health (GET), /metrics (promhttp), /search/providers (GET list), /search/providers/health (GET diagnostics with circuit breaker), /search/providers/test (GET connectivity with sample results), /search/settings/providers (GET list + PATCH update), /search/settings/providers/autodetect (POST single or bulk), /search/settings/flaresolverr (GET + POST), /search/stream (GET SSE), /search/suggest (GET TMDB), /search/image (GET proxy), /search (GET)
+- Server uses functional options (WithLogger, WithTMDB, WithProviderSettings) with interface-based service injection
+- Image proxy has comprehensive SSRF protection: blocks private IPs, loopback, localhost, Docker internal hostnames (.local domains), validates DNS resolution, 20MB limit, image/* content-type validation
+- Middleware stack: recovery → rate-limit (50 RPS, burst 100, skip health/metrics) → Prometheus metrics → OTEL tracing → structured logging
+- 10 tests in server_test.go (453 lines) using fake search/settings services: search parsing (query, providers, offset, sort, ranking profile), providers list, providers health, provider test, SSE stream phases, provider settings GET+PATCH, autodetect, FlareSolverr GET+POST
+- go build, go vet clean. All 10 handler tests pass (0.6s)
+**Issues found:**
+- None
+**Notes for next session:**
+- T-034 done. 37 tasks now complete. T-034 unblocks T-037 (high), T-043 (medium), T-044 (low).
+- Next eligible tasks by priority:
+  - HIGH: T-037 (SearchPage, deps: T-035 done, T-034 done) — NOW UNBLOCKED
+  - MEDIUM: T-041 (video player UX, deps: T-039/T-024 done), T-042 (SettingsPage encoding, deps: T-035/T-023 done), T-043 (SettingsPage providers/theme, deps: T-035/T-034 done), T-045 (WebSocket frontend, deps: T-035/T-025 done), T-051 (engine unit tests), T-052 (engine integration tests), T-053 (search tests), T-055 (Docker health checks)
+  - LOW: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage, deps: T-035/T-034 done), T-048 (Prometheus), T-050 (OTEL tracing), T-054 (frontend tests)
+- Recommend T-037 next as highest priority (high) with all deps now satisfied
