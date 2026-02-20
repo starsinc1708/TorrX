@@ -144,6 +144,10 @@ func normalizeRoute(path string) string {
 		return path
 	case path == "/torrents":
 		return "/torrents"
+	case strings.Contains(path, "/hls/") && strings.HasSuffix(path, ".m3u8"):
+		return "/hls/playlist"
+	case strings.Contains(path, "/hls/") && strings.HasSuffix(path, ".ts"):
+		return "/hls/segment"
 	case strings.HasPrefix(path, "/torrents/"):
 		return "/torrents/:id"
 	case strings.HasPrefix(path, "/settings/"):
@@ -152,10 +156,6 @@ func normalizeRoute(path string) string {
 		return "/watch-history"
 	case strings.HasPrefix(path, "/watch-history/"):
 		return "/watch-history/:id"
-	case strings.Contains(path, "/hls/") && strings.HasSuffix(path, ".m3u8"):
-		return "/hls/playlist"
-	case strings.Contains(path, "/hls/") && strings.HasSuffix(path, ".ts"):
-		return "/hls/segment"
 	case strings.HasPrefix(path, "/swagger"):
 		return "/swagger"
 	default:

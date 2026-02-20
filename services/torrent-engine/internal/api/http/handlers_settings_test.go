@@ -351,9 +351,12 @@ func TestUpdateHLSSettings_ValidationRanges(t *testing.T) {
 		{"segmentDuration too high (11)", app.HLSSettings{SegmentDuration: 11, RAMBufSizeMB: 16, PrebufferMB: 4, WindowBeforeMB: 8, WindowAfterMB: 64}},
 		{"ramBufSizeMB too low (3)", app.HLSSettings{SegmentDuration: 2, RAMBufSizeMB: 3, PrebufferMB: 4, WindowBeforeMB: 8, WindowAfterMB: 64}},
 		{"ramBufSizeMB too high (4097)", app.HLSSettings{SegmentDuration: 2, RAMBufSizeMB: 4097, PrebufferMB: 4, WindowBeforeMB: 8, WindowAfterMB: 64}},
-		{"prebufferMB too low (0)", app.HLSSettings{SegmentDuration: 2, RAMBufSizeMB: 16, PrebufferMB: 0, WindowBeforeMB: 8, WindowAfterMB: 64}},
+		// Note: PrebufferMB=0 and WindowBeforeMB=0 are treated as "not provided" by the
+		// partial-update merge (Go zero-value sentinel), so they get replaced with current
+		// values before validation. Use -1 to test below-minimum validation.
+		{"prebufferMB too low (-1)", app.HLSSettings{SegmentDuration: 2, RAMBufSizeMB: 16, PrebufferMB: -1, WindowBeforeMB: 8, WindowAfterMB: 64}},
 		{"prebufferMB too high (1025)", app.HLSSettings{SegmentDuration: 2, RAMBufSizeMB: 16, PrebufferMB: 1025, WindowBeforeMB: 8, WindowAfterMB: 64}},
-		{"windowBeforeMB too low (0)", app.HLSSettings{SegmentDuration: 2, RAMBufSizeMB: 16, PrebufferMB: 4, WindowBeforeMB: 0, WindowAfterMB: 64}},
+		{"windowBeforeMB too low (-1)", app.HLSSettings{SegmentDuration: 2, RAMBufSizeMB: 16, PrebufferMB: 4, WindowBeforeMB: -1, WindowAfterMB: 64}},
 		{"windowBeforeMB too high (1025)", app.HLSSettings{SegmentDuration: 2, RAMBufSizeMB: 16, PrebufferMB: 4, WindowBeforeMB: 1025, WindowAfterMB: 64}},
 		{"windowAfterMB too low (3)", app.HLSSettings{SegmentDuration: 2, RAMBufSizeMB: 16, PrebufferMB: 4, WindowBeforeMB: 8, WindowAfterMB: 3}},
 		{"windowAfterMB too high (4097)", app.HLSSettings{SegmentDuration: 2, RAMBufSizeMB: 16, PrebufferMB: 4, WindowBeforeMB: 8, WindowAfterMB: 4097}},

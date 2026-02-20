@@ -587,7 +587,7 @@ func TestNormalizeRoute(t *testing.T) {
 		{"/internal/health/player", "/internal/health/player"},
 		{"/torrents", "/torrents"},
 		{"/torrents/abc123", "/torrents/:id"},
-		{"/torrents/abc123/hls/0/master.m3u8", "/torrents/:id"},
+		{"/torrents/abc123/hls/0/master.m3u8", "/hls/playlist"},
 		{"/settings/encoding", "/settings"},
 		{"/settings/storage", "/settings"},
 		{"/watch-history", "/watch-history"},

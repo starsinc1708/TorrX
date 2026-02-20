@@ -800,3 +800,38 @@ Format:
   - T-052 (torrent-engine integration tests, medium, deps: T-019 ✅, T-020 ✅)
   - T-055 (Docker health checks, medium, deps: T-002 ✅)
 - Recommend T-013 next as lowest ID among medium priority with all deps satisfied
+
+## Iteration 22 — 2026-02-20 10:00
+**Task:** [T-013] Implement bulk operations and tag management
+**Status:** done
+**What was done:**
+- Verified all bulk operations and tag management already fully implemented in handlers_torrents.go — no new feature code needed
+- Bulk start/stop/delete (lines 499-578): POST /torrents/bulk/{start,stop,delete}, iterate IDs, call respective use cases, return per-item success/error JSON
+- decodeBulkRequest (line 583): JSON decode, validates non-empty IDs, enforces maxBulkIDs=100 (returns 400 for >100)
+- Bulk delete passes deleteFiles flag from request, also purges HLS and media probe caches
+- Tag management: PUT /torrents/{id}/tags (line 473) decodes tags array, calls repo.UpdateTags, returns updated record
+- Tags queryable via GET /torrents?tags= with multi-tag AND filtering via MongoDB $all
+- 12 existing tests cover all scenarios (bulk start/stop/delete, too many IDs, empty IDs, invalid JSON, method not allowed, unknown action, partial failure, tags CRUD, not found, bad JSON)
+- Fixed 2 pre-existing test bugs:
+  1. HLS settings validation: tests sent PrebufferMB=0 and WindowBeforeMB=0 expecting 400, but partial-update merge treats 0 as "not provided" and replaces with current value. Changed test cases to use -1 instead.
+  2. normalizeRoute: case ordering was greedy — `/torrents/:id` matched HLS paths like `/torrents/abc/hls/0/index.m3u8` before the HLS-specific checks. Reordered HLS checks before the `/torrents/:id` catch-all.
+- go build, go vet, go test ./... all pass clean (0 failures across all 14 packages)
+**Issues found:**
+- Pre-existing test bugs in HLS settings validation and normalizeRoute case ordering (both fixed)
+**Notes for next session:**
+- T-013 is done. No tasks directly depend on T-013.
+- 24 tasks now done: T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-009, T-010, T-011, T-012, T-013, T-015, T-018, T-019, T-020, T-027, T-028, T-032, T-035, T-036, T-039, T-040
+- Next tasks with all deps satisfied (medium priority, lowest ID first):
+  - T-014 (SyncState + SessionRestore, medium, deps: T-006 ✅, T-007 ✅)
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅)
+  - T-017 (dormancy, medium, deps: T-015 ✅)
+  - T-021 (direct browser playback, medium, deps: T-008 ✅, T-018 ✅)
+  - T-022 (media info endpoint, medium, deps: T-008 ✅, T-003 ✅)
+  - T-023 (dynamic settings API, medium, deps: T-009 ✅, T-003 ✅)
+  - T-024 (watch history, medium, deps: T-004 ✅, T-003 ✅)
+  - T-025 (WebSocket, medium, deps: T-003 ✅)
+  - T-029 (1337x + Rutracker, medium, deps: T-027 ✅)
+  - T-030 (Torznab, medium, deps: T-027 ✅)
+  - T-031 (TMDB, medium, deps: T-027 ✅)
+  - T-033 (search caching + SSE, medium, deps: T-032 ✅)
+- Recommend T-014 next as lowest ID among medium priority with all deps satisfied

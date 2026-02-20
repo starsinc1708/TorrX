@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 23
+    "completedTasks": 24
   },
   "tasks": [
     {
@@ -397,8 +397,8 @@
         "services/torrent-engine/internal/api/http/handlers_bulk.go",
         "services/torrent-engine/internal/api/http/handlers_tags.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. All bulk operations and tag management already fully implemented in handlers_torrents.go (not in separate files as suggested by files_likely_touched). Bulk start (line 499): POST /torrents/bulk/start iterates IDs, calls startTorrent.Execute for each, returns per-item success/error. Bulk stop (line 525): POST /torrents/bulk/stop similarly calls stopTorrent.Execute. Bulk delete (line 551): POST /torrents/bulk/delete calls deleteTorrent.Execute with deleteFiles flag, also purges HLS cache and media probe cache per torrent. decodeBulkRequest (line 583): validates JSON, requires non-empty IDs, enforces maxBulkIDs=100 limit with 400 error. bulkRequest struct supports DeleteFiles bool field. Tag management: PUT /torrents/{id}/tags handler (line 473) decodes tags array, calls repo.UpdateTags, returns updated record. Tags queryable via GET /torrents?tags= with parseCommaSeparated + normalizeTags dedup + MongoDB $all for multi-tag AND filtering. 12 test functions cover all scenarios: TestBulkStartEndpoint, TestBulkStopEndpoint, TestBulkDeleteEndpoint, TestBulkTooManyIDs, TestBulkEmptyIDs, TestBulkInvalidJSON, TestBulkMethodNotAllowed, TestBulkUnknownAction, TestBulkStartPartialFailure, TestUpdateTagsEndpoint, TestUpdateTagsNotFound, TestUpdateTagsBadJSON. Also fixed 2 pre-existing test bugs: (1) HLS settings validation tests expected 400 for zero-value PrebufferMB/WindowBeforeMB but partial-update merge treats 0 as 'not provided' — changed to use -1; (2) normalizeRoute case ordering was greedy (/torrents/:id matched before /hls/playlist for HLS URLs) — reordered HLS checks before catch-all."
     },
     {
       "id": "T-014",
