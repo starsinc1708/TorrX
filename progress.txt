@@ -1054,3 +1054,28 @@ Format:
   - T-041 (video player UX, deps: T-039 done, T-024 done)
   - T-042 (SettingsPage encoding/HLS, deps: T-035 done, T-023 done)
   - T-045 (WebSocket frontend integration) now unblocked by T-025
+
+## Iteration 32 — 2026-02-20 17:00
+**Task:** [T-029] Implement 1337x and RuTracker search providers
+**Status:** done
+**What was done:**
+- Verified both providers already fully implemented — no code changes needed
+- 1337x (x1337/provider.go, 381 lines): two-pass HTML scraping (search entries -> detail pages), multi-mirror support (x1337x.ws/1337x.to/1377x.to) with fallback loop, regex extraction of magnet/seeders/leechers/size/enrichment (description, NFO, poster, screenshots), dedup by path, maxScans capping at 40
+- RuTracker (rutracker/provider.go, 493 lines): two-pass scraping (tracker.php search -> viewtopic.php details), Windows-1251 decoding via charmap.Windows1251, cookie-based auth (req.Header.Set Cookie), login page detection (URL + HTML form), row-based and link-based topic parsing, retry with exponential backoff (3 attempts), transient error detection, description extraction for dubbing
+- HTTP proxy support: via injected Config.Client with custom transport (configured in main.go from SEARCH_PROVIDER_RUTRACKER_PROXY)
+- Both implement Provider interface: Name(), Info(), Search()
+- Tests: 5 test functions (parseSearchEntries, parseDetailHTML, parseEndpoints, parseTopics, isLoginPage), all pass
+- go build, go vet, go test all pass clean
+**Issues found:**
+- None
+**Notes for next session:**
+- T-029 done. Next eligible medium-priority tasks (lowest ID first):
+  - T-030 (Torznab + FlareSolverr, deps: T-027 done)
+  - T-031 (TMDB enrichment, deps: T-027 done)
+  - T-033 (search caching + SSE, deps: T-032 done)
+  - T-041 (video player UX, deps: T-039/T-024 done)
+  - T-042 (SettingsPage encoding/HLS, deps: T-035/T-023 done)
+  - T-045 (WebSocket frontend, deps: T-035/T-025 done)
+  - T-051 (torrent-engine unit tests, deps: T-010/T-014/T-015 done)
+  - T-052 (torrent-engine integration tests, deps: T-019/T-020 done)
+  - T-055 (Docker health checks, deps: T-002 done)

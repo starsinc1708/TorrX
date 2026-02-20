@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 32
+    "completedTasks": 33
   },
   "tasks": [
     {
@@ -874,8 +874,8 @@
         "services/torrent-search/internal/providers/x1337/provider.go",
         "services/torrent-search/internal/providers/rutracker/provider.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. Both providers fully implemented — no code changes needed.\n\n**1337x (x1337/provider.go, 381 lines):**\n- Provider struct with Config (Endpoint, UserAgent, Client), multi-mirror support via parseEndpoints (comma-separated, deduped, default: x1337x.ws/1337x.to/1377x.to)\n- Name() → \"1337x\", Info() → {1337x, \"1337x\", index, true}\n- Two-pass HTML scraping: (1) fetchSearchEntries — HTTP GET /search/<query>/1/, regex-based extraction of torrent detail links (href + name), dedup by path, 4MB body limit; (2) fetchDetailHTML — per-entry detail page fetch; parseDetailHTML extracts magnet link, seeders, leechers, size (ParseHumanSize), description, NFO, poster+screenshots (up to 4 images, filters sprite/icon/logo)\n- Mirror fallback: Search() loops through endpoints array, tries next on error\n- Limit enforcement: maxScans = min(limit*4, len(entries), 40), results capped at limit\n- Regex patterns: search entry links, magnet, seeders/leechers, size, description, NFO, images\n- Helper functions: findFirstInt, findFirstText, findImageURLs (resolves relative URLs), compactSnippet (truncates with ellipsis)\n\n**RuTracker (rutracker/provider.go, 493 lines):**\n- Provider struct with Config (Endpoint, UserAgent, Client, Trackers, Cookies)\n- Name() → \"rutracker\", Info() → {rutracker, \"RuTracker\", tracker, enabled=cookies!=\"\"}\n- Two-pass scraping: (1) Search page — GET tracker.php?nm=<query> with Cookie header, decodes Windows-1251 via charmap.Windows1251 if not valid UTF-8, detects login redirect (isLoginPage checks URL and form elements), parseTopics with two strategies: row-based (tCenter class, extracts seeders/leechers/sizeBytes from data-ts_text) → fallback link-based; (2) fetchTopicMagnet — detail page per topic, extracts magnet+infoHash+description\n- Cookie authentication: Config.Cookies → req.Header.Set(\"Cookie\", p.cookies) on all requests\n- HTTP proxy: supported via injected Config.Client (custom transport with proxy configured in main.go when SEARCH_PROVIDER_RUTRACKER_PROXY is set)\n- Retry logic: doRequestWithRetry (3 attempts, backoff 0/250ms/700ms), isTransientNetworkError detects net.Error/EOF/TLS/timeout; normalizeTransportError adds user-friendly VPN/proxy hints\n- Description extraction for dubbing detection (post_body div, truncated to 2000 chars)\n- Default public trackers for magnet link building\n\n**Tests (5 test functions, all pass):**\n- x1337: TestParseSearchEntries (2 entries), TestParseDetailHTML (magnet/seeders/leechers/size/enrichment), TestParseEndpoints (dedup)\n- rutracker: TestParseTopics (3 topics, dual href patterns), TestIsLoginPage (URL detection, HTML detection, negative)\n- go build, go vet, go test all pass clean"
     },
     {
       "id": "T-030",
