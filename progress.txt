@@ -1106,3 +1106,27 @@ Format:
   - T-055 (Docker health checks, deps: T-002 done)
   - T-052 (torrent-engine integration tests, deps: T-019/T-020 done)
   - T-055 (Docker health checks, deps: T-002 done)
+
+## Iteration 34 — 2026-02-20 19:00
+**Task:** [T-031] Implement TMDB enrichment client and suggest endpoint
+**Status:** done
+**What was done:**
+- Verified T-031 already fully implemented — no code changes needed
+- TMDB client (internal/providers/tmdb/client.go, 183 lines): Client struct with Config (APIKey, BaseURL, HTTP client, Redis, CacheTTL), SearchMulti method (multi-search TMDB API with Redis caching, filters results to movie/tv only), helper methods DisplayTitle(), Year(), PosterURL(), Enabled()
+- Suggest endpoint (internal/api/http/server.go:313-393): GET /search/suggest?q=&lang= returns up to 8 autocomplete suggestions with id, title, year, poster (w92 thumbnail), mediaType, rating. Graceful degradation: returns empty items when TMDB not configured
+- Graceful degradation chain: Enabled() returns false when apiKey empty, main.go buildTMDBClient returns nil, suggest handler returns empty items, enrichWithTMDB returns items unchanged
+- TMDB enrichment in aggregator (internal/search/aggregator.go:1049-1086): enrichWithTMDB attaches TMDBId, TMDBPoster, TMDBRating, TMDBOverview to search results using best TMDB match. Called in both regular search (line 325) and SSE streaming search (line 960)
+- TMDBClient interface in internal/search/provider.go. Wired via WithTMDB ServiceOption
+- go build, go vet pass clean. All tests pass
+**Issues found:**
+- None
+**Notes for next session:**
+- T-031 done. 35 tasks now complete.
+- Next eligible medium-priority tasks (lowest ID first):
+  - T-033 (search caching + SSE streaming, deps: T-032 done)
+  - T-041 (video player UX, deps: T-039/T-024 done)
+  - T-042 (SettingsPage encoding/HLS, deps: T-035/T-023 done)
+  - T-045 (WebSocket frontend, deps: T-035/T-025 done)
+  - T-051 (torrent-engine unit tests, deps: T-010/T-014/T-015 done)
+  - T-052 (torrent-engine integration tests, deps: T-019/T-020 done)
+  - T-055 (Docker health checks, deps: T-002 done)

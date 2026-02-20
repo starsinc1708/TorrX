@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 34
+    "completedTasks": 35
   },
   "tasks": [
     {
@@ -999,8 +999,8 @@
         "services/torrent-search/internal/providers/tmdb/client.go",
         "services/torrent-search/internal/api/http/handlers_suggest.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Already implemented. TMDB client in internal/providers/tmdb/client.go (~183 lines): Client struct with Config (APIKey, BaseURL, HTTP client, Redis, CacheTTL), SearchMulti method (multi-search API with Redis caching, filters to movie/tv only), helper methods DisplayTitle(), Year(), PosterURL(), Enabled(). Suggest endpoint in internal/api/http/server.go:313-393 (handleSearchSuggest): GET /search/suggest?q=&lang= returns up to 8 autocomplete suggestions with id, title, year, poster (w92 size), mediaType, rating. Graceful degradation: Enabled() returns false when apiKey empty; main.go buildTMDBClient returns nil when TMDB_API_KEY not set; suggest handler returns empty items; enrichWithTMDB returns items unchanged. TMDB enrichment integration in internal/search/aggregator.go: enrichWithTMDB method (lines 1049-1086) attaches TMDBId, TMDBPoster, TMDBRating, TMDBOverview to search results using best match; called in both regular search (line 325) and SSE streaming search (line 960). TMDBClient interface defined in internal/search/provider.go. Wired via WithTMDB ServiceOption. All tests pass, build and vet clean."
     },
     {
       "id": "T-032",
