@@ -1374,3 +1374,22 @@ Format:
 - Remaining medium-priority unblocked: T-052 (engine integration tests), T-053 (search tests), T-055 (Docker health checks)
 - Low priority unblocked: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage), T-048 (Prometheus config), T-050 (OTEL tracing), T-054 (frontend unit tests)
 - T-049 (Grafana dashboards) remains blocked on T-048
+
+## Iteration 46 — 2026-02-20 16:00
+**Task:** [T-052] Write torrent-engine integration tests for API and streaming
+**Status:** done
+**What was done:**
+- Verified task was already fully implemented across 8 test files in internal/api/http/
+- server_test.go: ~90 tests covering CRUD (Create/List/Get/Start/Stop/Delete), streaming (full/range/HEAD/content-type), state, player settings, media info, bulk ops, method routing, utility functions
+- hls_test.go: HLS types, FFmpeg arg building (single/multi-variant, stream copy, seek, subtitles), RAMBuffer, StreamFSM, PriorityManager, StreamJobManager, HLS HTTP integration
+- handlers_settings_test.go: Encoding + HLS settings CRUD with full validation
+- handlers_history_test.go: Watch history list/get/put/upsert/roundtrip
+- e2e_flow_test.go: 8 E2E scenarios (create-start-focus-stream, partial download, focus mode, watch history resume, multi-file, focus switching)
+- direct_playback_test.go, ws_hub_test.go, middleware_test.go also present
+- All tests use httptest.NewRequest + httptest.NewRecorder (no real network)
+- All tests pass: ok torrentstream/internal/api/http ~10.5s
+**Issues found:**
+- None. All tests were already implemented and passing.
+**Notes for next session:**
+- T-052 done. 47 tasks complete out of 55.
+- Next medium-priority pending: T-053 (torrent-search tests), T-055 (Docker health checks)

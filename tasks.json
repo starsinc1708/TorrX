@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 46
+    "completedTasks": 47
   },
   "tasks": [
     {
@@ -1711,8 +1711,8 @@
       "files_likely_touched": [
         "services/torrent-engine/internal/api/http/*_test.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Already implemented. 8 test files in internal/api/http/: server_test.go (~2000 lines, ~90 tests covering CRUD, streaming, state, player settings, media info, bulk ops, method routing, utility functions), hls_test.go (~1500 lines covering HLS types, FFmpeg arg building, RAMBuffer, StreamFSM, PriorityManager, StreamJobManager, HLS HTTP integration), handlers_settings_test.go (~470 lines, encoding + HLS settings CRUD with validation), handlers_history_test.go (~550 lines, watch history list/get/put/upsert/roundtrip), e2e_flow_test.go (~840 lines, 8 E2E scenarios: create-start-focus-stream flow, partial download streaming, focus mode, search-result contract, progress updates, watch history resume, multi-file history, focus switching), direct_playback_test.go (MP4 remux and direct serve), ws_hub_test.go (WebSocket hub), middleware_test.go (CORS/logging). All tests use httptest.NewRequest + httptest.NewRecorder with fake/mock implementations (no real network). All pass: ok torrentstream/internal/api/http ~10.5s."
     },
     {
       "id": "T-053",
