@@ -835,3 +835,35 @@ Format:
   - T-031 (TMDB, medium, deps: T-027 ✅)
   - T-033 (search caching + SSE, medium, deps: T-032 ✅)
 - Recommend T-014 next as lowest ID among medium priority with all deps satisfied
+
+## Iteration 23 — 2026-02-20 11:00
+**Task:** [T-014] Implement SyncState background loop and SessionRestore
+**Status:** done
+**What was done:**
+- Verified all T-014 features already fully implemented — no new feature code needed
+- SyncState (sync_state.go, 146 lines): 10s default interval background goroutine, syncs engine state to MongoDB via ProgressUpdate with $max atomicity
+- SessionRestore (session_restore.go, 23 lines): openSessionFromRecord + hasSource for validating/restoring torrents
+- restoreTorrents in cmd/server/main.go: loads active+pending from MongoDB, restores priority torrent first, then parallel restore of remaining
+- LRU eviction in anacrolix engine.go: evictIdleSessionLocked when maxSessions>0 (focused never evicted, prefers idle over active)
+- Created sync_state_test.go with 20 tests: sumBytesCompleted (5 cases), Run lifecycle (2), sync edge cases (13 covering no sessions, list/getMany errors, progress update/no regression, status change, files count/merge, no changes, name derivation, not found/error/missing record, updateProgress error, totalBytes preserved, multiple sessions, empty files)
+- Created session_restore_test.go with 5 tests: hasSource (9 sub-cases), openSessionFromRecord (magnet, torrent, no source, whitespace, engine error)
+- go vet ./... clean, go test ./... all 14 packages pass (0 failures)
+**Issues found:**
+- None. Implementation was fully complete; comprehensive unit tests were missing.
+**Notes for next session:**
+- T-014 is done. T-051 depends on T-014 (along with T-010, T-015).
+- 25 tasks now done: T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-009, T-010, T-011, T-012, T-013, T-014, T-015, T-018, T-019, T-020, T-027, T-028, T-032, T-035, T-036, T-039, T-040
+- Next tasks with all deps satisfied (medium priority, lowest ID first):
+  - T-016 (adaptive boosts, medium, deps: T-015 ✅)
+  - T-017 (dormancy, medium, deps: T-015 ✅)
+  - T-021 (direct browser playback, medium, deps: T-008 ✅, T-018 ✅)
+  - T-022 (media info endpoint, medium, deps: T-008 ✅, T-003 ✅)
+  - T-023 (dynamic settings API, medium, deps: T-009 ✅, T-003 ✅)
+  - T-024 (watch history, medium, deps: T-004 ✅, T-003 ✅)
+  - T-025 (WebSocket, medium, deps: T-003 ✅)
+  - T-029 (1337x + Rutracker, medium, deps: T-027 ✅)
+  - T-030 (Torznab, medium, deps: T-027 ✅)
+  - T-031 (TMDB, medium, deps: T-027 ✅)
+  - T-033 (search caching + SSE, medium, deps: T-032 ✅)
+  - T-051 (domain + use case tests, medium, deps: T-010 ✅, T-014 ✅, T-015 ✅) — NOW UNBLOCKED
+- Recommend T-016 next as lowest ID among medium priority with all deps satisfied

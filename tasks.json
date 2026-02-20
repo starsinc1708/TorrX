@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 24
+    "completedTasks": 25
   },
   "tasks": [
     {
@@ -425,8 +425,8 @@
         "services/torrent-engine/internal/usecase/sync_state.go",
         "services/torrent-engine/internal/usecase/session_restore.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. All T-014 features already fully implemented — no new feature code needed. SyncState (sync_state.go, 146 lines): background goroutine with 10s default interval (time.NewTicker), sync() fetches engine sessions via ListSessions, loads records via GetMany, compares per-session progress/status/files/name, builds ProgressUpdate with DoneBytes (checked > record.DoneBytes before sending), status changes, file count changes, per-file bytesCompleted merge (higher wins), name derivation for empty names. Uses repo.UpdateProgress which applies MongoDB $max for atomic progress (no regression). SessionRestore (session_restore.go, 23 lines): openSessionFromRecord validates source via hasSource (whitespace-trimmed magnet/torrent check), calls engine.Open with record.Source. restoreTorrents in cmd/server/main.go (68 lines): loads active+pending torrents from MongoDB, restores priority (focused) torrent first, then remaining in parallel via sync.WaitGroup. LRU eviction in anacrolix engine.go (evictIdleSessionLocked): when maxSessions>0 and sessions>=limit, evicts least-recently-used idle session (focused never evicted, prefers idle over active). Created sync_state_test.go (20 tests): sumBytesCompleted (5 cases), Run stops on cancel, default interval, sync no sessions, list error, getMany error, progress update, no regression, status change, files count changed, file progress merge, no changes, name derived, getSessionState not found, getSessionState error, record not in repo, updateProgress error, totalBytes preserved, multiple sessions, empty engine files. Created session_restore_test.go (5 tests): hasSource (9 sub-cases), openSessionFromRecord with magnet, with torrent, no source, whitespace source, engine error. go vet clean, go test all 14 packages pass (0 failures)."
     },
     {
       "id": "T-015",
