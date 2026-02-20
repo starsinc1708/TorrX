@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 50
+    "completedTasks": 51
   },
   "tasks": [
     {
@@ -1462,8 +1462,8 @@
       "files_likely_touched": [
         "frontend/src/pages/ProviderDiagnosticsPage.tsx"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified and completed 2026-02-20. ProviderDiagnosticsPage fully implemented in a single file (215 lines).\n\n**Implementation details:**\n- File: frontend/src/pages/ProviderDiagnosticsPage.tsx\n- Route: /diagnostics (registered in App.tsx)\n- Data source: GET /search/providers/health via getSearchProviderDiagnostics() in api.ts\n- Test endpoint: GET /search/providers/test?provider=...&q=...&limit=10&nocache=1 via testSearchProvider() in api.ts\n- Types: SearchProviderDiagnostics and SearchProviderTestResult in types.ts\n\n**Features:**\n1. Provider list with health status: shows name, kind, enabled/disabled, fan-out badge, sub-indexers (expandable)\n2. Circuit breaker display: consecutiveFailures count, blockedUntil date, health color coding (emerald=healthy, amber=unhealthy/timeout, muted=disabled)\n3. Per-provider test button: runs test search query against individual provider, shows OK/Failed result with elapsed time, item count, error message, and sample results\n4. Test All button: sequentially tests all enabled providers\n5. Stats grid: lastSuccessAt, lastFailureAt, timeoutCount, blockedUntil\n6. Error display: lastError shown in amber banner\n7. Summary footer: totalRequests and totalFailures per provider\n8. Auto-refresh: 30-second interval polling with cleanup on unmount (was missing, added)\n9. Manual reload button with loading spinner\n10. Search/filter input for test queries\n\n**Design:** Uses Card, Button, Input from UI kit. Tailwind-first styling with dark mode support. Responsive grid layout (sm:grid-cols-2, lg:grid-cols-4). Sorted alphabetically by provider name.\n\n**Navigation:** Linked from Header.tsx, accessible at /diagnostics route."
     },
     {
       "id": "T-045",

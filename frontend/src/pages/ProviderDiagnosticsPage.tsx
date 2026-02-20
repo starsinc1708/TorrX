@@ -33,6 +33,8 @@ const ProviderDiagnosticsPage: React.FC = () => {
 
   useEffect(() => {
     void loadDiagnostics();
+    const id = setInterval(() => void loadDiagnostics(), 30_000);
+    return () => clearInterval(id);
   }, [loadDiagnostics]);
 
   const runTest = useCallback(async (providerName: string) => {
