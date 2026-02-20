@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 39
+    "completedTasks": 40
   },
   "tasks": [
     {
@@ -1253,8 +1253,8 @@
         "frontend/src/pages/SearchPage.tsx",
         "frontend/src/hooks/useSearch.ts"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. Task was mostly pre-implemented. SSE streaming: SearchProvider uses searchTorrentsStream() with onPhase callbacks handling 'bootstrap' and 'update' phases; results appear incrementally per-provider with providerStatus badges (count + ok/error). Ranking profile: 5 weight sliders (freshness, seeders, quality, language, size) + target size input + preferred audio/subtitle MultiSelect + preferSeries/preferMovies toggles, stored in localStorage under 'search-ranking-profile:v2'. Filter presets: save/apply/delete with localStorage persistence under 'search-result-filter-presets:v1', up to 20 presets. Pre-existing filters: source, quality, audio, subtitles, size range, min seeders, include/exclude keywords, excludeCam. ADDED in this session: contentTypes filter (movie/series/anime facet from enrichment.contentType or isSeries), dubbingTypes filter (from enrichment.dubbing.type), yearMin/yearMax range filter (from enrichment.year). Updated ResultFilters type in search-utils.ts (+contentTypes, +dubbingTypes, +yearMin, +yearMax), added facet option builders (contentTypeFacetOptions, dubbingTypeFacetOptions), filtering logic in filteredItems, filter panel UI (new 'Type & Year' fieldset with MultiSelect for content type and dubbing, year range inputs), activeFilterBadges, activeFilterCount, hasActiveFilters, and clearFilterBadge. Grid updated from 3-col to sm:2/lg:4-col to accommodate 4 filter fieldsets. npx tsc --noEmit and npm run build both pass clean."
     },
     {
       "id": "T-039",

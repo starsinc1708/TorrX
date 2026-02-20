@@ -197,11 +197,41 @@ const SearchPage: React.FC = () => {
       .map((v) => ({ value: v, label: v }));
   }, [items]);
 
+  const contentTypeFacetOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const item of items) {
+      const ct = String(item.enrichment?.contentType ?? '').trim().toLowerCase();
+      if (ct) set.add(ct);
+      else if (item.enrichment?.isSeries) set.add('series');
+    }
+    return Array.from(set)
+      .sort((a, b) => a.localeCompare(b))
+      .map((v) => ({ value: v, label: v.charAt(0).toUpperCase() + v.slice(1) }));
+  }, [items]);
+
+  const dubbingTypeFacetOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const item of items) {
+      const dt = String(item.enrichment?.dubbing?.type ?? '').trim();
+      if (dt) set.add(dt);
+    }
+    return Array.from(set)
+      .sort((a, b) => a.localeCompare(b))
+      .map((v) => ({ value: v, label: v }));
+  }, [items]);
+
   const filteredItems = useMemo(() => {
     const sources = new Set(resultFilters.sources);
     const qualities = new Set(resultFilters.qualities);
     const audio = new Set(resultFilters.audio.map((v) => String(v).trim().toUpperCase()).filter(Boolean));
     const subtitles = new Set(resultFilters.subtitles.map((v) => String(v).trim().toUpperCase()).filter(Boolean));
+    const contentTypes = new Set(resultFilters.contentTypes);
+    const dubbingTypes = new Set(resultFilters.dubbingTypes);
+
+    const yearMinVal = Number(resultFilters.yearMin);
+    const yearMaxVal = Number(resultFilters.yearMax);
+    const hasYearMin = Number.isFinite(yearMinVal) && yearMinVal > 0;
+    const hasYearMax = Number.isFinite(yearMaxVal) && yearMaxVal > 0;
 
     const minSizeGB = Number(resultFilters.minSizeGB);
     const maxSizeGB = Number(resultFilters.maxSizeGB);
@@ -234,6 +264,24 @@ const SearchPage: React.FC = () => {
       if (subtitles.size > 0) {
         const itemSubs = (item.enrichment?.subtitles ?? []).map((v) => String(v).trim().toUpperCase()).filter(Boolean);
         if (!itemSubs.some((v) => subtitles.has(v))) return false;
+      }
+
+      if (contentTypes.size > 0) {
+        const ct = String(item.enrichment?.contentType ?? '').trim().toLowerCase()
+          || (item.enrichment?.isSeries ? 'series' : '');
+        if (!ct || !contentTypes.has(ct)) return false;
+      }
+
+      if (dubbingTypes.size > 0) {
+        const dt = String(item.enrichment?.dubbing?.type ?? '').trim();
+        if (!dt || !dubbingTypes.has(dt)) return false;
+      }
+
+      if (hasYearMin || hasYearMax) {
+        const year = Number(item.enrichment?.year ?? 0);
+        if (!Number.isFinite(year) || year <= 0) return false;
+        if (hasYearMin && year < yearMinVal) return false;
+        if (hasYearMax && year > yearMaxVal) return false;
       }
 
       const sizeBytes = Number(item.sizeBytes ?? 0);
@@ -299,6 +347,10 @@ const SearchPage: React.FC = () => {
     if (resultFilters.qualities.length > 0) return true;
     if (resultFilters.audio.length > 0) return true;
     if (resultFilters.subtitles.length > 0) return true;
+    if (resultFilters.contentTypes.length > 0) return true;
+    if (resultFilters.dubbingTypes.length > 0) return true;
+    if (String(resultFilters.yearMin).trim()) return true;
+    if (String(resultFilters.yearMax).trim()) return true;
     if (String(resultFilters.minSizeGB).trim()) return true;
     if (String(resultFilters.maxSizeGB).trim()) return true;
     if (String(resultFilters.minSeeders).trim()) return true;
@@ -314,6 +366,9 @@ const SearchPage: React.FC = () => {
     if (resultFilters.qualities.length > 0) count += 1;
     if (resultFilters.audio.length > 0) count += 1;
     if (resultFilters.subtitles.length > 0) count += 1;
+    if (resultFilters.contentTypes.length > 0) count += 1;
+    if (resultFilters.dubbingTypes.length > 0) count += 1;
+    if (String(resultFilters.yearMin).trim() || String(resultFilters.yearMax).trim()) count += 1;
     if (String(resultFilters.minSizeGB).trim() || String(resultFilters.maxSizeGB).trim()) count += 1;
     if (String(resultFilters.minSeeders).trim()) count += 1;
     if (String(resultFilters.includeKeywords).trim()) count += 1;
@@ -337,6 +392,14 @@ const SearchPage: React.FC = () => {
     summarize('Quality', resultFilters.qualities);
     summarize('Audio', resultFilters.audio);
     summarize('Subs', resultFilters.subtitles);
+    summarize('Type', resultFilters.contentTypes);
+    summarize('Dubbing', resultFilters.dubbingTypes);
+
+    const yearMin = String(resultFilters.yearMin).trim();
+    const yearMax = String(resultFilters.yearMax).trim();
+    if (yearMin || yearMax) {
+      badges.push({ key: 'Year', label: `Year: ${yearMin || '...'}-${yearMax || '...'}` });
+    }
 
     const minGB = String(resultFilters.minSizeGB).trim();
     const maxGB = String(resultFilters.maxSizeGB).trim();
@@ -383,10 +446,16 @@ const SearchPage: React.FC = () => {
       Quality: 'qualities',
       Audio: 'audio',
       Subs: 'subtitles',
+      Type: 'contentTypes',
+      Dubbing: 'dubbingTypes',
     };
     const filterKey = keyMap[badgeKey];
     if (filterKey) {
       setResultFilters((prev) => ({ ...prev, [filterKey]: [] }));
+      return;
+    }
+    if (badgeKey === 'Year') {
+      setResultFilters((prev) => ({ ...prev, yearMin: '', yearMax: '' }));
       return;
     }
     if (badgeKey === 'Size') {
@@ -791,7 +860,7 @@ const SearchPage: React.FC = () => {
             {/* Inline expandable filters */}
             {filtersOpen ? (
               <div className="rounded-xl border border-border/70 bg-muted/10 p-4">
-                <div className="grid gap-4 sm:grid-cols-[1fr_1fr_1fr]">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                   {/* Block: Content */}
                   <fieldset className="space-y-2">
                     <legend className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Content</legend>
@@ -828,6 +897,41 @@ const SearchPage: React.FC = () => {
                       onChange={(next) => setResultFilters((prev) => ({ ...prev, subtitles: next }))}
                       placeholder="Any subs"
                     />
+                  </fieldset>
+
+                  {/* Block: Type & Dubbing */}
+                  <fieldset className="space-y-2">
+                    <legend className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Type &amp; Year</legend>
+                    <MultiSelect
+                      label="Content type"
+                      value={resultFilters.contentTypes}
+                      options={contentTypeFacetOptions}
+                      onChange={(next) => setResultFilters((prev) => ({ ...prev, contentTypes: next }))}
+                      placeholder="Any type"
+                    />
+                    <MultiSelect
+                      label="Dubbing"
+                      value={resultFilters.dubbingTypes}
+                      options={dubbingTypeFacetOptions}
+                      onChange={(next) => setResultFilters((prev) => ({ ...prev, dubbingTypes: next }))}
+                      placeholder="Any dubbing"
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        inputMode="numeric"
+                        placeholder="Year from"
+                        value={resultFilters.yearMin}
+                        onChange={(e) => setResultFilters((prev) => ({ ...prev, yearMin: e.target.value }))}
+                        aria-label="Year from"
+                      />
+                      <Input
+                        inputMode="numeric"
+                        placeholder="Year to"
+                        value={resultFilters.yearMax}
+                        onChange={(e) => setResultFilters((prev) => ({ ...prev, yearMax: e.target.value }))}
+                        aria-label="Year to"
+                      />
+                    </div>
                   </fieldset>
 
                   {/* Block: Limits */}

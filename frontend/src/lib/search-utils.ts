@@ -10,6 +10,10 @@ export type ResultFilters = {
   qualities: string[];
   audio: string[];
   subtitles: string[];
+  contentTypes: string[];
+  dubbingTypes: string[];
+  yearMin: string;
+  yearMax: string;
   minSizeGB: string;
   maxSizeGB: string;
   minSeeders: string;
@@ -23,6 +27,10 @@ export const defaultResultFilters: ResultFilters = {
   qualities: [],
   audio: [],
   subtitles: [],
+  contentTypes: [],
+  dubbingTypes: [],
+  yearMin: '',
+  yearMax: '',
   minSizeGB: '',
   maxSizeGB: '',
   minSeeders: '',
