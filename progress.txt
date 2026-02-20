@@ -867,3 +867,33 @@ Format:
   - T-033 (search caching + SSE, medium, deps: T-032 ✅)
   - T-051 (domain + use case tests, medium, deps: T-010 ✅, T-014 ✅, T-015 ✅) — NOW UNBLOCKED
 - Recommend T-016 next as lowest ID among medium priority with all deps satisfied
+
+## Iteration 24 — 2026-02-20 12:00
+**Task:** [T-016] Implement adaptive boosts for SlidingPriorityReader
+**Status:** done
+**What was done:**
+- Verified all three adaptive boost modes already fully implemented in sliding_priority_reader.go (441 lines) — no code changes needed
+- Seek Boost: Seek() (line 182-206) doubles window (2x), clamps to maxWindow (256MB), sets seekBoostUntil = now + 10s. BoostWindow() method for external callers (HLS watchdog). adjustWindowLocked() skips dynamic adjustment during boost, allowing natural decay
+- Buffer-Low Boost: adjustWindowLocked() (lines 263-274) checks bufferFillFunc callback; when fill < 30% and no active boost, doubles window for 5s, no re-trigger while active. applyGradientPriority() (lines 338-341) uses boostedGradientHighBand (6MB) instead of normal gradientHighBand (2MB) during active boost
+- Dynamic Window: adjustWindowLocked() (lines 239-286) EMA-smoothed throughput α=0.3, updated every 500ms, targets 30s buffer (dynamicWindow = effectiveBytesPerSec × 30), clamped to [32MB, 256MB]
+- All boosts additive: seek boost priority > buffer-low > dynamic
+- 23 test cases pass covering all boost scenarios: TestSeekBoost (4), TestBufferLowBoost (4), TestAdjustWindowEMA (6), TestBoostWindowMethod (3), TestApplyGradientPriority buffer-low sub-test (1), plus related gradient/deprioritize tests
+- go build, go vet, go test ./... all pass clean (0 failures across all 8 test packages)
+**Issues found:**
+- None. Implementation was fully complete with comprehensive test coverage.
+**Notes for next session:**
+- T-016 is done. No tasks directly depend on T-016.
+- 26 tasks now done: T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-009, T-010, T-011, T-012, T-013, T-014, T-015, T-016, T-018, T-019, T-020, T-027, T-028, T-032, T-035, T-036, T-039, T-040
+- Next tasks with all deps satisfied (medium priority, lowest ID first):
+  - T-017 (dormancy, medium, deps: T-015 ✅)
+  - T-021 (direct browser playback, medium, deps: T-008 ✅, T-018 ✅)
+  - T-022 (media info endpoint, medium, deps: T-008 ✅, T-003 ✅)
+  - T-023 (dynamic settings API, medium, deps: T-009 ✅, T-003 ✅)
+  - T-024 (watch history, medium, deps: T-004 ✅, T-003 ✅)
+  - T-025 (WebSocket, medium, deps: T-003 ✅)
+  - T-029 (1337x + Rutracker, medium, deps: T-027 ✅)
+  - T-030 (Torznab, medium, deps: T-027 ✅)
+  - T-031 (TMDB, medium, deps: T-027 ✅)
+  - T-033 (search caching + SSE, medium, deps: T-032 ✅)
+  - T-051 (domain + use case tests, medium, deps: T-010 ✅, T-014 ✅, T-015 ✅)
+- Recommend T-017 next as lowest ID among medium priority with all deps satisfied

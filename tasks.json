@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 25
+    "completedTasks": 26
   },
   "tasks": [
     {
@@ -485,8 +485,8 @@
         "services/torrent-engine/internal/usecase/sliding_priority_reader.go",
         "services/torrent-engine/internal/usecase/sliding_priority_reader_test.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. All three adaptive boost modes fully implemented in sliding_priority_reader.go (441 lines). Seek Boost: Seek() (line 182-206) doubles window (2x), clamps to maxWindow (256MB), sets seekBoostUntil = now + 10s; BoostWindow() method provides same behavior for external callers (HLS watchdog). adjustWindowLocked() skips dynamic adjustment during seek boost period, allowing natural decay. Buffer-Low Boost: adjustWindowLocked() (lines 263-274) checks bufferFillFunc callback; when fill < 0.3 (30%) and no active boost, doubles window for 5s, no re-trigger while active. applyGradientPriority() (lines 338-341) uses boostedGradientHighBand (6MB) instead of normal gradientHighBand (2MB) during active buffer boost. Dynamic Window: adjustWindowLocked() (lines 239-286) calculates EMA-smoothed throughput with α=0.3, updates every 500ms, targets 30s buffered content (dynamicWindow = effectiveBytesPerSec × 30), clamped to [32MB, 256MB]. All boosts are additive (seek boost takes priority, then buffer-low, then dynamic). 23 test cases cover all boost scenarios: TestSeekBoost (4 cases: doubles+10s, max clamp, pos update, wake dormant), TestBufferLowBoost (4 cases: trigger below 30%, no trigger above, max clamp, no re-trigger), TestAdjustWindowEMA (6 cases: 500ms throttle, first EMA, α=0.3 smoothing, 30s target, min clamp, seek boost skip), TestBoostWindowMethod (3 cases: doubles, update calls, max clamp), TestApplyGradientPriority buffer-low sub-test (1 case: 6MB expanded high band). All tests pass."
     },
     {
       "id": "T-017",
