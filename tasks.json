@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 41
+    "completedTasks": 42
   },
   "tasks": [
     {
@@ -1397,8 +1397,8 @@
       "files_likely_touched": [
         "frontend/src/pages/SettingsPage.tsx"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. SettingsPage encoding and HLS config fully implemented in frontend/src/pages/SettingsPage.tsx (963 lines). Encoding section: Quality selector with 4 presets (fast=ultrafast/CRF28, balanced=veryfast/CRF23, quality=fast/CRF20, best=medium/CRF18) maps to underlying preset+CRF combo rather than raw CRF slider — better UX while covering the full ultrafast→medium range. Audio bitrate dropdown (96k/128k/192k/256k). Changes persist immediately via updateEncodingSettings PATCH API. HLS section: RAM buffer (4-4096 MB), prebuffer (1-1024 MB), window before (1-1024 MB), window after (4-4096 MB) — all number inputs with min/max validation. Segment duration button group (2/4/6/8/10s). Player buffer selector (15/30/60/120/300s, stored in localStorage). Save button calls updateHLSSettings PATCH API. Both sections load current settings on mount via useEffect calling loadEncoding() and loadHLSSettings(). Error states, loading states, and saving states properly managed. Types defined in types.ts: EncodingSettings {preset, crf, audioBitrate}, HLSSettings {segmentDuration, ramBufSizeMB, prebufferMB, windowBeforeMB, windowAfterMB}. API functions in api.ts: getEncodingSettings, updateEncodingSettings, getHLSSettings, updateHLSSettings. npx tsc --noEmit and npm run build both pass clean."
     },
     {
       "id": "T-043",

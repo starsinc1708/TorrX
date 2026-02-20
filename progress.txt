@@ -1263,3 +1263,20 @@ Format:
 - None. All acceptance criteria satisfied by existing implementation.
 **Notes for next session:**
 - T-041 done. 41 tasks complete. Next eligible pending tasks: T-042 (SettingsPage encoding, medium), T-045 (WebSocket integration, medium), T-051 (torrent-engine unit tests, medium), T-052 (torrent-engine integration tests, medium), T-053 (torrent-search tests, medium), T-055 (Docker health checks, medium), T-026 (metrics/swagger, low)
+
+## Iteration 40 — 2026-02-20 23:30
+**Task:** [T-042] Implement SettingsPage for encoding and HLS configuration
+**Status:** done
+**What was done:**
+- Verified task already fully implemented in frontend/src/pages/SettingsPage.tsx (963 lines)
+- Encoding section: Quality selector with 4 presets mapping to FFmpeg preset+CRF combos (fast=ultrafast/CRF28, balanced=veryfast/CRF23, quality=fast/CRF20, best=medium/CRF18). Audio bitrate dropdown (96k/128k/192k/256k). Changes persist immediately via updateEncodingSettings PATCH API
+- HLS section: RAM buffer (4-4096 MB), prebuffer (1-1024 MB), window before (1-1024 MB), window after (4-4096 MB) — number inputs with min/max validation. Segment duration button group (2/4/6/8/10s). Player buffer selector (15/30/60/120/300s, localStorage). Save button calls updateHLSSettings PATCH API
+- Settings load on mount via useEffect (loadEncoding + loadHLSSettings)
+- Types in types.ts: EncodingSettings {preset, crf, audioBitrate}, HLSSettings {segmentDuration, ramBufSizeMB, prebufferMB, windowBeforeMB, windowAfterMB}
+- API functions in api.ts: getEncodingSettings, updateEncodingSettings, getHLSSettings, updateHLSSettings
+- Design choice: preset+CRF grouped into quality levels instead of raw CRF slider — better UX
+- npx tsc --noEmit passes clean, npm run build succeeds
+**Issues found:**
+- None. All 5 acceptance criteria satisfied by existing implementation.
+**Notes for next session:**
+- T-042 done. 42 tasks complete. Next eligible pending tasks (medium priority, deps met): T-043 (SettingsPage providers/theme), T-045 (WebSocket integration), T-047 (E2E watch history), T-051 (engine unit tests), T-052 (engine API tests), T-053 (search tests), T-055 (Docker health). Low priority with deps met: T-026 (metrics/swagger), T-044 (diagnostics page), T-048 (Prometheus), T-050 (OTEL tracing)
