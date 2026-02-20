@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 30
+    "completedTasks": 31
   },
   "tasks": [
     {
@@ -724,8 +724,8 @@
         "services/torrent-engine/internal/services/session/repository/mongo/watch_history.go",
         "services/torrent-engine/internal/api/http/handlers_watch_history.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. All T-024 features already fully implemented — added comprehensive test suite.\n\n**Domain model** (internal/domain/watch_history.go, 13 lines):\n- WatchPosition struct: TorrentID, FileIndex, Position (float64), Duration (float64), TorrentName, FilePath, UpdatedAt (time.Time). All fields have JSON tags.\n\n**MongoDB repository** (internal/services/session/repository/mongo/watch_history.go, 109 lines):\n- WatchHistoryRepository with collection reference to 'watch_history'\n- watchDocID: composite key `torrentId:fileIndex` as `_id` — ensures UNIQUE(torrentId, fileIndex)\n- Upsert: MongoDB $set with upsert=true, stores all fields + updatedAt as Unix timestamp\n- Get: FindOne by _id, returns domain.ErrNotFound for missing documents\n- ListRecent: Find with sort by updatedAt desc, configurable limit (default 20)\n- watchDocToPosition: converts BSON doc to domain type with UTC time conversion\n\n**HTTP handlers** (internal/api/http/handlers_history.go, 103 lines):\n- handleWatchHistory: GET /watch-history — lists recent positions, ?limit param (default 20), validates limit via parsePositiveInt\n- handleWatchHistoryByID: GET/PUT /watch-history/{torrentId}/{fileIndex} — path parsing with validation (non-empty parts, valid int fileIndex >= 0)\n  - GET: returns WatchPosition JSON, 404 on not found\n  - PUT: decodes JSON body (position, duration, torrentName, filePath), calls Upsert, returns 204 No Content\n- Both handlers check s.watchHistory != nil (returns 501 if not configured)\n\n**Server wiring:**\n- WatchHistoryStore interface (server.go:52-56): Upsert, Get, ListRecent methods\n- WithWatchHistory ServerOption (server.go:188-192)\n- Routes registered: /watch-history and /watch-history/ (server.go:366-367)\n- main.go:77 creates WatchHistoryRepository, main.go:188 passes via WithWatchHistory\n\n**Handler tests** (handlers_history_test.go, 22 test functions):\n- List: returns positions (2 entries), empty returns empty array, respects limit, default limit is 20, invalid limit → 400, not configured → 501, method not allowed (POST/PUT/DELETE/PATCH → 405), store error → 500\n- Get: found returns 200 with all fields, not found → 404, invalid fileIndex → 400, negative fileIndex → 400, missing path parts (4 sub-cases), not configured → 501, store error → 500\n- Put: success → 204 with all fields stored, upsert (double put → 1 entry with updated position), invalid JSON → 400, store error → 500, not configured → 501\n- Method not allowed: POST/DELETE/PATCH on /watch-history/{id}/{idx} → 405\n- Roundtrip: PUT then GET verifies all 6 fields roundtrip correctly\n- Multi-entry: PUT 3 entries then List verifies all 3 returned\n\n**Repository tests** (watch_history_test.go, 5 test functions):\n- watchDocID: 5 table-driven cases (basic, non-zero index, large index, empty id, hash-like id)\n- watchDocToPosition: full field mapping with timestamp conversion\n- watchDocToPosition zero timestamp: handles epoch correctly\n- watchDocToPosition all fields: verifies every field maps from doc to domain\n- NewWatchHistoryRepository: constructor existence check\n\nAll 10 test packages pass (0 failures). go build, go vet clean."
     },
     {
       "id": "T-025",

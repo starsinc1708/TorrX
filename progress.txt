@@ -1009,3 +1009,24 @@ Format:
   - T-030 (Torznab provider, deps: T-027 done)
   - T-031 (TMDB enrichment, deps: T-027 done)
   - T-033 (search caching + SSE, deps: T-032 done)
+
+## Iteration 30 — 2026-02-20 10:55
+**Task:** [T-024] Implement watch history with position persistence
+**Status:** done
+**What was done:**
+- Verified all watch history features already fully implemented: domain model (WatchPosition), MongoDB repository (Upsert with composite _id for UNIQUE(torrentId, fileIndex), Get, ListRecent sorted by updatedAt desc, default limit 20), HTTP handlers (GET /watch-history, GET /watch-history/{id}/{fileIndex}, PUT /watch-history/{id}/{fileIndex})
+- Server wiring confirmed: WatchHistoryStore interface, WithWatchHistory ServerOption, routes registered, main.go creates and injects repository
+- Created handlers_history_test.go (22 test functions): list positions, empty list, limit, default limit 20, invalid limit, not configured, method not allowed, store error, get found/not found/invalid fileIndex/negative fileIndex/missing parts/not configured/store error, put success/upsert/invalid JSON/store error/not configured, method not allowed, PUT+GET roundtrip, PUT multiple + list
+- Created watch_history_test.go (5 test functions): watchDocID (5 table-driven cases), watchDocToPosition full/zero timestamp/all fields, constructor check
+- All 10 test packages pass (0 failures), go build and go vet clean
+**Issues found:**
+- None
+**Notes for next session:**
+- T-024 is done. Next eligible medium-priority tasks (lowest ID first):
+  - T-025 (WebSocket hub, deps: T-003 done)
+  - T-029 (1337x + RuTracker, deps: T-027 done)
+  - T-030 (Torznab provider, deps: T-027 done)
+  - T-031 (TMDB enrichment, deps: T-027 done)
+  - T-033 (search caching + SSE, deps: T-032 done)
+  - T-042 (SettingsPage encoding/HLS, deps: T-035 done, T-023 done)
+  - T-041 now unblocked for depends_on T-024
