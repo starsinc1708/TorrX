@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 51
+    "completedTasks": 52
   },
   "tasks": [
     {
@@ -1585,8 +1585,8 @@
         "deploy/prometheus/rules/slo.yml",
         "deploy/prometheus/rules/alerts.yml"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Already fully implemented. prometheus.yml (32 lines): 5 scrape jobs — prometheus self-monitoring, traefik:8080 (with bucket config 0.1/0.3/1.2/5.0), jaeger:14269, torrent-search:8090, torrent-engine (torrentstream:8080). 15s scrape/eval intervals. slo.yml (183 lines): slo_recording_rules group (30s interval) with 16 recording rules — search and API availability (error_ratio from 5xx codes via Traefik service labels), P50/P95/P99 latency quantiles, 7d rolling error budgets (search target 99.0%/0.01, API target 99.5%/0.005). slo_alerts group with 11 alert rules: SearchHighErrorRate (>5%, 5m), SearchCriticalErrorRate (>10%, 2m), SearchHighLatency (P95>5s), SearchCriticalLatency (P95>15s), SearchErrorBudgetLow (<25%), SearchErrorBudgetExhausted (<0%), ApiHighErrorRate (>1%), ApiCriticalErrorRate (>5%), ApiHighLatency (P95>1.2s), ApiErrorBudgetLow (<25%), ApiErrorBudgetExhausted (<0%). Alerts combined in slo.yml (not separate alerts.yml) for SLO context locality. Docker Compose: --storage.tsdb.retention.time=15d, rules mounted at /etc/prometheus/rules:ro, data persisted to prometheus_data volume. docker compose config validates clean."
     },
     {
       "id": "T-049",

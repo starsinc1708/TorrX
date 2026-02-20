@@ -1470,3 +1470,27 @@ Format:
 **Notes for next session:**
 - T-044 done. 51 tasks complete out of 55.
 - Remaining 4 tasks (all low priority): T-048 (Prometheus config), T-049 (Grafana dashboards, blocked on T-048), T-050 (OTEL tracing), T-054 (frontend unit tests)
+
+## Iteration 51 — 2026-02-20 21:00
+**Task:** [T-048] Configure Prometheus scrape config, SLO rules, and alerting
+**Status:** done
+**What was done:**
+- Verified task was ALREADY FULLY IMPLEMENTED (Phase 2.5 check) — no code changes needed
+- **prometheus.yml** (32 lines): 5 scrape jobs with 15s intervals — prometheus self-monitoring (:9090), traefik (:8080 /metrics), jaeger (:14269), torrent-search (:8090), torrent-engine (torrentstream:8080). Traefik configured with custom histogram buckets (0.1/0.3/1.2/5.0) matching SLO thresholds
+- **slo.yml** (183 lines, slo_recording_rules group): 16 recording rules at 30s evaluation interval:
+  - Search: requests rate, errors rate, error_ratio, availability (all 5m windows), P50/P95/P99 latency quantiles, 7d rolling error budget (target 99.0%, allowed error rate 0.01)
+  - API: same 7 metrics, 7d rolling error budget (target 99.5%, allowed error rate 0.005)
+  - Uses Traefik service labels (torrent-search-api@file, torrentstream-api@file) for metric filtering
+  - clamp_min(denominator, 1e-10) prevents division by zero
+- **slo.yml** (slo_alerts group): 11 alert rules with severity labels (warning/critical) and human-readable annotations:
+  - Search: error rate >5%/10% (5m/2m), latency P95 >5s/15s (5m/2m), error budget <25%/exhausted (5m/2m)
+  - API: error rate >1%/5% (5m/2m), latency P95 >1.2s (5m), error budget <25%/exhausted (5m/2m)
+- **Docker Compose**: `--storage.tsdb.retention.time=15d`, rules dir mounted at `/etc/prometheus/rules:ro`, data in `prometheus_data` named volume
+- Design choice: alerts and recording rules combined in single slo.yml (not separate alerts.yml) for better SLO context locality — Prometheus loads all *.yml from rules dir
+- `docker compose config` validates clean
+**Issues found:**
+- None. All 4 acceptance criteria fully satisfied by existing configuration.
+**Notes for next session:**
+- T-048 done. 52 tasks complete out of 55. T-048 unblocks T-049 (Grafana dashboards).
+- Remaining 3 tasks (all low priority): T-049 (Grafana dashboards, NOW UNBLOCKED), T-050 (OTEL tracing), T-054 (frontend unit tests)
+- Recommend T-049 next as it was previously blocked and is now unblocked
