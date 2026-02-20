@@ -32,6 +32,7 @@ import {
   sortOrderOptions,
   tokenizeKeywords,
 } from '../lib/search-utils';
+import { saveEnabledSearchProviders } from '../searchProviderSettings';
 import type {
   SearchResultItem,
   SearchSortBy,
@@ -60,6 +61,7 @@ const SearchPage: React.FC = () => {
     phaseMessage,
     providers,
     enabledProviders,
+    setEnabledProviders,
     isLoadingProviders,
     profile,
     setProfile,
@@ -85,6 +87,18 @@ const SearchPage: React.FC = () => {
   } = search;
 
   const enabledProvidersSet = useMemo(() => new Set(enabledProviders), [enabledProviders]);
+
+  const toggleProvider = useCallback(
+    (providerName: string) => {
+      const name = providerName.toLowerCase();
+      const next = enabledProvidersSet.has(name)
+        ? enabledProviders.filter((p) => p !== name)
+        : [...enabledProviders, name];
+      setEnabledProviders(next);
+      saveEnabledSearchProviders(next);
+    },
+    [enabledProviders, enabledProvidersSet, setEnabledProviders],
+  );
 
   const catalogNameSet = useMemo(() => {
     // Re-derive from search context's catalog awareness via addState
@@ -497,13 +511,21 @@ const SearchPage: React.FC = () => {
               const name = provider.name.toLowerCase();
               const enabled = enabledProvidersSet.has(name);
               return (
-                <Badge
+                <button
                   key={provider.name}
-                  className={cn(enabled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'opacity-60')}
-                  title={provider.name}
+                  type="button"
+                  onClick={() => toggleProvider(provider.name)}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
+                    enabled
+                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                      : 'border-border/70 bg-muted/20 text-muted-foreground opacity-60',
+                  )}
+                  title={`${enabled ? 'Disable' : 'Enable'} ${provider.name}`}
                 >
+                  <span className={cn('h-2 w-2 rounded-full', enabled ? 'bg-emerald-500' : 'bg-muted-foreground/40')} />
                   {provider.label}
-                </Badge>
+                </button>
               );
             })}
           </div>
@@ -954,7 +976,16 @@ const SearchPage: React.FC = () => {
                       ) : null}
                     </div>
 
-                    <div className="flex min-h-0 flex-1 flex-col gap-2.5 p-3.5">
+                    <div className="flex min-h-0 flex-1 gap-3 p-3.5">
+                      {item.enrichment?.tmdbPoster ? (
+                        <img
+                          src={item.enrichment.tmdbPoster}
+                          alt=""
+                          loading="lazy"
+                          className="h-[72px] w-[48px] shrink-0 rounded object-cover"
+                        />
+                      ) : null}
+                      <div className="flex min-w-0 flex-1 flex-col gap-2.5">
                       <div className="min-w-0">
                         <div className="truncate text-sm font-semibold leading-tight" title={item.name}>
                           {item.name}
@@ -1025,6 +1056,7 @@ const SearchPage: React.FC = () => {
                           {isAdded ? 'Added' : 'Add'}
                         </Button>
                       </div>
+                      </div>
                     </div>
                   </article>
                 );
@@ -1053,7 +1085,15 @@ const SearchPage: React.FC = () => {
                   </DialogHeader>
 
                   <DialogBody className="space-y-4">
-                    <div className="space-y-3">
+                    <div className="flex gap-4">
+                      {detailItem.enrichment?.tmdbPoster ? (
+                        <img
+                          src={detailItem.enrichment.tmdbPoster}
+                          alt={detailItem.name}
+                          className="h-[180px] w-[120px] shrink-0 rounded-lg object-cover shadow-sm"
+                        />
+                      ) : null}
+                    <div className="min-w-0 flex-1 space-y-3">
                       <div className="flex flex-wrap items-center gap-2">
                         {typeof detailItem.enrichment?.tmdbRating === 'number' && Number.isFinite(detailItem.enrichment.tmdbRating) ? (
                           <Badge>TMDB {detailItem.enrichment.tmdbRating.toFixed(1)}</Badge>
@@ -1148,6 +1188,7 @@ const SearchPage: React.FC = () => {
                           </div>
                         </div>
                       ) : null}
+                    </div>
                     </div>
 
                     {detailItem.enrichment?.nfo ? (

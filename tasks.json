@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 37
+    "completedTasks": 38
   },
   "tasks": [
     {
@@ -1222,8 +1222,8 @@
         "frontend/src/hooks/useSearch.ts",
         "frontend/src/app/providers/SearchProvider.tsx"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified and completed 2026-02-20. SearchPage (/discover, 1196 lines) and SearchProvider (521 lines) were already substantially implemented with full SSE streaming search, result display (name, size, seeders, leechers), one-click add to catalog, ranking profile weights, result filters (source, quality, audio, subtitles, size, seeders, keywords, exclude CAM), filter presets with localStorage persistence, sort controls, load-more pagination, and a comprehensive detail dialog with TMDB overview, dubbing info, and NFO display. Two gaps were filled: (1) Provider selection - converted display-only Badge components to clickable button elements with toggle functionality via toggleProvider callback, persisted to localStorage via saveEnabledSearchProviders, with visual indicator (green dot for enabled, muted for disabled). (2) TMDB poster display - added poster thumbnails (48x72px) in result cards when enrichment.tmdbPoster is available, and a larger poster (120x180px) in the detail dialog alongside metadata. TypeScript type-check and production build both pass clean."
     },
     {
       "id": "T-038",

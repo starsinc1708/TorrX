@@ -1170,3 +1170,21 @@ Format:
   - MEDIUM: T-041 (video player UX, deps: T-039/T-024 done), T-042 (SettingsPage encoding, deps: T-035/T-023 done), T-043 (SettingsPage providers/theme, deps: T-035/T-034 done), T-045 (WebSocket frontend, deps: T-035/T-025 done), T-051 (engine unit tests), T-052 (engine integration tests), T-053 (search tests), T-055 (Docker health checks)
   - LOW: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage, deps: T-035/T-034 done), T-048 (Prometheus), T-050 (OTEL tracing), T-054 (frontend tests)
 - Recommend T-037 next as highest priority (high) with all deps now satisfied
+
+## Iteration 37 — 2026-02-20 22:00
+**Task:** [T-037] Implement SearchPage with basic search and results
+**Status:** done
+**What was done:**
+- Verified SearchPage.tsx (1196 lines) and SearchProvider.tsx (521 lines) were already substantially implemented
+- Existing implementation covers: SSE streaming search, result display (name, size, seeders, leechers), one-click add to catalog, ranking profile with 5 weight sliders, comprehensive result filters (source, quality, audio, subtitles, size range, min seeders, include/exclude keywords, exclude CAM), filter presets with localStorage persistence, sort controls, load-more pagination, detail dialog with TMDB overview/dubbing/NFO
+- Added provider toggle functionality: converted display-only Badge components to clickable button elements with toggleProvider callback, visual enabled/disabled indicator (green dot), and localStorage persistence via saveEnabledSearchProviders
+- Added TMDB poster display: 48x72px thumbnails in result cards when enrichment.tmdbPoster is available, and 120x180px poster in the detail dialog alongside metadata
+- Imported saveEnabledSearchProviders and destructured setEnabledProviders from context
+- TypeScript type-check and production build both pass clean
+**Issues found:**
+- None
+**Notes for next session:**
+- T-037 done. 38 tasks now complete. T-037 unblocks T-038 (SSE streaming advanced), T-046 (E2E integration).
+- Next eligible tasks by priority:
+  - MEDIUM: T-038 (SearchPage SSE + advanced features, deps: T-037 done), T-041 (video player UX), T-042 (SettingsPage encoding), T-043 (SettingsPage providers/theme), T-045 (WebSocket frontend), T-051-T-053 (tests), T-055 (Docker health)
+  - LOW: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage), T-048 (Prometheus), T-050 (OTEL), T-054 (frontend tests)
