@@ -986,3 +986,26 @@ Format:
   - T-031 (TMDB enrichment, deps: T-027 ✅)
   - T-033 (search caching + SSE, deps: T-032 ✅)
 - Recommend T-023 next as lowest ID among eligible medium-priority tasks
+
+## Iteration 28 — 2026-02-20 16:00
+**Task:** [T-023] Implement dynamic settings API endpoints
+**Status:** done
+**What was done:**
+- Verified task already fully implemented — no code changes needed
+- Encoding settings (handlers_settings.go:155-235): GET/PATCH/PUT /settings/encoding with validation for preset (6 valid values), CRF (0-51), audioBitrate (4 valid values). Partial update merge via zero-value sentinel pattern.
+- HLS settings (handlers_settings.go:239-316): GET/PATCH/PUT /settings/hls with validation for segDur (2-10), ramBuf (4-4096), prebuffer (1-1024), windowBefore (1-1024), windowAfter (4-4096). Same partial update pattern.
+- Player settings (handlers_settings.go:22-153): GET/PATCH/PUT /settings/player for currentTorrentId, with WebSocket broadcast on update.
+- Routes registered in server.go:363-365: /settings/encoding, /settings/hls, /settings/player
+- Controller interfaces (server.go:58-71): EncodingSettingsController, HLSSettingsController, PlayerSettingsController — all backed by MongoDB repositories from T-009
+- Test suite (handlers_settings_test.go, 470 lines): 25+ test functions covering all 3 settings domains — GET returns, not configured (501), full update, partial update, all validation ranges, boundary values, invalid values (400), store errors (500), method not allowed (405), all valid presets/bitrates
+- go build, go vet pass clean. All 30+ settings tests pass (0.6s)
+**Issues found:**
+- None
+**Notes for next session:**
+- T-023 is done. Next eligible medium-priority tasks (lowest ID first):
+  - T-024 (watch history, deps: T-004 done, T-003 done)
+  - T-025 (WebSocket hub, deps: T-003 done)
+  - T-029 (1337x + RuTracker, deps: T-027 done)
+  - T-030 (Torznab provider, deps: T-027 done)
+  - T-031 (TMDB enrichment, deps: T-027 done)
+  - T-033 (search caching + SSE, deps: T-032 done)

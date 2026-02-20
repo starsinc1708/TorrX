@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 29
+    "completedTasks": 30
   },
   "tasks": [
     {
@@ -695,8 +695,8 @@
       "files_likely_touched": [
         "services/torrent-engine/internal/api/http/handlers_settings.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. All T-023 features already fully implemented — no code changes needed.\n\n**Encoding settings** (handlers_settings.go:155-235):\n- GET /settings/encoding returns current EncodingSettings (preset, crf, audioBitrate)\n- PATCH/PUT /settings/encoding validates preset (ultrafast/superfast/veryfast/faster/fast/medium), CRF (0-51), audioBitrate (96k/128k/192k/256k). Partial update merges with current values (zero-value sentinel for CRF, empty string for preset/audioBitrate). Stores via EncodingSettingsController backed by MongoDB.\n\n**HLS settings** (handlers_settings.go:239-316):\n- GET /settings/hls returns current HLSSettings (segmentDuration, ramBufSizeMB, prebufferMB, windowBeforeMB, windowAfterMB)\n- PATCH/PUT /settings/hls validates segDur (2-10), ramBuf (4-4096), prebuffer (1-1024), windowBefore (1-1024), windowAfter (4-4096). Zero-value merge for partial updates. Stores via HLSSettingsController backed by MongoDB.\n\n**Player settings** (handlers_settings.go:22-153):\n- GET /settings/player returns currentTorrentId\n- PATCH/PUT /settings/player sets currentTorrentId (trimmed), broadcasts via WebSocket. Stores via PlayerSettingsController backed by MongoDB.\n\n**Routes** (server.go:363-365): /settings/encoding, /settings/hls, /settings/player all registered.\n\n**Tests** (handlers_settings_test.go, 470 lines, 25+ test functions):\n- Encoding: GET current values, not configured (501), full update, invalid preset (400), CRF out of range (52 and -1 → 400), invalid audioBitrate, partial update preserves other fields, bad JSON, method not allowed (DELETE → 405), all 6 valid presets, all 4 valid bitrates, CRF boundary values (1/51), store error (500)\n- HLS: GET current values, not configured, full update, 10 validation range tests (each param min/max), partial update, bad JSON, method not allowed, boundary min/max values, store error\n- Player: GET settings, update settings, focus integration\n- All 30+ tests pass (0.6s)"
     },
     {
       "id": "T-024",
