@@ -225,6 +225,7 @@ func TestMediaInfoJSONTags(t *testing.T) {
 	expectJSONTag(t, MediaInfo{}, "Duration", "duration")
 	expectJSONTag(t, MediaInfo{}, "StartTime", "startTime")
 	expectJSONTag(t, MediaInfo{}, "SubtitlesReady", "subtitlesReady")
+	expectJSONTag(t, MediaInfo{}, "DirectPlaybackCompatible", "directPlaybackCompatible")
 }
 
 func TestMediaTrackJSONTags(t *testing.T) {
@@ -234,6 +235,10 @@ func TestMediaTrackJSONTags(t *testing.T) {
 	expectJSONTag(t, MediaTrack{}, "Language", "language")
 	expectJSONTag(t, MediaTrack{}, "Title", "title")
 	expectJSONTag(t, MediaTrack{}, "Default", "default")
+	expectJSONTag(t, MediaTrack{}, "Width", "width,omitempty")
+	expectJSONTag(t, MediaTrack{}, "Height", "height,omitempty")
+	expectJSONTag(t, MediaTrack{}, "FPS", "fps,omitempty")
+	expectJSONTag(t, MediaTrack{}, "Channels", "channels,omitempty")
 }
 
 func expectJSONTag(t *testing.T, v interface{}, fieldName, want string) {

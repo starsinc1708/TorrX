@@ -956,3 +956,33 @@ Format:
   - T-025 (WebSocket hub, deps: T-003 ✅)
   - T-029 (1337x + RuTracker, deps: T-027 ✅)
 - Recommend T-022 next as lowest ID among eligible medium-priority tasks
+
+## Iteration 27 — 2026-02-20 15:00
+**Task:** [T-022] Implement media info endpoint with track enumeration
+**Status:** done
+**What was done:**
+- Endpoint was partially implemented (handler, caching, probe fallback already existed). Completed missing fields:
+  - Domain model (internal/domain/media.go): Added Width, Height, FPS (omitempty) to MediaTrack for video resolution/fps; added Channels (omitempty) to MediaTrack for audio; added DirectPlaybackCompatible to MediaInfo
+  - FFprobe parser (internal/services/torrent/engine/ffprobe/ffprobe.go): Extended probeStream to extract Width, Height, RFrameRate, Channels from ffprobe JSON. Video tracks now populated with resolution + fps; audio tracks with channel count. Added parseFrameRate helper (handles fraction format like "24000/1001"). Computed DirectPlaybackCompatible (true when h264 video + aac audio present).
+  - Handler (handlers_streaming.go:407-553): Unchanged — DirectPlaybackCompatible flows through from probe results naturally
+- Tests added/updated:
+  - parseFrameRate: 10 table-driven cases (fractions, integers, edge cases)
+  - TestParseProbeOutputVideoResolutionFPS: 1920x1080 + 23.976fps
+  - TestParseProbeOutputAudioChannels: 4 cases (mono, stereo, 5.1, 7.1)
+  - TestParseProbeOutputDirectPlaybackCompatible: 8 cases covering all codec combinations
+  - Updated existing H264AAC and H265 tests to verify DirectPlaybackCompatible
+  - Updated integration test to verify resolution, fps, channels, DirectPlaybackCompatible
+  - Domain model tests: JSON tag assertions for all new fields
+- go build, go vet, go test ./... all pass (14 packages, 0 failures)
+**Issues found:**
+- None
+**Notes for next session:**
+- T-022 is done. Next eligible medium-priority tasks (lowest ID first):
+  - T-023 (dynamic settings API, deps: T-009 ✅, T-003 ✅)
+  - T-024 (watch history, deps: T-004 ✅, T-003 ✅)
+  - T-025 (WebSocket hub, deps: T-003 ✅)
+  - T-029 (1337x + RuTracker, deps: T-027 ✅)
+  - T-030 (Torznab provider, deps: T-027 ✅)
+  - T-031 (TMDB enrichment, deps: T-027 ✅)
+  - T-033 (search caching + SSE, deps: T-032 ✅)
+- Recommend T-023 next as lowest ID among eligible medium-priority tasks

@@ -161,6 +161,22 @@ func mkStream(codecType, codecName string, tags map[string]string, isDefault boo
 	}
 }
 
+// mkVideoStream creates a video probeStream with resolution and frame rate.
+func mkVideoStream(codecName string, w, h int, frameRate string, tags map[string]string, isDefault bool) probeStream {
+	s := mkStream("video", codecName, tags, isDefault)
+	s.Width = w
+	s.Height = h
+	s.RFrameRate = frameRate
+	return s
+}
+
+// mkAudioStream creates an audio probeStream with channel count.
+func mkAudioStream(codecName string, channels int, tags map[string]string, isDefault bool) probeStream {
+	s := mkStream("audio", codecName, tags, isDefault)
+	s.Channels = channels
+	return s
+}
+
 func TestParseProbeOutputVideoAudioSubtitle(t *testing.T) {
 	data := mkPayload([]probeStream{
 		mkStream("video", "h264", map[string]string{"language": "und"}, true),
@@ -250,6 +266,9 @@ func TestParseProbeOutputH264AAC(t *testing.T) {
 	if !hasAAC {
 		t.Fatal("expected AAC audio track")
 	}
+	if !info.DirectPlaybackCompatible {
+		t.Fatal("expected DirectPlaybackCompatible=true for h264+aac")
+	}
 }
 
 func TestParseProbeOutputH265NotDirectPlayable(t *testing.T) {
@@ -270,6 +289,9 @@ func TestParseProbeOutputH265NotDirectPlayable(t *testing.T) {
 	}
 	if info.Tracks[0].Codec != "hevc" {
 		t.Fatalf("expected hevc codec, got %q", info.Tracks[0].Codec)
+	}
+	if info.DirectPlaybackCompatible {
+		t.Fatal("expected DirectPlaybackCompatible=false for hevc+aac")
 	}
 }
 
@@ -532,6 +554,196 @@ func TestParseProbeOutputMinimalValid(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// parseFrameRate tests
+// ---------------------------------------------------------------------------
+
+func TestParseFrameRate(t *testing.T) {
+	tests := []struct {
+		name string
+		rate string
+		want float64
+	}{
+		{"fraction 24000/1001", "24000/1001", 24000.0 / 1001.0},
+		{"fraction 30/1", "30/1", 30.0},
+		{"fraction 25/1", "25/1", 25.0},
+		{"integer as string", "24", 24.0},
+		{"float as string", "29.97", 29.97},
+		{"zero over zero", "0/0", 0},
+		{"empty string", "", 0},
+		{"whitespace", "  ", 0},
+		{"invalid", "abc", 0},
+		{"zero denominator", "30/0", 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseFrameRate(tc.rate)
+			diff := got - tc.want
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff > 0.01 {
+				t.Fatalf("parseFrameRate(%q) = %f, want %f", tc.rate, got, tc.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Video resolution, FPS, and audio channels tests
+// ---------------------------------------------------------------------------
+
+func TestParseProbeOutputVideoResolutionFPS(t *testing.T) {
+	data := mkPayload([]probeStream{
+		mkVideoStream("h264", 1920, 1080, "24000/1001", map[string]string{"language": "und"}, true),
+		mkAudioStream("aac", 6, map[string]string{"language": "eng"}, true),
+	}, "7200.0", "")
+
+	info, err := parseProbeOutput(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	vt := info.Tracks[0]
+	if vt.Type != "video" {
+		t.Fatalf("expected video track, got %q", vt.Type)
+	}
+	if vt.Width != 1920 {
+		t.Fatalf("width = %d, want 1920", vt.Width)
+	}
+	if vt.Height != 1080 {
+		t.Fatalf("height = %d, want 1080", vt.Height)
+	}
+	wantFPS := 24000.0 / 1001.0
+	diff := vt.FPS - wantFPS
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > 0.01 {
+		t.Fatalf("fps = %f, want ~%f", vt.FPS, wantFPS)
+	}
+
+	at := info.Tracks[1]
+	if at.Type != "audio" {
+		t.Fatalf("expected audio track, got %q", at.Type)
+	}
+	if at.Channels != 6 {
+		t.Fatalf("channels = %d, want 6", at.Channels)
+	}
+}
+
+func TestParseProbeOutputAudioChannels(t *testing.T) {
+	tests := []struct {
+		name     string
+		channels int
+	}{
+		{"mono", 1},
+		{"stereo", 2},
+		{"5.1 surround", 6},
+		{"7.1 surround", 8},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			data := mkPayload([]probeStream{
+				mkAudioStream("aac", tc.channels, nil, true),
+			}, "10.0", "")
+
+			info, err := parseProbeOutput(data)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if info.Tracks[0].Channels != tc.channels {
+				t.Fatalf("channels = %d, want %d", info.Tracks[0].Channels, tc.channels)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DirectPlaybackCompatible tests
+// ---------------------------------------------------------------------------
+
+func TestParseProbeOutputDirectPlaybackCompatible(t *testing.T) {
+	tests := []struct {
+		name    string
+		streams []probeStream
+		want    bool
+	}{
+		{
+			name: "h264 + aac = compatible",
+			streams: []probeStream{
+				mkVideoStream("h264", 1920, 1080, "24/1", nil, true),
+				mkAudioStream("aac", 2, nil, true),
+			},
+			want: true,
+		},
+		{
+			name: "hevc + aac = incompatible",
+			streams: []probeStream{
+				mkVideoStream("hevc", 1920, 1080, "24/1", nil, true),
+				mkAudioStream("aac", 2, nil, true),
+			},
+			want: false,
+		},
+		{
+			name: "h264 + ac3 = incompatible",
+			streams: []probeStream{
+				mkVideoStream("h264", 1920, 1080, "24/1", nil, true),
+				mkAudioStream("ac3", 6, nil, true),
+			},
+			want: false,
+		},
+		{
+			name: "hevc + ac3 = incompatible",
+			streams: []probeStream{
+				mkVideoStream("hevc", 3840, 2160, "30/1", nil, true),
+				mkAudioStream("ac3", 6, nil, true),
+			},
+			want: false,
+		},
+		{
+			name: "audio only = incompatible",
+			streams: []probeStream{
+				mkAudioStream("aac", 2, nil, true),
+			},
+			want: false,
+		},
+		{
+			name: "video only = incompatible",
+			streams: []probeStream{
+				mkVideoStream("h264", 1920, 1080, "24/1", nil, true),
+			},
+			want: false,
+		},
+		{
+			name:    "no tracks = incompatible",
+			streams: nil,
+			want:    false,
+		},
+		{
+			name: "h264 + multiple audio with one aac = compatible",
+			streams: []probeStream{
+				mkVideoStream("h264", 1920, 1080, "24/1", nil, true),
+				mkAudioStream("ac3", 6, nil, true),
+				mkAudioStream("aac", 2, nil, false),
+			},
+			want: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			data := mkPayload(tc.streams, "60.0", "")
+			info, err := parseProbeOutput(data)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if info.DirectPlaybackCompatible != tc.want {
+				t.Fatalf("DirectPlaybackCompatible = %v, want %v", info.DirectPlaybackCompatible, tc.want)
+			}
+		})
+	}
+}
+
 func TestProbeNonExistentBinary(t *testing.T) {
 	p := New("/nonexistent/path/to/ffprobe_does_not_exist")
 	_, err := p.Probe(context.Background(), "/some/file.mkv")
@@ -602,6 +814,12 @@ func TestProbeValidFile(t *testing.T) {
 			if track.Codec != "h264" {
 				t.Fatalf("expected video codec h264, got %q", track.Codec)
 			}
+			if track.Width != 64 || track.Height != 64 {
+				t.Fatalf("expected 64x64 resolution, got %dx%d", track.Width, track.Height)
+			}
+			if track.FPS <= 0 {
+				t.Fatalf("expected positive FPS, got %f", track.FPS)
+			}
 		case "audio":
 			foundAudio = true
 			if track.Codec != "aac" {
@@ -610,6 +828,9 @@ func TestProbeValidFile(t *testing.T) {
 			if track.Language != "eng" {
 				t.Fatalf("expected audio language eng, got %q", track.Language)
 			}
+			if track.Channels <= 0 {
+				t.Fatalf("expected positive channels, got %d", track.Channels)
+			}
 		}
 	}
 	if !foundVideo {
@@ -617,6 +838,11 @@ func TestProbeValidFile(t *testing.T) {
 	}
 	if !foundAudio {
 		t.Fatal("expected at least one audio track")
+	}
+
+	// H.264 + AAC = direct playback compatible.
+	if !info.DirectPlaybackCompatible {
+		t.Fatal("expected DirectPlaybackCompatible=true for h264+aac file")
 	}
 }
 

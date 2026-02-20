@@ -109,10 +109,14 @@ type probePayload struct {
 }
 
 type probeStream struct {
-	CodecType   string            `json:"codec_type"`
-	CodecName   string            `json:"codec_name"`
-	Tags        map[string]string `json:"tags"`
-	Disposition struct {
+	CodecType    string            `json:"codec_type"`
+	CodecName    string            `json:"codec_name"`
+	Width        int               `json:"width"`
+	Height       int               `json:"height"`
+	RFrameRate   string            `json:"r_frame_rate"`
+	Channels     int               `json:"channels"`
+	Tags         map[string]string `json:"tags"`
+	Disposition  struct {
 		Default int `json:"default"`
 	} `json:"disposition"`
 }
@@ -144,6 +148,9 @@ func parseProbeOutput(data []byte) (domain.MediaInfo, error) {
 				Language: strings.TrimSpace(getTag(stream.Tags, "language")),
 				Title:    strings.TrimSpace(getTag(stream.Tags, "title")),
 				Default:  stream.Disposition.Default == 1,
+				Width:    stream.Width,
+				Height:   stream.Height,
+				FPS:      parseFrameRate(stream.RFrameRate),
 			})
 			videoIndex++
 		case "audio":
@@ -154,6 +161,7 @@ func parseProbeOutput(data []byte) (domain.MediaInfo, error) {
 				Language: strings.TrimSpace(getTag(stream.Tags, "language")),
 				Title:    strings.TrimSpace(getTag(stream.Tags, "title")),
 				Default:  stream.Disposition.Default == 1,
+				Channels: stream.Channels,
 			})
 			audioIndex++
 		case "subtitle":
@@ -183,7 +191,44 @@ func parseProbeOutput(data []byte) (domain.MediaInfo, error) {
 		}
 	}
 
-	return domain.MediaInfo{Tracks: tracks, Duration: duration, StartTime: startTime}, nil
+	// DirectPlaybackCompatible: browser can play H.264 video + AAC audio natively.
+	hasH264 := false
+	hasAAC := false
+	for _, t := range tracks {
+		if t.Type == "video" && t.Codec == "h264" {
+			hasH264 = true
+		}
+		if t.Type == "audio" && t.Codec == "aac" {
+			hasAAC = true
+		}
+	}
+
+	return domain.MediaInfo{
+		Tracks:                   tracks,
+		Duration:                 duration,
+		StartTime:                startTime,
+		DirectPlaybackCompatible: hasH264 && hasAAC,
+	}, nil
+}
+
+// parseFrameRate parses ffprobe's r_frame_rate fraction (e.g. "24000/1001") into a float64.
+func parseFrameRate(rate string) float64 {
+	rate = strings.TrimSpace(rate)
+	if rate == "" || rate == "0/0" {
+		return 0
+	}
+	parts := strings.SplitN(rate, "/", 2)
+	if len(parts) == 2 {
+		num, errN := strconv.ParseFloat(parts[0], 64)
+		den, errD := strconv.ParseFloat(parts[1], 64)
+		if errN == nil && errD == nil && den > 0 {
+			return num / den
+		}
+	}
+	if f, err := strconv.ParseFloat(rate, 64); err == nil {
+		return f
+	}
+	return 0
 }
 
 func getTag(tags map[string]string, key string) string {

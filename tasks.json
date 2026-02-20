@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 28
+    "completedTasks": 29
   },
   "tasks": [
     {
@@ -667,8 +667,8 @@
       "files_likely_touched": [
         "services/torrent-engine/internal/api/http/handlers_media.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Completed 2026-02-20. Endpoint was partially implemented (handler, caching, probe fallback existed). Added missing fields to satisfy all acceptance criteria.\n\n**Domain model changes** (internal/domain/media.go):\n- MediaTrack: added Width (int), Height (int), FPS (float64), Channels (int) — all with omitempty JSON tags\n- MediaInfo: added DirectPlaybackCompatible (bool) — true when file has H.264 video + AAC audio\n\n**FFprobe parser changes** (internal/services/torrent/engine/ffprobe/ffprobe.go):\n- probeStream: added Width, Height, RFrameRate, Channels fields mapped from ffprobe JSON\n- parseProbeOutput: video tracks now include Width, Height, FPS (parsed from r_frame_rate fraction); audio tracks include Channels\n- Added parseFrameRate helper: parses ffprobe fraction format (e.g. '24000/1001') into float64\n- DirectPlaybackCompatible computed by checking if any video track is h264 AND any audio track is aac\n\n**Handler** (internal/api/http/handlers_streaming.go:407-553):\n- Route: GET /torrents/{id}/media/{fileIndex} — unchanged, DirectPlaybackCompatible flows through from Probe/ProbeReader results\n- Caching, SubtitlesReady check, stream reader fallback — all pre-existing and unchanged\n\n**Tests added**:\n- parseFrameRate: 10 table-driven cases (fractions, integers, edge cases)\n- TestParseProbeOutputVideoResolutionFPS: verifies 1920x1080 + 23.976fps extraction\n- TestParseProbeOutputAudioChannels: 4 cases (mono, stereo, 5.1, 7.1)\n- TestParseProbeOutputDirectPlaybackCompatible: 8 cases (h264+aac, hevc+aac, h264+ac3, hevc+ac3, audio-only, video-only, no tracks, mixed audio with one aac)\n- Updated existing H264AAC and H265NotDirectPlayable tests to verify DirectPlaybackCompatible\n- Updated integration test to verify resolution, fps, channels, DirectPlaybackCompatible\n- Domain model tests: added JSON tag assertions for new fields\n\ngo build, go vet, go test ./... all pass (14 packages, 0 failures)."
     },
     {
       "id": "T-023",
