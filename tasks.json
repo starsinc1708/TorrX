@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 35
+    "completedTasks": 36
   },
   "tasks": [
     {
@@ -1069,8 +1069,8 @@
         "services/torrent-search/internal/search/cache_redis.go",
         "services/torrent-search/internal/api/http/handlers_search.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. All T-033 features already fully implemented — added comprehensive test suite (30 tests in cache_test.go).\n\n**In-memory cache (cache.go, 507 lines):**\n- cachedSearchResponse: stores response with updatedAt, expiresAt, staleUntil, refreshing flag, sync.Once for single-refresh-per-stale-period.\n- cacheLookup: returns (response, found, needsRefresh). Fresh hit returns data. Stale hit returns data + needsRefresh=true (first caller only via sync.Once). Expired beyond stale deletes and misses. Tries Redis first if available, falls back to in-memory.\n- cacheStore: stores in both Redis (if available) and in-memory with configurable TTL. Calls trimCacheLocked.\n- trimCacheLocked: first removes entries past staleUntil, then if still over maxEntries (400), evicts oldest by updatedAt.\n- cloneSearchResponse: deep-copies Items (including PublishedAt pointer, Audio/Subtitles/Screenshots slices), Providers.\n\n**Popular query tracking:**\n- markPopular: only tracks first-page requests (offset=0). Trims to 200 entries by evicting lowest-hit + oldest entries.\n\n**Background warmer:**\n- runWarmer: ticker at 5min. collectWarmSpecs selects top-12 popular queries, skips recently warmed and fresh. Parallel refresh with bounded concurrency (3 goroutines via semaphore).\n\n**Redis cache backend (cache_redis.go, 53 lines):**\n- RedisCacheBackend with Get/Set/Delete/Ping. Optional (nil-checked everywhere).\n\n**SSE streaming:**\n- SearchStream: checks cache first, otherwise spawns concurrent per-provider fan-out. Sends intermediate responses per provider. handleSearchStream: SSE headers, bootstrap/update/done events.\n\n**Test suite (cache_test.go, 30 tests):**\n- cacheLookup (6): miss, fresh hit, stale+refresh, sync.Once, expired, clone.\n- cacheStore/trim (3): store+retrieve, trim oldest, trim expired.\n- markPopular (3): hit count, ignore offset>0, trim excess.\n- warmer (5): refresh popular, skip recently warmed, skip fresh, empty popular, collectWarmSpecs limit.\n- Options (2): WithCacheTTL custom, WithCacheTTL zero.\n- cloneSearchResponse (2): deep copy, nil slices.\n- SearchStream (2): cache hit, NoCache bypass.\n- Concurrency (1): 50 goroutines.\n- Misc (3): clearRefreshing, clearRefreshing nonexistent, memoryOnly store.\n\ngo build, go vet, and all tests pass clean."
     },
     {
       "id": "T-034",

@@ -1130,3 +1130,21 @@ Format:
   - T-051 (torrent-engine unit tests, deps: T-010/T-014/T-015 done)
   - T-052 (torrent-engine integration tests, deps: T-019/T-020 done)
   - T-055 (Docker health checks, deps: T-002 done)
+
+## Iteration 35 — 2026-02-20 20:00
+**Task:** [T-033] Implement search caching and SSE streaming
+**Status:** done
+**What was done:**
+- Verified T-033 already fully implemented — all 6 acceptance criteria satisfied
+- In-memory cache (cache.go, 507 lines): cachedSearchResponse with fresh/stale TTLs, sync.Once for single-refresh-per-stale-period, trimCacheLocked (400 entries max, evicts expired then oldest), cloneSearchResponse for mutation safety
+- Redis cache backend (cache_redis.go, 53 lines): optional two-tier caching with JSON serialization, tsearch:cache: key prefix
+- Popular query tracking: markPopular tracks first-page queries, max 200 entries, evicts least popular
+- Background warmer: 5-min ticker, top-12 popular queries, bounded concurrency (3 goroutines via semaphore), skips recently warmed and still-fresh entries
+- SSE streaming: SearchStream in aggregator.go (cache-first, then concurrent per-provider fan-out), handleSearchStream in server.go (bootstrap/update/done events)
+- Cache options: WithRedisCache, WithCacheTTL, WithCacheDisabled; cache key includes all search params normalized
+- Added comprehensive test suite: cache_test.go with 30 tests covering cacheLookup (6), cacheStore/trim (3), markPopular (3), warmer (5), options (2), cloneSearchResponse (2), SearchStream caching (2), concurrent access (1), misc (3)
+**Issues found:**
+- None. Implementation was complete; added tests to verify all acceptance criteria.
+**Notes for next session:**
+- T-033 done. 36 tasks now complete. T-033 unblocks T-034 (search API handlers).
+- Next eligible: T-034 (high, now unblocked), T-041/T-042/T-045/T-051/T-052/T-055 (medium)
