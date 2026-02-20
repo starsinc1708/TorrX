@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 42
+    "completedTasks": 43
   },
   "tasks": [
     {
@@ -1431,8 +1431,8 @@
       "files_likely_touched": [
         "frontend/src/pages/SettingsPage.tsx"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. SettingsPage (frontend/src/pages/SettingsPage.tsx, ~963 lines) is fully implemented with all acceptance criteria met. **Search providers:** Provider list fetched from API via listSearchProviders(), each provider shown with Switch toggle (lines 742-768). Enable/disable persists to localStorage via searchProviderSettings.ts (key: 'search-enabled-providers:v1'). Bulk enable/disable all buttons. Runtime config per provider (endpoint, API key, proxy URL) with Save and Auto-detect buttons. **FlareSolverr:** URL input field with 'Use Docker URL' button (default: http://flaresolverr:8191/). Apply buttons for Jackett, Prowlarr, or both. Per-provider status display showing linked/not-linked. **Theme:** Three-button toggle (System/Light/Dark) using ThemeAccentProvider (frontend/src/app/providers/ThemeAccentProvider.tsx). Persists to localStorage key 'torrix.theme'. Applies 'dark' CSS class to document root. **Accent:** 7 preset buttons (indigo, blue, teal, green, orange, rose, violet) from ACCENT_PRESETS in design-system.ts. Custom hex color via native color picker + text input. Persists to localStorage keys 'torrix.accent.preset' and 'torrix.accent.custom'. **Engine settings:** Encoding quality (4 presets: fast/balanced/quality/best mapping to FFmpeg preset+CRF) and audio bitrate (96k-256k). HLS streaming: RAM buffer, prebuffer, window before/after, segment duration, player buffer. All with save/reload buttons and error handling."
     },
     {
       "id": "T-044",

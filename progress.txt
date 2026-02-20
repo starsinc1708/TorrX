@@ -1280,3 +1280,20 @@ Format:
 - None. All 5 acceptance criteria satisfied by existing implementation.
 **Notes for next session:**
 - T-042 done. 42 tasks complete. Next eligible pending tasks (medium priority, deps met): T-043 (SettingsPage providers/theme), T-045 (WebSocket integration), T-047 (E2E watch history), T-051 (engine unit tests), T-052 (engine API tests), T-053 (search tests), T-055 (Docker health). Low priority with deps met: T-026 (metrics/swagger), T-044 (diagnostics page), T-048 (Prometheus), T-050 (OTEL tracing)
+
+## Iteration 41 — 2026-02-20 18:00
+**Task:** [T-043] Implement SettingsPage for providers, FlareSolverr, and theme
+**Status:** done
+**What was done:**
+- Verified SettingsPage was already fully implemented (963 lines)
+- Search providers: list from API, Switch toggle per provider, enable/disable persists to localStorage (searchProviderSettings.ts, key: search-enabled-providers:v1), bulk enable/disable all, runtime config per provider (endpoint, API key, proxy URL) with Save and Auto-detect
+- FlareSolverr: URL input + Docker default, Apply buttons for Jackett/Prowlarr/both, per-provider linked status display
+- Theme: System/Light/Dark toggle via ThemeAccentProvider, persists to localStorage (torrix.theme), applies dark CSS class to root
+- Accent: 7 presets (indigo, blue, teal, green, orange, rose, violet) from ACCENT_PRESETS, custom hex via color picker + text input, persists to localStorage (torrix.accent.preset, torrix.accent.custom)
+- Engine settings: encoding quality presets (fast/balanced/quality/best) + audio bitrate, HLS streaming params (RAM buffer, prebuffer, windows, segment duration, player buffer)
+- All acceptance criteria verified met
+**Issues found:**
+- None. Task was already fully implemented.
+**Notes for next session:**
+- T-043 done. 43 tasks complete. Remaining medium-priority unblocked tasks: T-045 (WebSocket integration), T-047 (watch history E2E), T-051 (engine unit tests), T-052 (engine integration tests), T-053 (search tests), T-055 (Docker health checks)
+- Low priority unblocked: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage), T-048 (Prometheus config), T-050 (OTEL tracing)
