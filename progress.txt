@@ -1188,3 +1188,33 @@ Format:
 - Next eligible tasks by priority:
   - MEDIUM: T-038 (SearchPage SSE + advanced features, deps: T-037 done), T-041 (video player UX), T-042 (SettingsPage encoding), T-043 (SettingsPage providers/theme), T-045 (WebSocket frontend), T-051-T-053 (tests), T-055 (Docker health)
   - LOW: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage), T-048 (Prometheus), T-050 (OTEL), T-054 (frontend tests)
+
+## Iteration 38 — 2026-02-20 11:45
+**Task:** [T-046] End-to-end integration: search, add, start, and stream
+**Status:** done
+**What was done:**
+- Verified the complete E2E user journey code paths: search → add → start → focus → stream
+- Confirmed SearchPage has "Add to catalog" button calling POST /torrents with {magnet, name}
+- Confirmed CatalogPage lists/starts torrents and navigates to PlayerPage
+- Confirmed PlayerPage auto-starts, auto-focuses, and streams via direct/HLS playback probing
+- Confirmed API client (api.ts) has all 35+ endpoints needed for the flow
+- Confirmed Traefik dynamic routing: /torrents→engine:8080, /search→search:8090, /*→web-client:80
+- Confirmed both services in edge+core Docker networks
+- Confirmed Vite proxy config proxies /torrents→:8080 and /search→:8090 for dev mode
+- Added 5 E2E tests to torrent-engine (e2e_flow_test.go):
+  - TestE2ECreateStartFocusStreamFlow: full 6-step sequential flow
+  - TestE2EStreamBeforeDownloadComplete: streaming with partial download
+  - TestE2EFocusModeActivatesDuringPlayback: focus/unfocus lifecycle
+  - TestE2ESearchResultContractMatchesCreateInput: cross-service JSON contract
+  - TestE2EProgressUpdatesWhileStreaming: monotonic progress during download
+- Added 3 E2E tests to torrent-search (e2e_flow_test.go):
+  - TestE2ESearchReturnsAddableResults: results have magnets for add-to-catalog
+  - TestE2ESearchStreamReturnsAddableResults: SSE stream contains magnets
+  - TestE2ESearchProvidesEnoughDataForCatalogDisplay: all UI fields present
+- All 8 new tests pass. Both services build and vet clean.
+**Issues found:**
+- Pre-existing: TestTriggerRemuxConcurrent fails on Windows (temp dir cleanup, unrelated)
+**Notes for next session:**
+- T-046 done. 39 tasks complete. Next eligible tasks by priority:
+  - MEDIUM: T-038 (SearchPage SSE + advanced), T-041 (video player UX), T-042 (SettingsPage encoding), T-043 (SettingsPage providers/theme), T-045 (WebSocket frontend), T-051-T-053 (tests), T-055 (Docker health)
+  - LOW: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage), T-048 (Prometheus), T-050 (OTEL), T-054 (frontend tests)
