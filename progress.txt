@@ -1434,3 +1434,21 @@ Format:
 **Notes for next session:**
 - T-055 done. 49 tasks complete out of 55.
 - Remaining 6 tasks all low priority: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage), T-048 (Prometheus config), T-049 (Grafana dashboards, blocked on T-048), T-050 (OTEL tracing), T-054 (frontend unit tests)
+
+## Iteration 49 — 2026-02-20 19:00
+**Task:** [T-026] Implement metrics, health endpoint, and Swagger
+**Status:** done
+**What was done:**
+- Verified task was ALREADY FULLY IMPLEMENTED (Phase 2.5 check) — no new code needed
+- **Prometheus metrics** (internal/metrics/metrics.go, 185 lines): 24+ registered metrics — HTTPRequestsTotal (CounterVec: method/path/status), HTTPRequestDuration (HistogramVec: method/path, 9 buckets), ActiveSessions, DownloadSpeedBytes, UploadSpeedBytes, PeersConnected, 15 HLS metrics (jobs, seeks, encoding duration, cache, memory buffer, state transitions, rate limiting)
+- **metricsMiddleware** (middleware.go:125-139): Instruments every request except /metrics, normalizes routes via normalizeRoute() for clean metric labels
+- **Health endpoint** (handlers_settings.go:44-117): GET /internal/health/player returns JSON with status (ok/degraded), activeSessionIds, focusModeEnabled, currentTorrentId, HLS diagnostics (activeJobs, jobCount, cacheSize), issues array, checkedAt. BuildPlayerHealth() also used for WebSocket broadcast
+- **Swagger** (swagger.go + server_utils.go:379-395): /swagger serves Swagger UI HTML (swagger-ui-dist@5 CDN), /swagger/openapi.json reads from docs/openapi.json with smart path resolution
+- **Rate limit exclusion** (middleware.go:222): /metrics and /internal/health/player skip rate limiting; also excluded from OTEL tracing
+- All routes registered in server.go:360-374
+- go build, go vet, go test ./... all pass clean
+**Issues found:**
+- None
+**Notes for next session:**
+- T-026 done. 50 tasks complete out of 55.
+- Remaining 5 tasks (all low priority): T-044 (ProviderDiagnosticsPage), T-048 (Prometheus config), T-049 (Grafana dashboards, blocked on T-048), T-050 (OTEL tracing), T-054 (frontend unit tests)

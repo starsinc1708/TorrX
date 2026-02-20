@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 49
+    "completedTasks": 50
   },
   "tasks": [
     {
@@ -840,8 +840,8 @@
         "services/torrent-engine/internal/api/http/handlers_health.go",
         "services/torrent-engine/internal/api/http/swagger.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. Fully implemented across existing files — no dedicated metrics.go or handlers_health.go needed as functionality is distributed across the codebase. **Prometheus metrics (internal/metrics/metrics.go, 185 lines):** 24+ metrics registered — HTTPRequestsTotal (CounterVec by method/path/status), HTTPRequestDuration (HistogramVec by method/path with 9 buckets), ActiveSessions, DownloadSpeedBytes, UploadSpeedBytes, PeersConnected, HLS job stats (HLSActiveJobs, HLSJobStartsTotal, HLSJobFailuresTotal, HLSSeekTotal, HLSEncodeDuration), HLS cache metrics (HLSCacheSizeBytes, HLSCacheCleanupErrors), HLS memory buffer metrics (HLSMemBufSizeBytes, HLSMemBufEntries, HLSMemBufHitsTotal, HLSMemBufMissesTotal, HLSMemBufEvictionsTotal), HLS state metrics (HLSStateTransitionsTotal, HLSSeekModeTotal, HLSBufferResizesTotal, HLSBufferSizeBytes, HLSRateLimitBytesPerSec, HLSAutoRestartsTotal). All registered via metrics.Register(). **metricsMiddleware (middleware.go:125-139):** Instruments every request except /metrics itself, using normalizeRoute() for path normalization covering /torrents, /torrents/:id, /hls/playlist, /hls/segment, /settings, /watch-history, /swagger, etc. **Health endpoint (handlers_settings.go:44-117):** GET /internal/health/player returns JSON with status (ok/degraded), activeSessionIds, focusModeEnabled, currentTorrentId, HLS diagnostics (activeJobs, jobCount, cacheSize), issues array, checkedAt timestamp. BuildPlayerHealth() used for both HTTP and WebSocket broadcast. **Swagger (swagger.go + server_utils.go:379-395):** /swagger serves Swagger UI HTML loading swagger-ui-dist@5 from CDN, /swagger/openapi.json reads from docs/openapi.json (with 6-level parent directory search for the file). **Rate limiting exclusion (middleware.go:222):** rateLimitMiddleware skips /metrics and /internal/health/player. /metrics also excluded from OTEL tracing and request logging is Debug-level for noisy paths. **Routes registered in server.go:360-374.** go build, go vet, go test ./... all pass clean."
     },
     {
       "id": "T-027",
