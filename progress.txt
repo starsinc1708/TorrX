@@ -1297,3 +1297,22 @@ Format:
 **Notes for next session:**
 - T-043 done. 43 tasks complete. Remaining medium-priority unblocked tasks: T-045 (WebSocket integration), T-047 (watch history E2E), T-051 (engine unit tests), T-052 (engine integration tests), T-053 (search tests), T-055 (Docker health checks)
 - Low priority unblocked: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage), T-048 (Prometheus config), T-050 (OTEL tracing)
+
+## Iteration 42 — 2026-02-20 19:00
+**Task:** [T-045] Implement WebSocket integration for real-time updates
+**Status:** done
+**What was done:**
+- Verified WebSocket integration was already fully implemented across 4 key files
+- useWebSocket.ts (101 lines): Core hook managing WS lifecycle, connects to ws://host/ws (auto-detects wss: for HTTPS via protocol sniffing), handles 4 message types (states, torrents, player_settings, health), exponential backoff reconnect (1s base, 30s max), clean unmount (closes WS, clears timers, sets mountedRef=false)
+- WebSocketProvider.tsx (33 lines): Thin context wrapper calling useWebSocket(true), provides useWS() consumer hook, default context has status='disconnected' and null data for graceful degradation
+- AppProviders.tsx: WebSocketProvider is 2nd layer (after ThemeAccent, before CatalogMeta) so downstream providers can consume WS data
+- CatalogMetaProvider.tsx: Consumes useWS() torrents for instant catalog updates, smart polling (15s when WS disconnected, 60s when connected), pauses polling during /watch route
+- useSessionState.ts: Accepts wsStates param, matches by selectedId for per-torrent real-time updates, skips REST polling when WS provides data
+- Backend (T-025) broadcasts states every 5s, torrents+player_settings every 15s, health every 30s
+- Frontend build passes clean (vite build succeeds, 1853 modules transformed)
+**Issues found:**
+- None. Task was already fully implemented.
+**Notes for next session:**
+- T-045 done. 44 tasks complete out of 55. Remaining medium-priority unblocked: T-047 (watch history E2E), T-051 (engine unit tests), T-052 (engine integration tests), T-053 (search tests), T-055 (Docker health checks)
+- Low priority unblocked: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage), T-048 (Prometheus config), T-050 (OTEL tracing), T-054 (frontend unit tests)
+- T-049 (Grafana dashboards) remains blocked on T-048

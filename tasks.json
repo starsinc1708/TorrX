@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 43
+    "completedTasks": 44
   },
   "tasks": [
     {
@@ -1494,8 +1494,8 @@
         "frontend/src/app/providers/WebSocketProvider.tsx",
         "frontend/src/hooks/useWebSocket.ts"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. WebSocket integration fully implemented across 4 files. (1) useWebSocket.ts (101 lines): Core hook managing WS lifecycle. Connects to ws://host/ws (auto-detects wss: for HTTPS) via buildUrl('/ws'). Handles 4 message types: 'states' (SessionState[]), 'torrents' (TorrentSummary[]), 'player_settings' (PlayerSettings), 'health' (PlayerHealth). Exponential backoff reconnect: Math.min(1000*2^attempts, 30000ms). Cleans up on unmount (closes WS, clears timers, sets mountedRef=false to prevent reconnects). (2) WebSocketProvider.tsx (33 lines): Thin context wrapper calling useWebSocket(true). Provides useWS() hook for consumers. Default context value has status='disconnected' and null data for graceful degradation. (3) AppProviders.tsx: WebSocketProvider wraps CatalogMetaProvider (2nd layer, after ThemeAccent) so catalog can consume WS data. (4) CatalogMetaProvider.tsx: Consumes useWS() torrents for instant catalog updates. Smart polling: 15s when WS disconnected, 60s when connected. Pauses polling during /watch route. (5) useSessionState.ts: Accepts wsStates param, matches by selectedId for per-torrent real-time updates; skips REST polling when WS provides data. Backend (T-025) broadcasts: states every 5s, torrents+player_settings every 15s, health every 30s. Frontend build passes clean (vite build succeeds)."
     },
     {
       "id": "T-046",
