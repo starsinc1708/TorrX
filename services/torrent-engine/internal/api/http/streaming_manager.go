@@ -198,6 +198,25 @@ func (m *StreamJobManager) buildJobDir(key hlsKey) string {
 	return dir
 }
 
+// prepareJobDirAsync initializes a job directory and starts playback without
+// holding the manager mutex. This prevents long filesystem operations from
+// blocking unrelated API requests (including health checks).
+func (m *StreamJobManager) prepareJobDirAsync(key hlsKey, job *StreamJob, dir string) {
+	go func() {
+		if err := os.RemoveAll(dir); err != nil {
+			job.setError(fmt.Errorf("cleanup job dir: %w", err))
+			m.CleanupJob(key, job)
+			return
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			job.setError(fmt.Errorf("create job dir: %w", err))
+			m.CleanupJob(key, job)
+			return
+		}
+		job.StartPlayback()
+	}()
+}
+
 // EnsureJob returns an existing or new StreamJob for the given key.
 func (m *StreamJobManager) EnsureJob(id domain.TorrentID, fileIndex, audioTrack, subtitleTrack int) (*StreamJob, error) {
 	if m.stream == nil {
@@ -213,12 +232,48 @@ func (m *StreamJobManager) EnsureJob(id domain.TorrentID, fileIndex, audioTrack,
 
 	dir := m.buildJobDir(key)
 
+	// Check for completed job from a previous run (persistent volume).
+	masterPlaylist := filepath.Join(dir, "master.m3u8")
+	hasMultiVariantCache := false
+	if _, statErr := os.Stat(masterPlaylist); statErr == nil {
+		v0Playlist := filepath.Join(dir, "v0", "index.m3u8")
+		hasMultiVariantCache = playlistHasEndList(v0Playlist)
+	}
+	playlist := filepath.Join(dir, "index.m3u8")
+	hasSingleVariantCache := playlistHasEndList(playlist)
+
 	// Fast path: job already exists.
 	m.mu.RLock()
 	job, ok := m.jobs[key]
 	m.mu.RUnlock()
 	if ok {
 		return job, nil
+	}
+
+	// Build candidate job objects outside m.mu to avoid self-deadlock:
+	// newStreamJob() reads window settings via currentWindowConfig().
+	var cachedJob *StreamJob
+	cachedIsMultiVariant := false
+	if hasMultiVariantCache {
+		cachedJob = newStreamJob(m, key, dir, 0)
+		cachedJob.multiVariant = true
+		cachedJob.playlist = masterPlaylist
+		cachedJob.mu.Lock()
+		cachedJob.state = StreamCompleted
+		cachedJob.mu.Unlock()
+		cachedJob.signalReady()
+		cachedIsMultiVariant = true
+	} else if hasSingleVariantCache {
+		cachedJob = newStreamJob(m, key, dir, 0)
+		cachedJob.mu.Lock()
+		cachedJob.state = StreamCompleted
+		cachedJob.mu.Unlock()
+		cachedJob.signalReady()
+	}
+
+	var freshJob *StreamJob
+	if cachedJob == nil {
+		freshJob = newStreamJob(m, key, dir, 0)
 	}
 
 	// Slow path: create new job.
@@ -230,47 +285,19 @@ func (m *StreamJobManager) EnsureJob(id domain.TorrentID, fileIndex, audioTrack,
 		return job, nil
 	}
 
-	// Check for completed job from a previous run (persistent volume).
-	masterPlaylist := filepath.Join(dir, "master.m3u8")
-	if _, statErr := os.Stat(masterPlaylist); statErr == nil {
-		v0Playlist := filepath.Join(dir, "v0", "index.m3u8")
-		if playlistHasEndList(v0Playlist) {
-			job = newStreamJob(m, key, dir, 0)
-			job.multiVariant = true
-			job.playlist = masterPlaylist
-			job.mu.Lock()
-			job.state = StreamCompleted
-			job.mu.Unlock()
-			job.signalReady()
-			m.jobs[key] = job
-			m.mu.Unlock()
-			m.logger.Info("stream reusing cached multi-variant transcode", slog.String("dir", dir))
-			return job, nil
-		}
-	}
-	playlist := filepath.Join(dir, "index.m3u8")
-	if playlistHasEndList(playlist) {
-		job = newStreamJob(m, key, dir, 0)
-		job.mu.Lock()
-		job.state = StreamCompleted
-		job.mu.Unlock()
-		job.signalReady()
-		m.jobs[key] = job
+	if cachedJob != nil {
+		m.jobs[key] = cachedJob
 		m.mu.Unlock()
-		m.logger.Info("stream reusing cached transcode", slog.String("dir", dir))
-		return job, nil
+		if cachedIsMultiVariant {
+			m.logger.Info("stream reusing cached multi-variant transcode", slog.String("dir", dir))
+		} else {
+			m.logger.Info("stream reusing cached transcode", slog.String("dir", dir))
+		}
+		return cachedJob, nil
 	}
 
-	// Clean and start fresh.
-	if err := os.RemoveAll(dir); err != nil {
-		m.mu.Unlock()
-		return nil, err
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		m.mu.Unlock()
-		return nil, err
-	}
-	job = newStreamJob(m, key, dir, 0)
+	// Register job first so concurrent requests share one startup flow.
+	job = freshJob
 	m.jobs[key] = job
 	m.totalJobStarts++
 	m.lastJobStartedAt = time.Now().UTC()
@@ -278,7 +305,7 @@ func (m *StreamJobManager) EnsureJob(id domain.TorrentID, fileIndex, audioTrack,
 	metrics.HLSActiveJobs.Set(float64(len(m.jobs)))
 	m.mu.Unlock()
 
-	job.StartPlayback()
+	m.prepareJobDirAsync(key, job, dir)
 	return job, nil
 }
 
@@ -297,6 +324,8 @@ func (m *StreamJobManager) SeekJob(id domain.TorrentID, fileIndex, audioTrack, s
 	}
 
 	baseDir := m.buildJobDir(key)
+	dir := baseDir + fmt.Sprintf("-seek-%d", time.Now().UnixNano())
+	job := newStreamJob(m, key, dir, seekSeconds)
 
 	// Pre-compute seek mode without holding write lock.
 	m.mu.RLock()
@@ -355,16 +384,6 @@ func (m *StreamJobManager) SeekJob(id domain.TorrentID, fileIndex, audioTrack, s
 	}
 	m.lastHardSeek[key] = now
 
-	dir := baseDir + fmt.Sprintf("-seek-%d", time.Now().UnixNano())
-	if err := os.RemoveAll(dir); err != nil {
-		m.mu.Unlock()
-		return nil, SeekModeHard, err
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		m.mu.Unlock()
-		return nil, SeekModeHard, err
-	}
-	job := newStreamJob(m, key, dir, seekSeconds)
 	m.jobs[key] = job
 	m.totalJobStarts++
 	m.lastJobStartedAt = time.Now().UTC()
@@ -375,7 +394,7 @@ func (m *StreamJobManager) SeekJob(id domain.TorrentID, fileIndex, audioTrack, s
 	// Pre-boost priority at seek target.
 	m.preSeekPriorityBoost(key, seekSeconds)
 
-	job.StartPlayback()
+	m.prepareJobDirAsync(key, job, dir)
 
 	// Deferred old-job cleanup.
 	if deferredCancel != nil || (oldDir != "" && oldDir != dir) {
@@ -1141,4 +1160,3 @@ var (
 
 	_ app.HLSSettingsEngine = (*StreamJobManager)(nil)
 )
-
