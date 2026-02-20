@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 48
+    "completedTasks": 49
   },
   "tasks": [
     {
@@ -1808,8 +1808,8 @@
       "files_likely_touched": [
         "deploy/docker-compose.yml"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Partially pre-existing, completed 2026-02-20. Health checks and depends_on with condition: service_healthy were already in place for all services. Added missing restart policies (restart: unless-stopped) to traefik, torrent-search, torrentstream, and web-client — all 12 main services now have restart policies. Added deploy.resources to torrentstream: limits (memory: 4g, cpus: 2.0) and reservations (memory: 512m, cpus: 0.5) to prevent FFmpeg OOM. docker compose config validates successfully. All acceptance criteria met."
     }
   ]
 }

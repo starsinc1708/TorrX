@@ -1415,3 +1415,22 @@ Format:
 - Remaining medium-priority unblocked: T-055 (Docker health checks, deps: T-002 done)
 - Low priority unblocked: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage), T-048 (Prometheus config), T-050 (OTEL tracing), T-054 (frontend unit tests)
 - T-049 (Grafana dashboards) remains blocked on T-048
+
+## Iteration 48 — 2026-02-20 18:00
+**Task:** [T-055] Configure Docker health checks and startup dependencies
+**Status:** done
+**What was done:**
+- Verified task was partially implemented (Phase 2.5 check): health checks and depends_on with condition: service_healthy already in place for all 12 main services
+- Added missing `restart: unless-stopped` to 4 services: traefik, torrent-search, torrentstream, web-client (other 8 already had it)
+- Added `deploy.resources` to torrentstream for FFmpeg OOM prevention: limits (memory: 4g, cpus: 2.0), reservations (memory: 512m, cpus: 0.5)
+- Validated with `docker compose config` — all services parse correctly
+- All 4 acceptance criteria verified:
+  1. All services have health checks (12/12 main services)
+  2. Startup order respects dependencies (mongo->torrentstream, redis->torrent-search, jaeger->traefik, etc.)
+  3. Services restart on failure (all 12 now have restart: unless-stopped)
+  4. Resource limits prevent OOM from FFmpeg (torrentstream: 4g memory, 2 CPUs)
+**Issues found:**
+- None
+**Notes for next session:**
+- T-055 done. 49 tasks complete out of 55.
+- Remaining 6 tasks all low priority: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage), T-048 (Prometheus config), T-049 (Grafana dashboards, blocked on T-048), T-050 (OTEL tracing), T-054 (frontend unit tests)
