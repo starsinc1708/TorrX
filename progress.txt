@@ -1513,3 +1513,24 @@ Format:
 - T-049 done. 53 tasks complete out of 55.
 - Remaining 2 tasks (all low priority): T-050 (OTEL tracing, deps T-003+T-027 both done), T-054 (frontend unit tests, deps T-036+T-039 both done)
 - Recommend T-050 next as lowest ID among remaining tasks
+
+## Iteration 53 — 2026-02-20 23:00
+**Task:** [T-050] Integrate OpenTelemetry tracing in both Go services
+**Status:** done
+**What was done:**
+- Verified task was MOSTLY IMPLEMENTED (Phase 2.5 check) — only missing piece was configurable sample rate
+- **torrent-engine telemetry** (`internal/telemetry/telemetry.go`): OTLP/HTTP exporter via otlptracehttp, reads OTEL_EXPORTER_OTLP_ENDPOINT, noop if unset, 5s init timeout. Called from main.go with deferred shutdown.
+- **torrent-search telemetry** (`internal/telemetry/telemetry.go`): identical setup, called from main.go
+- **HTTP handler instrumentation**: otelhttp.NewHandler wraps HTTP mux in both services with span names, filters /metrics and /health paths from tracing
+- **Outgoing HTTP instrumentation**: otelhttp.NewTransport on all HTTP clients in torrent-search (PirateBay, 1337x, Jackett, Prowlarr, RuTracker); otelmongo.NewMonitor() on MongoDB in torrent-engine
+- **Propagation**: W3C TraceContext + Baggage propagators in both services
+- **Docker Compose**: OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 for both services, depends_on jaeger
+- **Traefik**: --tracing=true, --tracing.otlp.http=true, configurable TRAEFIK_TRACE_SAMPLE_RATE (default 0.1)
+- **Jaeger**: all-in-one image, COLLECTOR_OTLP_ENABLED=true, MEMORY_MAX_TRACES=10000, port 16686
+- **ADDED**: Configurable sample rate in both telemetry.go — parseSampleRate() reads OTEL_TRACE_SAMPLE_RATE env var (0.0-1.0, default 0.1 = 10%), configures ParentBased(TraceIDRatioBased(rate)) sampler
+- Both services build clean, vet clean, all tests pass, docker compose config valid
+**Issues found:**
+- None
+**Notes for next session:**
+- T-050 done. 54 tasks complete out of 55.
+- Remaining 1 task (low priority): T-054 (frontend unit tests, deps T-036+T-039 both done)

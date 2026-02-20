@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 53
+    "completedTasks": 54
   },
   "tasks": [
     {
@@ -1649,8 +1649,8 @@
         "services/torrent-search/internal/app/tracing.go",
         "deploy/traefik/traefik.yml"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Task was MOSTLY IMPLEMENTED (Phase 2.5 check). Only missing piece was configurable sample rate.\n\nAlready implemented (no changes needed):\n- telemetry.go in both services: OTLP/HTTP exporter via otlptracehttp, reads OTEL_EXPORTER_OTLP_ENDPOINT, noop if unset\n- main.go in both services: calls telemetry.Init() at startup, deferred shutdown\n- otelhttp.NewHandler wraps HTTP mux in both services, filters /metrics and /health paths\n- otelhttp.NewTransport on all outgoing HTTP clients in torrent-search\n- otelmongo.NewMonitor() on MongoDB client in torrent-engine\n- W3C TraceContext + Baggage propagators in both services\n- Docker Compose: OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 for both services\n- Traefik: --tracing=true, --tracing.otlp.http=true, TRAEFIK_TRACE_SAMPLE_RATE default 0.1\n- Jaeger: all-in-one, COLLECTOR_OTLP_ENABLED, MEMORY_MAX_TRACES=10000, port 16686\n\nAdded (the only code change):\n- Configurable sample rate in both telemetry.go: parseSampleRate() reads OTEL_TRACE_SAMPLE_RATE env var (0.0-1.0, default 0.1 = 10%), configures ParentBased(TraceIDRatioBased(rate)) sampler\n- ParentBased ensures trace context from Traefik is honored\n\nKey design decisions:\n- Custom OTEL_TRACE_SAMPLE_RATE env var because Go SDK does not auto-read standard OTEL env vars\n- ParentBased wrapping ensures trace propagation from Traefik is respected\n- 10% default matches Traefik default for consistency"
     },
     {
       "id": "T-051",
