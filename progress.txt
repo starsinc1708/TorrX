@@ -1393,3 +1393,25 @@ Format:
 **Notes for next session:**
 - T-052 done. 47 tasks complete out of 55.
 - Next medium-priority pending: T-053 (torrent-search tests), T-055 (Docker health checks)
+
+## Iteration 47 — 2026-02-20 17:00
+**Task:** [T-053] Write torrent-search unit and integration tests
+**Status:** done
+**What was done:**
+- Verified task was already fully implemented across 17 test files in torrent-search (Phase 2.5 check) — no code changes needed
+- **Provider tests (mocked HTTP):** All 5 provider test files (bittorrentindex, x1337, rutracker, dht, torznab) use httptest.NewServer() with mocked HTML/JSON/XML responses. ~50+ test cases covering happy paths, HTTP errors (500, 403), context cancellation, dedup, limit enforcement, empty results, invalid items. torznab/torrent_infohash_test.go tests bencode SHA1 extraction. common/magnet_test.go and common/parse_test.go test shared utilities.
+- **Aggregator tests (dedup + ranking + fan-out):** aggregator_test.go (~715 lines) includes TestSearchDedupeSortAndPaginate, TestSearchDedupesByInfoHash, TestSearchDedupeKeepsHigherSeeders for dedup; TestSearchFanOutToMultipleProviders (5 concurrent providers), TestSearchProviderFailureDoesNotBlockOthers, TestSearchContextTimeout for fan-out with timeouts; TestSearchCachesPopularQuery, TestSearchNoCacheBypassesCache, TestSearchCacheDisabled for cache integration; provider resolution and alias tests.
+- **Normalization/ranking tests:** normalize_test.go includes TestSortResultsBySeeders/Size/Published/Relevance (all directions), 5 TestRelevanceScore* tests (episode/year/token match/seeders/infohash), 6 TestDedupeKey* tests (infohash/magnet/title fallback + normalization), TestShouldReplace* (4 cases: higher seeders, infohash, magnet, worse candidate), filter tests (quality, content type, year range, min seeders), enrichment tests (quality/HDR/audio/source detection, Cyrillic language hints, content type).
+- **Cache tests (TTL + stale-while-revalidate):** cache_test.go (~690 lines) covers full lifecycle: fresh hit (within 6h), stale with refresh flag (6-18h), stale-only-first-refresh (sync.Once), expired beyond stale (>18h), LRU eviction, expired-first eviction, deep clone, concurrent access (50 goroutines), memory-only store, WithCacheTTL option, SearchStream cache integration (hit + NoCache bypass). Warm cycle tests: RefreshesPopularQueries, SkipsRecentlyWarmed, SkipsFreshCache, EmptyPopular, CollectWarmSpecsLimitsToTopN.
+- **Circuit breaker tests:** retry_test.go includes TestExponentialBlockDuration (table-driven, 6 cases: 3→2min, 4→4min, 5→8min, 6+→15min cap) and TestCircuitBreakerExponentialBlock (full lifecycle: 3 failures→blocked 2min, block expires→unblocked, 4th failure→blocked 4min, success→reset→unblocked, 3 new failures→blocked at base 2min). Plus 7 RetryWithBackoff tests.
+- **Query expansion tests:** query_expand_test.go (4 tests for Russian language preference expansion)
+- **Dubbing tests:** dubbing_test.go (dubbing type/group detection from titles)
+- **Integration tests:** server_test.go (API handler tests) and e2e_flow_test.go (E2E search flow with SSE streaming)
+- All tests pass: `go test ./...` across all 12 packages (~4.5s total)
+**Issues found:**
+- None. All tests were already implemented and passing.
+**Notes for next session:**
+- T-053 done. 48 tasks complete out of 55.
+- Remaining medium-priority unblocked: T-055 (Docker health checks, deps: T-002 done)
+- Low priority unblocked: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage), T-048 (Prometheus config), T-050 (OTEL tracing), T-054 (frontend unit tests)
+- T-049 (Grafana dashboards) remains blocked on T-048

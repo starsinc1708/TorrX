@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 47
+    "completedTasks": 48
   },
   "tasks": [
     {
@@ -1744,8 +1744,8 @@
         "services/torrent-search/internal/search/*_test.go",
         "services/torrent-search/internal/api/http/*_test.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Already implemented. 17 test files across 3 directories provide comprehensive coverage:\n\n**Provider tests (mocked HTTP):** 5 provider test files (bittorrentindex, x1337, rutracker, dht, torznab) all use httptest.NewServer() with mocked HTML/JSON responses. ~50+ test cases covering happy path, error responses (HTTP 500, 403), context cancellation, deduplication, limit enforcement, empty results, invalid items. torznab also includes torrent_infohash_test.go. Common utilities tested in common/magnet_test.go and common/parse_test.go.\n\n**Aggregator tests (dedup + ranking):** aggregator_test.go (~715 lines) includes TestSearchDedupeSortAndPaginate, TestSearchDedupesByInfoHash, TestSearchDedupeKeepsHigherSeeders for dedup; TestSearchFanOutToMultipleProviders (5 providers), TestSearchProviderFailureDoesNotBlockOthers, TestSearchContextTimeout for fan-out; TestSearchCachesPopularQuery, TestSearchNoCacheBypassesCache for caching integration. normalize_test.go includes TestSortResultsBySeeders/Size/Published/Relevance, 5 TestRelevanceScore* tests, 6 TestDedupeKey* tests, TestShouldReplace* tests.\n\n**Cache tests (TTL + stale-while-revalidate):** cache_test.go (~690 lines) covers full TTL lifecycle: fresh hit (within 6h), stale hit with refresh flag (6-18h), stale-only-first-refresh (sync.Once), expired beyond stale (>18h), LRU eviction, expired-first eviction, clone deep copy, concurrent access, memory-only store, WithCacheTTL option, SearchStream cache integration. Warm cycle tests: RefreshesPopularQueries, SkipsRecentlyWarmed, SkipsFreshCache.\n\n**Circuit breaker tests:** retry_test.go includes TestExponentialBlockDuration (table-driven, 6 cases: 3→2min, 4→4min, 5→8min, 6+→15min cap) and TestCircuitBreakerExponentialBlock (full lifecycle: 3 failures→blocked 2min, block expires→unblocked, 4th failure→blocked 4min, success→reset→unblocked, 3 new failures→blocked at base 2min). Also 7 RetryWithBackoff tests.\n\n**Integration tests:** server_test.go (API handler tests) and e2e_flow_test.go (end-to-end search flow tests).\n\nAll tests pass: go test ./... across all 12 packages with test files."
     },
     {
       "id": "T-054",
