@@ -1316,3 +1316,32 @@ Format:
 - T-045 done. 44 tasks complete out of 55. Remaining medium-priority unblocked: T-047 (watch history E2E), T-051 (engine unit tests), T-052 (engine integration tests), T-053 (search tests), T-055 (Docker health checks)
 - Low priority unblocked: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage), T-048 (Prometheus config), T-050 (OTEL tracing), T-054 (frontend unit tests)
 - T-049 (Grafana dashboards) remains blocked on T-048
+
+## Iteration 44 — 2026-02-20 13:30
+**Task:** [T-047] End-to-end: watch history resume and quality switching
+**Status:** done
+**What was done:**
+- Verified all four acceptance criteria features are already fully implemented
+- Watch position persistence: useWatchPositionSave hook auto-saves every 5s via PUT /watch-history/{torrentId}/{fileIndex}, MongoDB upsert with composite doc ID
+- Resume prompt: PlayerPage loads resume hints from localStorage + server, merges by timestamp, shows overlay when position >= 10s and < duration-15s, supports auto-resume and manual "Continue" button
+- Quality switching: HLS.js MANIFEST_PARSED extracts levels, handleQualityChange sets hls.currentLevel, preference persisted per-torrent in localStorage via patchTorrentPlayerPreferences (-1 = auto)
+- Focus mode: PlayerPage auto-focuses on mount via POST /torrents/:id/focus, engine FocusSession() pauses other sessions, UnfocusAll() restores concurrent downloading
+- Added 5 backend E2E tests (e2e_flow_test.go):
+  - TestE2EWatchHistoryResumeFlow: 6-step flow (focus→stream→save at 5:00→close→fetch resume→re-focus)
+  - TestE2EWatchPositionUpdatesOverTime: 4 sequential saves verify upsert semantics
+  - TestE2EWatchHistoryMultipleFiles: independent positions per file in same torrent (3 TV episodes)
+  - TestE2EFocusModeSwitchBetweenTorrents: focus A→verify health→switch to B→verify→unfocus→verify disabled
+  - TestE2EWatchHistoryResumeWithFocusFlow: cross-cutting test combining watch history with focus switching between two movies
+- Added frontend playerPreferences.test.ts (15 tests):
+  - Quality switching persistence (7 tests): store/switch/persist/auto/-1/preserve-across-updates/per-torrent
+  - Watch history resume preferences (4 tests): audio+subtitle+rate, preservation across quality switches, rate clamping, null handling
+  - localStorage resilience (3 tests): corrupted JSON, malformed entries, recovery
+  - Empty torrentId guard (1 test)
+- All tests pass: go test ./internal/api/http/ (10.6s), vitest playerPreferences (15 tests, 10ms), go vet clean, tsc --noEmit clean
+**Issues found:**
+- None
+**Notes for next session:**
+- T-047 done. 45 tasks complete out of 55.
+- Remaining medium-priority unblocked: T-051 (engine unit tests), T-052 (engine integration tests), T-053 (search tests), T-055 (Docker health checks)
+- Low priority unblocked: T-026 (metrics/swagger), T-044 (ProviderDiagnosticsPage), T-048 (Prometheus config), T-050 (OTEL tracing), T-054 (frontend unit tests)
+- T-049 (Grafana dashboards) remains blocked on T-048
