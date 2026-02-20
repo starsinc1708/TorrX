@@ -897,3 +897,34 @@ Format:
   - T-033 (search caching + SSE, medium, deps: T-032 ✅)
   - T-051 (domain + use case tests, medium, deps: T-010 ✅, T-014 ✅, T-015 ✅)
 - Recommend T-017 next as lowest ID among medium priority with all deps satisfied
+
+## Iteration 25 — 2026-02-20 13:00
+**Task:** [T-017] Implement dormancy system for idle readers
+**Status:** done
+**What was done:**
+- Verified dormancy system already fully implemented across 3 files — no code changes needed
+- reader_dormancy.go (73 lines): readerRegistry type tracks []*slidingPriorityReader per TorrentID with register/unregister/enforceDormancy. readerDormancyTimeout = 60s. enforceDormancy only triggers with 2+ readers for same torrent; iterates non-caller readers, puts idle ones (lastAccess > 60s ago) to sleep via enterDormancyLocked
+- sliding_priority_reader.go: enterDormancyLocked (line 218) sets readahead=0, deprioritizes previous window. exitDormancyLocked (line 228) restores readahead to current window size, force-updates priority gradient. Read() (line 145) updates lastAccess on every call (including n==0 to prevent responsive-mode deadlock), wakes dormant reader on n>0, triggers enforceDormancy every 5s. Seek() (line 182) also wakes dormant readers. Close() (line 209) unregisters from registry
+- stream_torrent.go: StreamTorrent creates readerRegistry via sync.Once, registers each reader on creation, passes registry+torrentID. StreamResult.Generation uint64 field for HLS stale detection
+- reader_dormancy_test.go (280 lines): 4 integration tests — idle reader sleeps (2 readers, make one idle, verify dormant + readahead=0), wake on read (manually enter dormancy, read to wake, verify readahead restored), no dormancy single reader, unregister on close
+- sliding_priority_reader_test.go: 2 additional dormancy unit tests — enter/exit dormancy state verification, close with/without registry
+- All 80+ usecase tests pass. go build/vet clean
+**Issues found:**
+- None. Implementation was fully complete with comprehensive test coverage.
+**Notes for next session:**
+- T-017 is done. No tasks directly depend on T-017.
+- 27 tasks now done out of 55
+- Next tasks with all deps satisfied (medium priority, lowest ID first):
+  - T-021 (direct browser playback, medium, deps: T-008 ✅, T-018 ✅)
+  - T-022 (media info endpoint, medium, deps: T-008 ✅, T-003 ✅)
+  - T-023 (dynamic settings API, medium, deps: T-009 ✅, T-003 ✅)
+  - T-024 (watch history, medium, deps: T-004 ✅, T-003 ✅)
+  - T-025 (WebSocket, medium, deps: T-003 ✅)
+  - T-029 (1337x + Rutracker, medium, deps: T-027 ✅)
+  - T-030 (Torznab, medium, deps: T-027 ✅)
+  - T-031 (TMDB, medium, deps: T-027 ✅)
+  - T-033 (search caching + SSE, medium, deps: T-032 ✅)
+  - T-051 (domain + use case tests, medium, deps: T-010 ✅, T-014 ✅, T-015 ✅)
+  - T-052 (API + streaming integration tests, medium, deps: T-010 ✅, T-018 ✅)
+  - T-055 (Docker health checks, medium, deps: T-001 ✅, T-002 ✅)
+- Recommend T-021 next as lowest ID among medium priority with all deps satisfied

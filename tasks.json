@@ -4,7 +4,7 @@
     "version": "2.0",
     "generatedAt": "2026-02-19T12:00:00Z",
     "totalTasks": 55,
-    "completedTasks": 26
+    "completedTasks": 27
   },
   "tasks": [
     {
@@ -515,8 +515,8 @@
         "services/torrent-engine/internal/usecase/sliding_priority_reader.go",
         "services/torrent-engine/internal/usecase/sliding_priority_reader_test.go"
       ],
-      "status": "pending",
-      "notes": ""
+      "status": "done",
+      "notes": "Verified 2026-02-20. Dormancy system fully implemented across 3 files. reader_dormancy.go (73 lines): readerRegistry tracks []*slidingPriorityReader per TorrentID with register/unregister/enforceDormancy methods. readerDormancyTimeout = 60s. enforceDormancy only activates when 2+ readers exist for a torrent — iterates all readers except caller, puts idle ones (lastAccess > 60s) to sleep. sliding_priority_reader.go: enterDormancyLocked sets readahead to 0 and deprioritizes previous window. exitDormancyLocked restores readahead to current window size and force-updates priority gradient. Read() updates lastAccess on every call (including n==0 to prevent deadlock with responsive readers), wakes dormant reader when n>0, triggers enforceDormancy every 5s. Seek() also wakes dormant readers and triggers dormancy check. Close() unregisters from registry. stream_torrent.go: StreamTorrent.Execute creates readerRegistry (sync.Once), registers each slidingPriorityReader on creation, passes registry+torrentID to constructor. StreamResult.Generation uint64 field provides HLS stale detection support. reader_dormancy_test.go (280 lines): 4 integration tests — TestReaderDormancyIdleReaderSleeps (creates 2 readers via StreamTorrent.Execute, makes reader1 idle, reads from reader2 to trigger enforceDormancy, verifies reader1 dormant with readahead=0), TestReaderDormancyWakeOnRead (manually enters dormancy, reads to wake, verifies readahead restored), TestReaderDormancyNoDormancySingleReader (single reader never goes dormant even with stale lastAccess), TestReaderRegistryUnregisterOnClose (verifies Close removes reader from registry). sliding_priority_reader_test.go: 2 additional dormancy unit tests — TestEnterExitDormancy (enter sets readahead=0/dormant=true, exit restores readahead/dormant=false), TestCloseUnregistersFromRegistry + TestCloseWithNilRegistry. All 80+ usecase tests pass. go build/vet clean."
     },
     {
       "id": "T-018",
