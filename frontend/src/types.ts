@@ -10,6 +10,8 @@ export interface FileRef {
   bytesCompleted?: number;
   pieceStart?: number; // inclusive
   pieceEnd?: number;   // exclusive
+  progress?: number;
+  priority?: string;
 }
 
 export interface TorrentRecord {
@@ -73,7 +75,10 @@ export interface TorrentListSummary {
 export interface SessionState {
   id: string;
   status?: string;
+  mode?: 'idle' | 'downloading' | 'stopped' | 'focused' | 'paused' | 'completed';
+  transferPhase?: 'downloading' | 'verifying';
   progress?: number;
+  verificationProgress?: number;
   peers?: number;
   downloadSpeed?: number;
   uploadSpeed?: number;
@@ -143,6 +148,7 @@ export interface StorageSettings {
 
 export interface PlayerSettings {
   currentTorrentId?: string;
+  prioritizeActiveFileOnly?: boolean;
 }
 
 export interface WatchPosition {

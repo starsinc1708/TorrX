@@ -68,6 +68,7 @@ interface TorrentListProps {
   activeStateMap: Map<string, SessionState>;
   watchHistoryByTorrent: Map<string, WatchPosition[]>;
   currentTorrentId: string | null;
+  prioritizeActiveFileOnly: boolean;
   allTags?: string[];
   statusFilter: TorrentStatusFilter;
   searchQuery: string;
@@ -108,6 +109,7 @@ const TorrentList: React.FC<TorrentListProps> = ({
   activeStateMap,
   watchHistoryByTorrent,
   currentTorrentId,
+  prioritizeActiveFileOnly,
   allTags = [],
   statusFilter,
   searchQuery,
@@ -178,13 +180,11 @@ const TorrentList: React.FC<TorrentListProps> = ({
   const renderTile = (torrent: TorrentRecord, options?: { currentPriority?: boolean }) => {
     const isCurrentPriority = options?.currentPriority ?? false;
     const state = activeStateMap.get(torrent.id);
-    const dbProgress = normalizeProgress(torrent);
-    const progress = Math.max(state?.progress ?? 0, dbProgress);
-    const doneBytes =
-      state && torrent.totalBytes
-        ? Math.max(Math.round((state.progress ?? 0) * torrent.totalBytes), torrent.doneBytes ?? 0)
-        : torrent.doneBytes;
+    const progress = state?.progress ?? normalizeProgress(torrent);
+    const doneBytes = torrent.doneBytes;
     const status = state?.status ?? torrent.status;
+    const transferPhase = state?.transferPhase;
+    const verificationProgress = Math.max(0, Math.min(1, state?.verificationProgress ?? 0));
 
     const totalBytes = torrent.totalBytes ?? 0;
     const fileCount = torrent.files?.length ?? 0;
@@ -303,6 +303,11 @@ const TorrentList: React.FC<TorrentListProps> = ({
             {isCurrentPriority ? (
               <Badge className="border-transparent bg-primary text-primary-foreground">Current</Badge>
             ) : null}
+            {transferPhase === 'verifying' ? (
+              <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                verifying {formatPercent(verificationProgress)}
+              </Badge>
+            ) : null}
             <Badge variant={statusToBadgeVariant(status)}>{status}</Badge>
           </div>
         </div>
@@ -359,6 +364,16 @@ const TorrentList: React.FC<TorrentListProps> = ({
           <span className="rounded-full border border-border/70 bg-muted/20 px-2 py-0.5">
             Peers {state?.peers ?? 0}
           </span>
+          {transferPhase ? (
+            <span className="rounded-full border border-border/70 bg-muted/20 px-2 py-0.5">
+              Phase {transferPhase}
+            </span>
+          ) : null}
+          {isCurrentPriority ? (
+            <span className="rounded-full border border-border/70 bg-muted/20 px-2 py-0.5">
+              Neighbors {prioritizeActiveFileOnly ? 'none' : 'low'}
+            </span>
+          ) : null}
           <span className="rounded-full border border-border/70 bg-muted/20 px-2 py-0.5">
             {formatDate(torrent.createdAt)}
           </span>

@@ -123,7 +123,7 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
   const [editableTags, setEditableTags] = useState<string[]>(() => normalizeTagsList(torrent.tags ?? []));
   const [tagsSaving, setTagsSaving] = useState(false);
   const [selectedSeasonGroupId, setSelectedSeasonGroupId] = useState<string | null>(null);
-  const progress = Math.max(sessionState?.progress ?? 0, normalizeProgress(torrent));
+  const progress = sessionState?.progress ?? normalizeProgress(torrent);
 
   const files = useMemo(() => sessionState?.files ?? torrent.files ?? [], [sessionState?.files, torrent.files]);
   const fileOrder = useMemo(() => {
@@ -296,6 +296,14 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
                 <Users className="h-4 w-4" />
                 {sessionState.peers ?? 0} peers
               </span>
+              {sessionState.transferPhase ? (
+                <span className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-muted/20 px-3 py-1 text-xs text-muted-foreground">
+                  phase {sessionState.transferPhase}
+                  {sessionState.transferPhase === 'verifying'
+                    ? ` ${formatPercent(Math.max(0, Math.min(1, sessionState.verificationProgress ?? 0)))}`
+                    : ''}
+                </span>
+              ) : null}
             </div>
           ) : null}
 
@@ -482,7 +490,10 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
                       <button
                         key={`${section.id}-${targetFileIndex}-${idx}`}
                         type="button"
-                        className="w-full rounded-lg border border-border/70 bg-muted/10 px-4 py-3 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none"
+                        className={cn(
+                          'w-full rounded-lg border border-border/70 bg-muted/10 px-4 py-3 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none',
+                          file.priority === 'none' && 'opacity-50',
+                        )}
                         onClick={() => onWatchFile(torrent.id, targetFileIndex)}
                       >
                         <div className="flex items-center justify-between gap-3">
@@ -494,6 +505,20 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
                                   {ordinal}
                                 </span>
                                 <span className="truncate text-sm font-medium">{displayName}</span>
+                                {file.priority && file.priority !== 'normal' && (
+                                  <span className={cn(
+                                    'ml-1.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none',
+                                    file.priority === 'high' || file.priority === 'now'
+                                      ? 'bg-primary/20 text-primary'
+                                      : file.priority === 'low'
+                                        ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                                        : file.priority === 'none'
+                                          ? 'bg-muted text-muted-foreground'
+                                          : ''
+                                  )}>
+                                    {file.priority}
+                                  </span>
+                                )}
                               </div>
                               <div className="mt-1 text-xs text-muted-foreground">{formatBytes(file.length)}</div>
                             </div>

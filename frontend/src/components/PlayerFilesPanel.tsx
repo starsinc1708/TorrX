@@ -57,7 +57,7 @@ const getMoviePartNumber = (item: MediaOrganizationItem | undefined, fallback: n
 };
 
 function PiecesBlock({ sessionState }: { sessionState: SessionState }) {
-  const { numPieces, pieceBitfield, downloadSpeed, progress } = sessionState;
+  const { numPieces, pieceBitfield, downloadSpeed, transferPhase, verificationProgress } = sessionState;
 
   const downloadedPieces = useMemo(() => {
     if (!pieceBitfield || !numPieces) return 0;
@@ -65,7 +65,7 @@ function PiecesBlock({ sessionState }: { sessionState: SessionState }) {
     return pieces.filter(Boolean).length;
   }, [pieceBitfield, numPieces]);
 
-  const progressPercent = progress != null ? progress * 100 : numPieces ? (downloadedPieces / numPieces) * 100 : 0;
+  const progressPercent = numPieces ? (downloadedPieces / numPieces) * 100 : 0;
   const isComplete = progressPercent >= 100;
 
   return (
@@ -85,7 +85,12 @@ function PiecesBlock({ sessionState }: { sessionState: SessionState }) {
         </div>
         <div className="flex items-center gap-2 text-[11px] tabular-nums text-muted-foreground">
           {downloadSpeed != null && downloadSpeed > 0 && !isComplete ? (
-            <span className="font-medium text-sky-500 dark:text-sky-400">↓ {formatSpeed(downloadSpeed)}</span>
+            <span className="font-medium text-sky-500 dark:text-sky-400">DL {formatSpeed(downloadSpeed)}</span>
+          ) : null}
+          {transferPhase === 'verifying' ? (
+            <span className="font-medium text-amber-600 dark:text-amber-400">
+              verifying {formatPercent(Math.max(0, Math.min(1, verificationProgress ?? 0)))}
+            </span>
           ) : null}
           <span className={cn('font-semibold', isComplete ? 'text-emerald-500' : '')}>
             {progressPercent.toFixed(1)}%
@@ -115,50 +120,30 @@ function FilePiecesBlock({
     const pieces = decodePieceBitfield(pieceBitfield, numPieces);
     if (pieces.length === 0) return null;
 
-    const selectedFile = files.find((file) => file.index === selectedFileIndex)
+    const selectedFile =
+      files.find((file) => file.index === selectedFileIndex)
       ?? sessionState.files?.find((file) => file.index === selectedFileIndex);
     if (!selectedFile || selectedFile.length <= 0) return null;
 
     const liveFiles = sessionState.files ?? [];
-    const liveByIndex = new Map<number, FileRef>();
-    const liveByPath = new Map<string, FileRef>();
-    for (const file of liveFiles) {
-      liveByIndex.set(file.index, file);
-      liveByPath.set(normalizePath(file.path), file);
-    }
+    const liveByIndex = new Map<number, FileRef>(liveFiles.map((file) => [file.index, file]));
+    const liveByPath = new Map<string, FileRef>(liveFiles.map((file) => [normalizePath(file.path), file]));
     const live = liveByIndex.get(selectedFileIndex) ?? liveByPath.get(normalizePath(selectedFile.path));
     const fileForPieces = live ?? selectedFile;
 
-    let startPiece = fileForPieces.pieceStart;
-    let endPiece = fileForPieces.pieceEnd;
-
-    // Fallback for older backend payloads that don't provide per-file piece bounds yet.
+    const startValue = fileForPieces.pieceStart;
+    const endValue = fileForPieces.pieceEnd;
     if (
-      !Number.isInteger(startPiece)
-      || !Number.isInteger(endPiece)
-      || startPiece === undefined
-      || endPiece === undefined
-      || startPiece < 0
-      || endPiece <= startPiece
+      typeof startValue !== 'number'
+      || typeof endValue !== 'number'
+      || !Number.isInteger(startValue)
+      || !Number.isInteger(endValue)
     ) {
-      const ordered = [...files].sort((a, b) => a.index - b.index);
-      const selectedOrderIndex = ordered.findIndex((file) => file.index === selectedFileIndex);
-      if (selectedOrderIndex < 0) return null;
-      const totalBytes = ordered.reduce((sum, file) => sum + Math.max(0, file.length ?? 0), 0);
-      if (totalBytes <= 0) return null;
-      const pieceLength = Math.max(1, Math.ceil(totalBytes / numPieces));
-      const prefixBytes = ordered
-        .slice(0, selectedOrderIndex)
-        .reduce((sum, file) => sum + Math.max(0, file.length ?? 0), 0);
-      startPiece = Math.max(0, Math.min(numPieces - 1, Math.floor(prefixBytes / pieceLength)));
-      endPiece = Math.max(
-        startPiece + 1,
-        Math.min(numPieces, Math.ceil((prefixBytes + selectedFile.length) / pieceLength)),
-      );
+      return null;
     }
 
-    const startValue = Number.isInteger(startPiece) ? startPiece : 0;
-    const endValue = Number.isInteger(endPiece) ? endPiece : startValue + 1;
+    if (startValue < 0 || endValue <= startValue) return null;
+
     const start = Math.max(0, Math.min(numPieces - 1, startValue));
     const end = Math.max(start + 1, Math.min(numPieces, endValue));
     const filePieces = pieces.slice(start, end);
@@ -170,9 +155,7 @@ function FilePiecesBlock({
       if (piece) completedFilePieces += 1;
     }
 
-    const completedBytes = Math.max(0, live?.bytesCompleted ?? selectedFile.bytesCompleted ?? 0);
-    const byteProgress = selectedFile.length > 0 ? Math.max(0, Math.min(1, completedBytes / selectedFile.length)) : 0;
-    const pieceProgress = Math.max(0, Math.min(1, completedFilePieces / totalFilePieces));
+    const pieceProgress = fileForPieces.progress ?? Math.max(0, Math.min(1, completedFilePieces / totalFilePieces));
 
     return {
       fileLabel: fileBaseName(selectedFile.path),
@@ -180,7 +163,6 @@ function FilePiecesBlock({
       completedFilePieces,
       totalFilePieces,
       pieceProgress,
-      byteProgress,
     };
   }, [numPieces, pieceBitfield, selectedFileIndex, files, sessionState.files]);
 
@@ -202,7 +184,6 @@ function FilePiecesBlock({
         </div>
         <div className="flex flex-col items-end text-[11px] tabular-nums text-muted-foreground">
           <span className="font-semibold text-foreground">{(stats.pieceProgress * 100).toFixed(1)}%</span>
-          <span>bytes {formatPercent(stats.byteProgress)}</span>
         </div>
       </div>
 
@@ -521,6 +502,7 @@ export default function PlayerFilesPanel({
                       ? `${cleanTitle}${episodeLabel ? ` - ${episodeLabel}` : ''}`
                       : `${cleanTitle}${partLabel ? ` - ${partLabel}` : ''}`;
                   const ordinal = (fileOrder.get(targetFileIndex) ?? fileOrder.get(file.index) ?? 0) + 1;
+                  const filePriority = (live ?? file).priority;
 
                   return (
                     <button
@@ -539,6 +521,7 @@ export default function PlayerFilesPanel({
                         active
                           ? 'border-primary/30 bg-primary/10'
                           : 'border-border/70 bg-muted/10 hover:bg-muted/20',
+                        filePriority === 'none' && 'opacity-50',
                       )}
                       onClick={() => onSelectFile(targetFileIndex)}
                     >
@@ -553,6 +536,20 @@ export default function PlayerFilesPanel({
                                 {ordinal}
                               </span>
                               <span className="truncate text-sm font-semibold">{name}</span>
+                              {filePriority && filePriority !== 'normal' && (
+                                <span className={cn(
+                                  'ml-1.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none',
+                                  filePriority === 'high' || filePriority === 'now'
+                                    ? 'bg-primary/20 text-primary'
+                                    : filePriority === 'low'
+                                      ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                                      : filePriority === 'none'
+                                        ? 'bg-muted text-muted-foreground'
+                                        : ''
+                                )}>
+                                  {filePriority}
+                                </span>
+                              )}
                             </div>
                             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                               <span>{formatBytes(total)}</span>
