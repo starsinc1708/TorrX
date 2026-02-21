@@ -11,6 +11,7 @@ import {
   saveWatchPosition,
   getWatchPosition,
   buildHlsUrl,
+  buildSubtitleTrackUrl,
   buildStreamUrl,
   buildDirectPlaybackUrl,
   isApiError,
@@ -242,10 +243,14 @@ describe('URL builders', () => {
     expect(url).toContain('/torrents/abc/hls/0/index.m3u8');
   });
 
-  it('buildHlsUrl includes audio and subtitle params', () => {
-    const url = buildHlsUrl('abc', 0, { audioTrack: 1, subtitleTrack: 2 });
+  it('buildHlsUrl includes audio params', () => {
+    const url = buildHlsUrl('abc', 0, { audioTrack: 1 });
     expect(url).toContain('audioTrack=1');
-    expect(url).toContain('subtitleTrack=2');
+  });
+
+  it('buildSubtitleTrackUrl builds correct path', () => {
+    const url = buildSubtitleTrackUrl('abc', 0, 2);
+    expect(url).toContain('/torrents/abc/subtitles/0/2.vtt');
   });
 });
 

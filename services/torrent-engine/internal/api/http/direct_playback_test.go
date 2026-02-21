@@ -220,6 +220,41 @@ func TestDirectPlaybackMP4HeadRequest(t *testing.T) {
 	}
 }
 
+func TestDirectPlaybackMP4SetsDLNAHeaders(t *testing.T) {
+	dir := t.TempDir()
+	moviePath := filepath.Join(dir, "movie.mp4")
+	content := []byte("fake-mp4-content")
+	if err := os.WriteFile(moviePath, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	state := &fakeGetTorrentState{
+		result: domain.SessionState{
+			Files: []domain.FileRef{
+				{Path: "movie.mp4", Length: int64(len(content)), BytesCompleted: int64(len(content))},
+			},
+		},
+	}
+	server := NewServer(&fakeCreateTorrent{},
+		WithMediaProbe(&fakeMediaProbe{}, dir),
+		WithGetTorrentState(state),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/torrents/t1/direct/0", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if got := w.Header().Get("transferMode.dlna.org"); got != "Streaming" {
+		t.Fatalf("transferMode.dlna.org = %q", got)
+	}
+	if got := w.Header().Get("contentFeatures.dlna.org"); got == "" {
+		t.Fatal("contentFeatures.dlna.org must be set")
+	}
+}
+
 func TestDirectPlaybackUnsupportedExtension(t *testing.T) {
 	// .avi file → 404 (not mp4/m4v/mkv).
 	dir := t.TempDir()
@@ -936,7 +971,12 @@ func TestDirectPlaybackMKVRemuxReadyHeadRequest(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTriggerRemuxConcurrent(t *testing.T) {
-	dir := t.TempDir()
+	dir, err := os.MkdirTemp("", "trigger-remux-concurrent-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
 	mgr := &StreamJobManager{
 		baseDir:         dir,
 		remuxCache:      make(map[string]*remuxEntry),

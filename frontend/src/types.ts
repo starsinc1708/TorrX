@@ -8,6 +8,8 @@ export interface FileRef {
   path: string;
   length: number;
   bytesCompleted?: number;
+  pieceStart?: number; // inclusive
+  pieceEnd?: number;   // exclusive
 }
 
 export interface TorrentRecord {
@@ -16,11 +18,34 @@ export interface TorrentRecord {
   status: string;
   infoHash?: string;
   files?: FileRef[];
+  mediaOrganization?: MediaOrganization;
   totalBytes?: number;
   doneBytes?: number;
   createdAt?: string;
   updatedAt?: string;
   tags?: string[];
+}
+
+export interface MediaOrganizationItem {
+  fileIndex: number;
+  filePath: string;
+  displayName: string;
+  season?: number;
+  episode?: number;
+  year?: number;
+}
+
+export interface MediaOrganizationGroup {
+  id: string;
+  type: 'series' | 'movie' | 'other';
+  title: string;
+  season?: number;
+  items: MediaOrganizationItem[];
+}
+
+export interface MediaOrganization {
+  contentType: 'series' | 'movie' | 'mixed' | 'unknown';
+  groups: MediaOrganizationGroup[];
 }
 
 export interface TorrentSummary {
@@ -98,6 +123,19 @@ export interface HLSSettings {
   prebufferMB: number;
   windowBeforeMB: number;
   windowAfterMB: number;
+}
+
+export interface StorageUsage {
+  dataDir: string;
+  dataDirExists: boolean;
+  dataDirSizeBytes: number;
+  scannedAt: string;
+}
+
+export interface StorageSettings {
+  maxSessions: number;
+  minDiskSpaceBytes: number;
+  usage: StorageUsage;
 }
 
 export interface PlayerSettings {

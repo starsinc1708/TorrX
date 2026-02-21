@@ -65,7 +65,7 @@ func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Range")
-			w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length")
+			w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length, transferMode.dlna.org, contentFeatures.dlna.org")
 		}
 
 		if r.Method == http.MethodOptions {
@@ -148,6 +148,8 @@ func normalizeRoute(path string) string {
 		return "/hls/playlist"
 	case strings.Contains(path, "/hls/") && strings.HasSuffix(path, ".ts"):
 		return "/hls/segment"
+	case strings.Contains(path, "/subtitles/") && strings.HasSuffix(strings.ToLower(path), ".vtt"):
+		return "/subtitles/vtt"
 	case strings.HasPrefix(path, "/torrents/"):
 		return "/torrents/:id"
 	case strings.HasPrefix(path, "/settings/"):
@@ -181,6 +183,9 @@ func isNoisyPath(path string) bool {
 		return true
 	}
 	if strings.Contains(path, "/hls/") && (strings.HasSuffix(path, ".ts") || strings.HasSuffix(path, ".m3u8")) {
+		return true
+	}
+	if strings.Contains(path, "/subtitles/") && strings.HasSuffix(strings.ToLower(path), ".vtt") {
 		return true
 	}
 	return false

@@ -102,6 +102,11 @@ func (uc *StreamTorrent) Execute(ctx context.Context, id domain.TorrentID, fileI
 		return StreamResult{}, ErrInvalidFileIndex
 	}
 
+	// During playback, keep network budget on the selected file only.
+	// Non-selected files are fully deprioritized; the active file remains
+	// downloadable and then receives finer-grained window priorities below.
+	enforceActiveFileOnly(session, file)
+
 	readahead := uc.ReadaheadBytes
 	if readahead <= 0 {
 		readahead = defaultStreamReadahead
@@ -190,6 +195,9 @@ func (uc *StreamTorrent) ExecuteRaw(ctx context.Context, id domain.TorrentID, fi
 		return StreamResult{}, ErrInvalidFileIndex
 	}
 
+	// Mirror Execute behavior for HLS/FSM path: download only the selected file.
+	enforceActiveFileOnly(session, file)
+
 	reader, err := session.NewReader(file)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
@@ -205,6 +213,29 @@ func (uc *StreamTorrent) ExecuteRaw(ctx context.Context, id domain.TorrentID, fi
 		Reader: reader,
 		File:   file,
 	}, nil
+}
+
+// enforceActiveFileOnly deprioritizes all non-selected files in the torrent
+// and keeps the selected file at least PriorityNormal.
+func enforceActiveFileOnly(session ports.Session, activeFile domain.FileRef) {
+	files := session.Files()
+	if len(files) <= 1 {
+		return
+	}
+
+	for _, file := range files {
+		if file.Length <= 0 {
+			continue
+		}
+		if file.Index == activeFile.Index {
+			continue
+		}
+		session.SetPiecePriority(file, domain.Range{Off: 0, Length: file.Length}, domain.PriorityNone)
+	}
+
+	if activeFile.Length > 0 {
+		session.SetPiecePriority(activeFile, domain.Range{Off: 0, Length: activeFile.Length}, domain.PriorityNormal)
+	}
 }
 
 // applyStartupGradient sets a graduated priority on the initial window instead

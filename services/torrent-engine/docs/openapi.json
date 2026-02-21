@@ -331,6 +331,8 @@
             "name": "subtitleTrack",
             "in": "query",
             "required": false,
+            "deprecated": true,
+            "description": "Deprecated. Subtitle rendering uses /torrents/{id}/subtitles/{fileIndex}/{subtitleTrack}.vtt.",
             "schema": { "type": "integer", "minimum": 0 }
           }
         ],
@@ -407,6 +409,62 @@
         }
       }
     },
+    "/torrents/{id}/subtitles/{fileIndex}/{subtitleTrack}.vtt": {
+      "get": {
+        "summary": "Get subtitle track as WebVTT",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "fileIndex", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 0 } },
+          { "name": "subtitleTrack", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 0 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/vtt": {
+                "schema": { "type": "string" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "404": {
+            "description": "Subtitle track not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "504": {
+            "description": "Subtitle conversion timeout",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "summary": "Probe subtitle track readiness",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "fileIndex", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 0 } },
+          { "name": "subtitleTrack", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 0 } }
+        ],
+        "responses": {
+          "200": { "description": "Ready" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
     "/torrents/{id}/hls/{fileIndex}/{segment}": {
       "get": {
         "summary": "Get HLS segment",
@@ -439,6 +497,8 @@
             "name": "subtitleTrack",
             "in": "query",
             "required": false,
+            "deprecated": true,
+            "description": "Deprecated. Subtitle rendering uses /torrents/{id}/subtitles/{fileIndex}/{subtitleTrack}.vtt.",
             "schema": { "type": "integer", "minimum": 0 }
           }
         ],
@@ -523,6 +583,211 @@
           }
         }
       }
+    },
+    "/torrents/{id}/hls/{fileIndex}/seek": {
+      "post": {
+        "summary": "Seek HLS stream",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "fileIndex", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 0 } },
+          { "name": "time", "in": "query", "required": true, "schema": { "type": "number", "minimum": 0 } },
+          { "name": "audioTrack", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 0 } },
+          {
+            "name": "subtitleTrack",
+            "in": "query",
+            "required": false,
+            "deprecated": true,
+            "description": "Deprecated. Subtitle rendering uses /torrents/{id}/subtitles/{fileIndex}/{subtitleTrack}.vtt.",
+            "schema": { "type": "integer", "minimum": -1 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Seek accepted",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/HLSSeekResponse" } }
+            }
+          },
+          "400": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "Seek failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/torrents/{id}/direct/{fileIndex}": {
+      "get": {
+        "summary": "Direct browser playback (MP4/M4V or remuxed MKV)",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "fileIndex", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 0 } },
+          { "name": "Range", "in": "header", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Ready", "content": { "video/mp4": { "schema": { "type": "string", "format": "binary" } } } },
+          "202": { "description": "Remux in progress", "headers": { "Retry-After": { "schema": { "type": "string" } } } },
+          "404": { "description": "Not found / unsupported" }
+        }
+      },
+      "head": {
+        "summary": "Probe direct playback readiness",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "fileIndex", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 0 } }
+        ],
+        "responses": {
+          "200": { "description": "Ready" },
+          "202": { "description": "Remux in progress" },
+          "404": { "description": "Not found / unsupported" }
+        }
+      }
+    },
+    "/settings/encoding": {
+      "get": {
+        "summary": "Get encoding settings",
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EncodingSettings" } } } },
+          "501": { "description": "Not configured", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      },
+      "patch": {
+        "summary": "Update encoding settings",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EncodingSettings" } } }
+        },
+        "responses": {
+          "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EncodingSettings" } } } },
+          "400": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "Update failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/settings/hls": {
+      "get": {
+        "summary": "Get HLS settings",
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HLSSettings" } } } },
+          "501": { "description": "Not configured", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      },
+      "patch": {
+        "summary": "Update HLS settings",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HLSSettings" } } }
+        },
+        "responses": {
+          "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HLSSettings" } } } },
+          "400": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "Update failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/settings/player": {
+      "get": {
+        "summary": "Get player settings",
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlayerSettings" } } } },
+          "501": { "description": "Not configured", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      },
+      "patch": {
+        "summary": "Update player settings",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlayerSettingsPatch" } } }
+        },
+        "responses": {
+          "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlayerSettings" } } } },
+          "400": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "Torrent not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/settings/storage": {
+      "get": {
+        "summary": "Get storage settings and current usage",
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StorageSettingsView" } } } },
+          "501": { "description": "Not configured", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      },
+      "patch": {
+        "summary": "Update storage settings",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StorageSettingsPatch" } } }
+        },
+        "responses": {
+          "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StorageSettingsView" } } } },
+          "400": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "Update failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/watch-history": {
+      "get": {
+        "summary": "Get recent watch history",
+        "parameters": [
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "type": "array", "items": { "$ref": "#/components/schemas/WatchPosition" } }
+              }
+            }
+          },
+          "400": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "501": { "description": "Not configured", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/watch-history/{torrentId}/{fileIndex}": {
+      "get": {
+        "summary": "Get watch position for file",
+        "parameters": [
+          { "name": "torrentId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "fileIndex", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 0 } }
+        ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WatchPosition" } } } },
+          "404": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      },
+      "put": {
+        "summary": "Save watch position",
+        "parameters": [
+          { "name": "torrentId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "fileIndex", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 0 } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WatchPositionPatch" } } }
+        },
+        "responses": {
+          "204": { "description": "Saved" },
+          "400": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/internal/health/player": {
+      "get": {
+        "summary": "Player health snapshot",
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlayerHealth" } } } }
+        }
+      }
+    },
+    "/ws": {
+      "get": {
+        "summary": "WebSocket stream for live updates",
+        "description": "Upgrade request to WebSocket endpoint.",
+        "responses": {
+          "101": { "description": "Switching Protocols" }
+        }
+      }
     }
   },
   "components": {
@@ -554,6 +819,7 @@
             "type": "array",
             "items": { "$ref": "#/components/schemas/FileRef" }
           },
+          "mediaOrganization": { "$ref": "#/components/schemas/MediaOrganization" },
           "totalBytes": { "type": "integer", "format": "int64" },
           "doneBytes": { "type": "integer", "format": "int64" },
           "createdAt": { "type": "string", "format": "date-time" },
@@ -594,6 +860,40 @@
           "count": { "type": "integer" }
         }
       },
+      "MediaOrganization": {
+        "type": "object",
+        "properties": {
+          "contentType": { "type": "string", "enum": ["series", "movie", "mixed", "unknown"] },
+          "groups": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/MediaOrganizationGroup" }
+          }
+        }
+      },
+      "MediaOrganizationGroup": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "type": "string", "enum": ["series", "movie", "other"] },
+          "title": { "type": "string" },
+          "season": { "type": "integer" },
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/MediaOrganizationItem" }
+          }
+        }
+      },
+      "MediaOrganizationItem": {
+        "type": "object",
+        "properties": {
+          "fileIndex": { "type": "integer" },
+          "filePath": { "type": "string" },
+          "displayName": { "type": "string" },
+          "season": { "type": "integer" },
+          "episode": { "type": "integer" },
+          "year": { "type": "integer" }
+        }
+      },
       "FileRef": {
         "type": "object",
         "properties": {
@@ -628,11 +928,15 @@
         "type": "object",
         "properties": {
           "index": { "type": "integer" },
-          "type": { "type": "string", "enum": ["audio", "subtitle"] },
+          "type": { "type": "string", "enum": ["video", "audio", "subtitle"] },
           "codec": { "type": "string" },
           "language": { "type": "string" },
           "title": { "type": "string" },
-          "default": { "type": "boolean" }
+          "default": { "type": "boolean" },
+          "width": { "type": "integer" },
+          "height": { "type": "integer" },
+          "fps": { "type": "number", "format": "double" },
+          "channels": { "type": "integer" }
         }
       },
       "MediaInfo": {
@@ -641,7 +945,129 @@
           "tracks": {
             "type": "array",
             "items": { "$ref": "#/components/schemas/MediaTrack" }
-          }
+          },
+          "duration": { "type": "number", "format": "double" },
+          "startTime": { "type": "number", "format": "double" },
+          "subtitlesReady": { "type": "boolean" },
+          "directPlaybackCompatible": { "type": "boolean" }
+        }
+      },
+      "EncodingSettings": {
+        "type": "object",
+        "properties": {
+          "preset": { "type": "string" },
+          "crf": { "type": "integer", "minimum": 0, "maximum": 51 },
+          "audioBitrate": { "type": "string" }
+        }
+      },
+      "HLSSettings": {
+        "type": "object",
+        "properties": {
+          "segmentDuration": { "type": "integer", "minimum": 2, "maximum": 10 },
+          "ramBufSizeMB": { "type": "integer", "minimum": 4 },
+          "prebufferMB": { "type": "integer", "minimum": 1 },
+          "windowBeforeMB": { "type": "integer", "minimum": 1 },
+          "windowAfterMB": { "type": "integer", "minimum": 4 }
+        }
+      },
+      "PlayerSettings": {
+        "type": "object",
+        "properties": {
+          "currentTorrentId": { "type": "string" }
+        }
+      },
+      "PlayerSettingsPatch": {
+        "type": "object",
+        "properties": {
+          "currentTorrentId": { "type": "string" }
+        },
+        "required": ["currentTorrentId"]
+      },
+      "StorageUsage": {
+        "type": "object",
+        "properties": {
+          "dataDir": { "type": "string" },
+          "dataDirExists": { "type": "boolean" },
+          "dataDirSizeBytes": { "type": "integer", "format": "int64" },
+          "scannedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "StorageSettingsView": {
+        "type": "object",
+        "properties": {
+          "maxSessions": { "type": "integer", "minimum": 0 },
+          "minDiskSpaceBytes": { "type": "integer", "format": "int64", "minimum": 0 },
+          "usage": { "$ref": "#/components/schemas/StorageUsage" }
+        }
+      },
+      "StorageSettingsPatch": {
+        "type": "object",
+        "properties": {
+          "maxSessions": { "type": "integer", "minimum": 0 },
+          "minDiskSpaceBytes": { "type": "integer", "format": "int64", "minimum": 0 }
+        }
+      },
+      "WatchPosition": {
+        "type": "object",
+        "properties": {
+          "torrentId": { "type": "string" },
+          "fileIndex": { "type": "integer" },
+          "position": { "type": "number", "format": "double" },
+          "duration": { "type": "number", "format": "double" },
+          "torrentName": { "type": "string" },
+          "filePath": { "type": "string" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "WatchPositionPatch": {
+        "type": "object",
+        "properties": {
+          "position": { "type": "number", "format": "double" },
+          "duration": { "type": "number", "format": "double" },
+          "torrentName": { "type": "string" },
+          "filePath": { "type": "string" }
+        },
+        "required": ["position", "duration"]
+      },
+      "HLSHealthSnapshot": {
+        "type": "object",
+        "properties": {
+          "activeJobs": { "type": "integer" },
+          "totalJobStarts": { "type": "integer", "format": "int64" },
+          "totalJobFailures": { "type": "integer", "format": "int64" },
+          "totalSeekRequests": { "type": "integer", "format": "int64" },
+          "totalSeekFailures": { "type": "integer", "format": "int64" },
+          "totalAutoRestarts": { "type": "integer", "format": "int64" },
+          "lastJobStartedAt": { "type": "string", "format": "date-time" },
+          "lastPlaylistReady": { "type": "string", "format": "date-time" },
+          "lastJobError": { "type": "string" },
+          "lastJobErrorAt": { "type": "string", "format": "date-time" },
+          "lastSeekAt": { "type": "string", "format": "date-time" },
+          "lastSeekTarget": { "type": "number", "format": "double" },
+          "lastSeekError": { "type": "string" },
+          "lastSeekErrorAt": { "type": "string", "format": "date-time" },
+          "lastAutoRestartAt": { "type": "string", "format": "date-time" },
+          "lastAutoRestartReason": { "type": "string" }
+        }
+      },
+      "PlayerHealth": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["ok", "degraded"] },
+          "checkedAt": { "type": "string", "format": "date-time" },
+          "currentTorrentId": { "type": "string" },
+          "focusModeEnabled": { "type": "boolean" },
+          "activeSessions": { "type": "integer" },
+          "activeSessionIds": { "type": "array", "items": { "type": "string" } },
+          "hls": { "$ref": "#/components/schemas/HLSHealthSnapshot" },
+          "issues": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "HLSSeekResponse": {
+        "type": "object",
+        "properties": {
+          "seekTime": { "type": "number", "format": "double" },
+          "seekMode": { "type": "string" }
         }
       },
       "ErrorResponse": {

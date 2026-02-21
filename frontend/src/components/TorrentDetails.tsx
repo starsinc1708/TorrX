@@ -12,7 +12,7 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
-import type { FileRef, SessionState, TorrentRecord } from '../types';
+import type { FileRef, MediaOrganizationItem, SessionState, TorrentRecord } from '../types';
 import { cn } from '../lib/cn';
 import {
   formatBytes,
@@ -49,6 +49,39 @@ const fileIcon = (file: FileRef) => {
   return <File className="h-4 w-4 text-muted-foreground" />;
 };
 
+const seriesTokenPattern = /\bS\d{1,2}\s*E\d{1,3}\b|\b\d{1,2}x\d{1,3}\b|\bE(?:P)?\s*\d{1,3}\b/gi;
+const partTokenPattern = /\b(?:part|pt|cd|disc|disk)\s*([0-9]{1,2})\b/i;
+const cleanupSpacesPattern = /\s+/g;
+
+const fileBaseName = (path: string) => {
+  const normalized = path.replace(/\\/g, '/');
+  const base = normalized.split('/').pop() ?? normalized;
+  return base.replace(/\.[a-z0-9]{1,5}$/i, '');
+};
+
+const normalizeDisplayTitle = (value: string) =>
+  value
+    .replace(seriesTokenPattern, ' ')
+    .replace(partTokenPattern, ' ')
+    .replace(cleanupSpacesPattern, ' ')
+    .trim();
+
+const episodeCode = (season?: number, episode?: number) => {
+  if (!episode || episode <= 0) return '';
+  const e = String(episode).padStart(2, '0');
+  if (season && season > 0) return `S${String(season).padStart(2, '0')}E${e}`;
+  return `E${e}`;
+};
+
+const getMoviePartNumber = (item: MediaOrganizationItem | undefined, fallback: number) => {
+  if (!item) return fallback;
+  const pathMatch = partTokenPattern.exec(item.filePath);
+  if (pathMatch?.[1]) return Number.parseInt(pathMatch[1], 10) || fallback;
+  const nameMatch = partTokenPattern.exec(item.displayName);
+  if (nameMatch?.[1]) return Number.parseInt(nameMatch[1], 10) || fallback;
+  return fallback;
+};
+
 const TorrentDetails: React.FC<TorrentDetailsProps> = ({
   torrent,
   sessionState,
@@ -62,10 +95,96 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
   const [deleteFiles, setDeleteFiles] = useState(false);
   const [tagsInput, setTagsInput] = useState((torrent.tags ?? []).join(', '));
   const [tagsSaving, setTagsSaving] = useState(false);
+  const [selectedSeasonGroupId, setSelectedSeasonGroupId] = useState<string | null>(null);
   const progress = Math.max(sessionState?.progress ?? 0, normalizeProgress(torrent));
 
   const files = useMemo(() => sessionState?.files ?? torrent.files ?? [], [sessionState?.files, torrent.files]);
+  const fileOrder = useMemo(() => {
+    const map = new Map<number, number>();
+    files.forEach((file, idx) => map.set(file.index, idx));
+    return map;
+  }, [files]);
   const tagsDisplay = (torrent.tags ?? []).filter((tag) => tag.trim().length > 0);
+
+  const organizedSections = useMemo(() => {
+    const byIndex = new Map<number, FileRef>();
+    const byPath = new Map<string, FileRef>();
+    files.forEach((file) => byIndex.set(file.index, file));
+    files.forEach((file) => byPath.set(file.path.replace(/\\/g, '/').toLowerCase(), file));
+
+    const sections: Array<{
+      id: string;
+      title: string;
+      type: 'series' | 'movie' | 'other';
+      entries: Array<{ file: FileRef; item?: MediaOrganizationItem; targetFileIndex: number }>;
+    }> = [];
+    const used = new Set<number>();
+
+    for (const group of torrent.mediaOrganization?.groups ?? []) {
+      const entries: Array<{ file: FileRef; item?: MediaOrganizationItem; targetFileIndex: number }> = [];
+      for (const item of group.items ?? []) {
+        const file = byIndex.get(item.fileIndex) ?? byPath.get(item.filePath.replace(/\\/g, '/').toLowerCase());
+        if (!file) continue;
+        const targetFileIndex = byIndex.has(item.fileIndex) ? item.fileIndex : file.index;
+        entries.push({ file, item, targetFileIndex });
+        used.add(targetFileIndex);
+      }
+      if (entries.length === 0) continue;
+      sections.push({
+        id: group.id,
+        title: group.title,
+        type: group.type,
+        entries,
+      });
+    }
+
+    const leftovers = files.filter((file) => !used.has(file.index));
+    if (leftovers.length > 0) {
+      sections.push({
+        id: sections.length === 0 ? 'all' : 'other',
+        title: sections.length === 0 ? 'All files' : 'Other files',
+        type: sections.length === 0 ? 'movie' : 'other',
+        entries: leftovers.map((file) => ({ file, targetFileIndex: file.index })),
+      });
+    }
+
+    return sections;
+  }, [files, torrent.mediaOrganization?.groups]);
+
+  const seasonGroups = useMemo(() => {
+    return organizedSections
+      .filter((section) => section.type === 'series')
+      .map((section) => ({
+        id: section.id,
+        title: section.title,
+        season: section.entries[0]?.item?.season ?? 0,
+        episodes: section.entries
+          .map((entry, idx) => ({
+            fileIndex: entry.targetFileIndex,
+            episode: entry.item?.episode ?? idx + 1,
+          }))
+          .sort((a, b) => a.episode - b.episode),
+      }))
+      .sort((a, b) => {
+        if (a.season !== b.season) return a.season - b.season;
+        return a.id.localeCompare(b.id);
+      });
+  }, [organizedSections]);
+
+  useEffect(() => {
+    if (seasonGroups.length === 0) {
+      setSelectedSeasonGroupId(null);
+      return;
+    }
+    const exists = seasonGroups.some((group) => group.id === selectedSeasonGroupId);
+    if (exists) return;
+    setSelectedSeasonGroupId(seasonGroups[0].id);
+  }, [seasonGroups, selectedSeasonGroupId]);
+
+  const activeSeasonGroup = useMemo(() => {
+    if (!selectedSeasonGroupId) return null;
+    return seasonGroups.find((group) => group.id === selectedSeasonGroupId) ?? null;
+  }, [seasonGroups, selectedSeasonGroupId]);
 
   useEffect(() => {
     setTagsInput((torrent.tags ?? []).join(', '));
@@ -219,37 +338,106 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Files ({files.length})</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
-              {files.map((file) => {
-                const fileProg = file.length > 0 ? (file.bytesCompleted ?? 0) / file.length : 0;
-                return (
-                  <button
-                    key={file.index}
-                    type="button"
-                    className="w-full rounded-lg border border-border/70 bg-muted/10 px-4 py-3 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none"
-                    onClick={() => onWatchFile(torrent.id, file.index)}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex min-w-0 items-center gap-3">
-                        {fileIcon(file)}
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-medium">{file.path.split('/').pop()}</div>
-                          <div className="mt-1 text-xs text-muted-foreground">{formatBytes(file.length)}</div>
+            <CardContent className="space-y-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
+              {seasonGroups.length > 0 && activeSeasonGroup ? (
+                <div className="rounded-lg border border-border/70 bg-muted/10 p-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                    Episode selector
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {seasonGroups.map((group) => (
+                      <button
+                        key={`season-${group.id}`}
+                        type="button"
+                        className={cn(
+                          'rounded-md border px-2 py-1 text-xs font-medium',
+                          selectedSeasonGroupId === group.id
+                            ? 'border-primary/40 bg-primary/15 text-foreground'
+                            : 'border-border/70 bg-background/60 text-muted-foreground hover:text-foreground',
+                        )}
+                        onClick={() => setSelectedSeasonGroupId(group.id)}
+                      >
+                        {group.title}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex max-h-24 flex-wrap gap-1.5 overflow-y-auto pr-1">
+                    {activeSeasonGroup.episodes.map((episode) => (
+                      <button
+                        key={`episode-${activeSeasonGroup.id}-${episode.fileIndex}`}
+                        type="button"
+                        className="rounded-md border border-border/70 bg-background/60 px-2 py-1 text-xs font-semibold tabular-nums text-foreground hover:bg-accent/60"
+                        onClick={() => onWatchFile(torrent.id, episode.fileIndex)}
+                      >
+                        E{String(episode.episode).padStart(2, '0')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {organizedSections.map((section) => (
+                <div key={section.id} className="space-y-2">
+                  {organizedSections.length > 1 ? (
+                    <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                      {section.title}
+                    </div>
+                  ) : null}
+                  {section.entries.map((entry, idx) => {
+                    const file = entry.file;
+                    const targetFileIndex = entry.targetFileIndex;
+                    const fileProg = file.length > 0 ? (file.bytesCompleted ?? 0) / file.length : 0;
+                    const fallbackTitle = entry.item?.displayName?.trim() || fileBaseName(file.path);
+                    const cleanTitle = normalizeDisplayTitle(fallbackTitle) || fallbackTitle;
+                    const partLabel =
+                      section.type === 'movie' && section.entries.length > 1
+                        ? `Part ${getMoviePartNumber(entry.item, idx + 1)}`
+                        : null;
+                    const epCode =
+                      section.type === 'series'
+                        ? episodeCode(entry.item?.season, entry.item?.episode)
+                        : '';
+                    const displayName =
+                      section.type === 'series'
+                        ? `${cleanTitle}${epCode ? ` - ${epCode}` : ''}`
+                        : `${cleanTitle}${partLabel ? ` - ${partLabel}` : ''}`;
+                    const ordinal = (fileOrder.get(targetFileIndex) ?? fileOrder.get(file.index) ?? 0) + 1;
+
+                    return (
+                      <button
+                        key={`${section.id}-${targetFileIndex}-${idx}`}
+                        type="button"
+                        className="w-full rounded-lg border border-border/70 bg-muted/10 px-4 py-3 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none"
+                        onClick={() => onWatchFile(torrent.id, targetFileIndex)}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            {fileIcon(file)}
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="w-7 flex-shrink-0 text-center text-[11px] font-bold tabular-nums text-muted-foreground">
+                                  {ordinal}
+                                </span>
+                                <span className="truncate text-sm font-medium">{displayName}</span>
+                              </div>
+                              <div className="mt-1 text-xs text-muted-foreground">{formatBytes(file.length)}</div>
+                            </div>
+                          </div>
+                          <div className={cn('text-xs font-semibold tabular-nums', fileProg >= 1 ? 'text-emerald-500' : 'text-primary')}>
+                            {formatPercent(fileProg)}
+                          </div>
                         </div>
-                      </div>
-                      <div className={cn('text-xs font-semibold tabular-nums', fileProg >= 1 ? 'text-emerald-500' : 'text-primary')}>
-                        {formatPercent(fileProg)}
-                      </div>
-                    </div>
-                    <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                      <div
-                        className={cn('h-full bg-primary', fileProg >= 1 ? 'bg-emerald-500' : '')}
-                        style={{ width: `${Math.max(0, Math.min(100, fileProg * 100))}%` }}
-                      />
-                    </div>
-                  </button>
-                );
-              })}
+                        <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                          <div
+                            className={cn('h-full bg-primary', fileProg >= 1 ? 'bg-emerald-500' : '')}
+                            style={{ width: `${Math.max(0, Math.min(100, fileProg * 100))}%` }}
+                          />
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
             </CardContent>
           </Card>
         ) : (

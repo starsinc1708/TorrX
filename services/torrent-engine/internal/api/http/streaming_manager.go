@@ -57,10 +57,10 @@ type StreamJobManager struct {
 	remuxCacheMu sync.Mutex
 
 	// Streaming window config (configurable via HLS settings API).
-	ramBufSize     int64 // RAMBuffer size in bytes
-	prebufferSize  int64 // prebuffer before FFmpeg start
-	windowBefore   int64 // priority window behind playback
-	windowAfter    int64 // priority window ahead of playback
+	ramBufSize    int64 // RAMBuffer size in bytes
+	prebufferSize int64 // prebuffer before FFmpeg start
+	windowBefore  int64 // priority window behind playback
+	windowAfter   int64 // priority window ahead of playback
 
 	logger *slog.Logger
 
@@ -311,7 +311,7 @@ func (m *StreamJobManager) EnsureJob(id domain.TorrentID, fileIndex, audioTrack,
 
 // SeekJob handles a seek request for the given key.
 // Returns the job, the chosen seek mode, and any error.
-func (m *StreamJobManager) SeekJob(id domain.TorrentID, fileIndex, audioTrack, subtitleTrack int, seekSeconds float64) (*StreamJob, SeekMode, error) {
+func (m *StreamJobManager) SeekJob(id domain.TorrentID, fileIndex, audioTrack, subtitleTrack int, seekSeconds float64, forceHard bool) (*StreamJob, SeekMode, error) {
 	if m.stream == nil {
 		return nil, SeekModeHard, errors.New("stream use case not configured")
 	}
@@ -334,7 +334,7 @@ func (m *StreamJobManager) SeekJob(id domain.TorrentID, fileIndex, audioTrack, s
 	m.mu.RUnlock()
 
 	var preLockMode SeekMode = SeekModeHard
-	if preLockHasOld {
+	if preLockHasOld && !forceHard {
 		preLockMode = m.chooseSeekMode(key, preLockOld, seekSeconds, preLockSegDur)
 	}
 
@@ -346,11 +346,9 @@ func (m *StreamJobManager) SeekJob(id domain.TorrentID, fileIndex, audioTrack, s
 
 	seekModeEmitted := false
 	if old, ok := m.jobs[key]; ok {
-		var seekMode SeekMode
-		if old == preLockOld {
+		seekMode := SeekModeHard
+		if !forceHard && old == preLockOld {
 			seekMode = preLockMode
-		} else {
-			seekMode = SeekModeHard
 		}
 		metrics.HLSSeekModeTotal.WithLabelValues(seekMode.String()).Inc()
 		seekModeEmitted = true

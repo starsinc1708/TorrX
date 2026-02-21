@@ -5,4 +5,6 @@ type FileRef struct {
 	Path           string `json:"path"`
 	Length         int64  `json:"length"`
 	BytesCompleted int64  `json:"bytesCompleted"`
+	PieceStart     int    `json:"pieceStart,omitempty"` // inclusive
+	PieceEnd       int    `json:"pieceEnd,omitempty"`   // exclusive
 }

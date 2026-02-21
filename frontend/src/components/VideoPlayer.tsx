@@ -36,6 +36,7 @@ interface VideoPlayerProps {
   subtitleTracks: MediaTrack[];
   selectedAudioTrack: number | null;
   selectedSubtitleTrack: number | null;
+  subtitleTrackUrl: string;
   subtitlesReady: boolean;
   mediaDuration: number;
   seekOffset: number;
@@ -130,6 +131,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   subtitleTracks,
   selectedAudioTrack,
   selectedSubtitleTrack,
+  subtitleTrackUrl,
   subtitlesReady,
   mediaDuration,
   seekOffset,
@@ -654,16 +656,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         }
 
         if (data.details === 'manifestLoadError' && httpStatus === 503) {
-          if (selectedSubtitleTrack !== null && selectedSubtitleTrack >= 0) {
-            queueHlsRecovery(
-              hls,
-              () => hls.startLoad(-1),
-              'transcoding',
-              `Preparing subtitle stream (${attempt}/${maxRecoverAttempts})...`,
-              attempt,
-            );
-            return;
-          }
           queueHlsRecovery(
             hls,
             () => hls.startLoad(-1),
@@ -711,6 +703,18 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (sameSource && useHls && Hls.isSupported() && streamUrl) {
       const shouldAutoPlay = wasPlayingRef.current || shouldResumeAfterSeek;
       pendingPlayRef.current = shouldAutoPlay;
+      if (hlsJobChanged) {
+        // Hard seek regenerates the HLS job at a new seekOffset.
+        // Reset the media element to avoid stale buffered state from the previous job.
+        try {
+          video.pause();
+          video.removeAttribute('src');
+          video.load();
+          video.currentTime = 0;
+        } catch {
+          // no-op
+        }
+      }
       // Keep autoplay permission across track switches.
       video.autoplay = shouldAutoPlay;
       const hlsMaxBuf = Number(localStorage.getItem('hlsMaxBufferLength')) || 60;
@@ -757,6 +761,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (sameSource && useHls && streamUrl && video.canPlayType('application/vnd.apple.mpegurl')) {
       const shouldAutoPlay = wasPlayingRef.current || shouldResumeAfterSeek;
       pendingPlayRef.current = shouldAutoPlay;
+      if (hlsJobChanged) {
+        try {
+          video.pause();
+          video.removeAttribute('src');
+          video.load();
+          video.currentTime = 0;
+        } catch {
+          // no-op
+        }
+      }
       video.autoplay = shouldAutoPlay;
       video.src = streamUrl;
       return () => {
@@ -1403,6 +1417,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (selectedFileIndex === null) return -1;
     return files.findIndex((file) => file.index === selectedFileIndex);
   }, [files, selectedFileIndex]);
+  const activeSubtitleTrackInfo = useMemo(
+    () => subtitleTracks.find((track) => track.index === selectedSubtitleTrack) ?? null,
+    [subtitleTracks, selectedSubtitleTrack],
+  );
   const prevFile = currentFilePosition > 0 ? files[currentFilePosition - 1] : null;
   const nextFile = currentFilePosition >= 0 && currentFilePosition < files.length - 1
     ? files[currentFilePosition + 1]
@@ -1516,7 +1534,18 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       preload="metadata"
                       playsInline
                       onClick={togglePlay}
-                    />
+                    >
+                      {subtitleTrackUrl ? (
+                        <track
+                          key={subtitleTrackUrl}
+                          kind="subtitles"
+                          src={subtitleTrackUrl}
+                          srcLang={activeSubtitleTrackInfo?.language || 'und'}
+                          label={activeSubtitleTrackInfo ? trackLabel(activeSubtitleTrackInfo) : 'Subtitles'}
+                          default
+                        />
+                      ) : null}
+                    </video>
                     <VideoOverlays
                       screenshotFlash={screenshotFlash}
                       prebufferPhase={prebufferPhase}

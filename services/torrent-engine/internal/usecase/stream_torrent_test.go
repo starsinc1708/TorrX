@@ -48,6 +48,7 @@ type fakeStreamSession struct {
 	lastPrio  domain.Priority
 	ranges    []domain.Range
 	prios     []domain.Priority
+	callFiles []domain.FileRef
 	selectErr error
 }
 
@@ -69,6 +70,7 @@ func (s *fakeStreamSession) SetPiecePriority(file domain.FileRef, r domain.Range
 	s.lastPrio = prio
 	s.ranges = append(s.ranges, r)
 	s.prios = append(s.prios, prio)
+	s.callFiles = append(s.callFiles, file)
 }
 func (s *fakeStreamSession) Start() error { return nil }
 func (s *fakeStreamSession) Stop() error  { return nil }
@@ -178,6 +180,15 @@ func (r *fakeStreamRepo) GetMany(context.Context, []domain.TorrentID) ([]domain.
 }
 func (r *fakeStreamRepo) Delete(context.Context, domain.TorrentID) error          { return nil }
 func (r *fakeStreamRepo) UpdateTags(context.Context, domain.TorrentID, []string) error { return nil }
+
+func hasPriorityCall(s *fakeStreamSession, fileIndex int, prio domain.Priority) bool {
+	for i, file := range s.callFiles {
+		if i < len(s.prios) && file.Index == fileIndex && s.prios[i] == prio {
+			return true
+		}
+	}
+	return false
+}
 
 func TestStreamTorrentNilEngine(t *testing.T) {
 	uc := StreamTorrent{}
@@ -388,6 +399,60 @@ func TestExecuteRawSuccess(t *testing.T) {
 	// ConsumptionRate should be nil for raw readers.
 	if result.ConsumptionRate != nil {
 		t.Fatalf("ConsumptionRate should be nil for ExecuteRaw")
+	}
+}
+
+func TestStreamTorrentEnforcesActiveFileOnly(t *testing.T) {
+	reader := &fakeStreamReader{}
+	session := &fakeStreamSession{
+		files: []domain.FileRef{
+			{Index: 0, Path: "s01e01.mkv", Length: 100 << 20},
+			{Index: 1, Path: "s01e02.mkv", Length: 120 << 20},
+			{Index: 2, Path: "s01e03.mkv", Length: 130 << 20},
+		},
+		reader: reader,
+	}
+	engine := &fakeStreamEngine{session: session}
+	uc := StreamTorrent{Engine: engine, ReadaheadBytes: 2 << 20}
+
+	_, err := uc.Execute(context.Background(), "t1", 1)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if !hasPriorityCall(session, 1, domain.PriorityNormal) {
+		t.Fatalf("expected PriorityNormal call for active file index=1")
+	}
+	if !hasPriorityCall(session, 0, domain.PriorityNone) {
+		t.Fatalf("expected PriorityNone call for non-active file index=0")
+	}
+	if !hasPriorityCall(session, 2, domain.PriorityNone) {
+		t.Fatalf("expected PriorityNone call for non-active file index=2")
+	}
+}
+
+func TestExecuteRawEnforcesActiveFileOnly(t *testing.T) {
+	reader := &fakeStreamReader{}
+	session := &fakeStreamSession{
+		files: []domain.FileRef{
+			{Index: 0, Path: "movie-part1.mkv", Length: 700 << 20},
+			{Index: 1, Path: "movie-part2.mkv", Length: 650 << 20},
+		},
+		reader: reader,
+	}
+	engine := &fakeStreamEngine{session: session}
+	uc := StreamTorrent{Engine: engine}
+
+	_, err := uc.ExecuteRaw(context.Background(), "t1", 0)
+	if err != nil {
+		t.Fatalf("ExecuteRaw: %v", err)
+	}
+
+	if !hasPriorityCall(session, 0, domain.PriorityNormal) {
+		t.Fatalf("expected PriorityNormal call for active file index=0")
+	}
+	if !hasPriorityCall(session, 1, domain.PriorityNone) {
+		t.Fatalf("expected PriorityNone call for non-active file index=1")
 	}
 }
 

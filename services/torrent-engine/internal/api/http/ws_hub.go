@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -28,6 +29,7 @@ type wsHub struct {
 	unregister chan *wsClient
 	done       chan struct{}
 	logger     *slog.Logger
+	clientN    atomic.Int64
 }
 
 func newWSHub(logger *slog.Logger) *wsHub {
@@ -54,15 +56,18 @@ func (h *wsHub) run() {
 				close(client.send)
 				delete(h.clients, client)
 			}
+			h.clientN.Store(0)
 			h.logger.Debug("ws hub stopped, all clients disconnected")
 			return
 		case client := <-h.register:
 			h.clients[client] = true
+			h.clientN.Store(int64(len(h.clients)))
 			h.logger.Debug("ws client connected", slog.Int("total", len(h.clients)))
 		case client := <-h.unregister:
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
 				close(client.send)
+				h.clientN.Store(int64(len(h.clients)))
 				h.logger.Debug("ws client disconnected", slog.Int("total", len(h.clients)))
 			}
 		case msg := <-h.broadcast:
@@ -72,6 +77,7 @@ func (h *wsHub) run() {
 				default:
 					close(client.send)
 					delete(h.clients, client)
+					h.clientN.Store(int64(len(h.clients)))
 				}
 			}
 		}
@@ -84,12 +90,12 @@ func (h *wsHub) Close() {
 }
 
 func (h *wsHub) clientCount() int {
-	return len(h.clients)
+	return int(h.clientN.Load())
 }
 
 // BroadcastStates sends the full state list to all connected clients.
 func (h *wsHub) BroadcastStates(states []domain.SessionState) {
-	if len(h.clients) == 0 {
+	if h.clientN.Load() == 0 {
 		return
 	}
 	msg := wsMessage{Type: "states", Data: states}
@@ -107,7 +113,7 @@ func (h *wsHub) BroadcastStates(states []domain.SessionState) {
 
 // Broadcast sends a typed JSON message to all connected WebSocket clients.
 func (h *wsHub) Broadcast(msgType string, data interface{}) {
-	if len(h.clients) == 0 {
+	if h.clientN.Load() == 0 {
 		return
 	}
 	msg := wsMessage{Type: msgType, Data: data}

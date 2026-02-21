@@ -90,10 +90,10 @@ type StreamJob struct {
 	variants     []qualityVariant
 
 	// Data source (kept alive across the run loop, closed on cleanup).
-	dataSource     MediaDataSource
-	subtitlePath   string
-	streamResult   *usecase.StreamResult
-	isPipeSource   bool
+	dataSource   MediaDataSource
+	subtitlePath string
+	streamResult *usecase.StreamResult
+	isPipeSource bool
 
 	// Monitoring
 	lastSegPath      string
@@ -115,7 +115,6 @@ type StreamJob struct {
 	rewrittenAudioTrack   int
 	rewrittenSubTrack     int
 	rewrittenCacheTime    time.Time
-
 }
 
 // streamPipeSource wraps a RAMBuffer as a MediaDataSource for FFmpeg.
@@ -379,7 +378,7 @@ func (j *StreamJob) doReady() error {
 	}
 
 	streamCopy := false
-	if isLocalFile && j.key.subtitleTrack < 0 && j.mgr.isH264FileWithCache(input) {
+	if isLocalFile && j.mgr.isH264FileWithCache(input) {
 		streamCopy = true
 		if strings.ToLower(filepath.Ext(input)) == ".mkv" {
 			go j.mgr.triggerRemux(j.key.id, j.key.fileIndex, input)
@@ -493,11 +492,11 @@ func (j *StreamJob) doReady() error {
 // doPlaying monitors FFmpeg segment production, updates priorities, detects stalls.
 func (j *StreamJob) doPlaying() {
 	const (
-		watchInterval       = 5 * time.Second
-		stallThreshold      = 90 * time.Second
-		pipeStallThreshold  = 5 * time.Minute
-		stallEscL1          = 30 * time.Second // remove rate limit (N/A in FSM, but boost priority)
-		stallEscL2          = 60 * time.Second // enhance high priority
+		watchInterval      = 5 * time.Second
+		stallThreshold     = 90 * time.Second
+		pipeStallThreshold = 5 * time.Minute
+		stallEscL1         = 30 * time.Second // remove rate limit (N/A in FSM, but boost priority)
+		stallEscL2         = 60 * time.Second // enhance high priority
 	)
 
 	ticker := time.NewTicker(watchInterval)
@@ -795,4 +794,3 @@ func (j *StreamJob) IsCompleted() bool {
 	defer j.mu.Unlock()
 	return j.state == StreamCompleted
 }
-

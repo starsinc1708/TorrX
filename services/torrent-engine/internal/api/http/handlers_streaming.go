@@ -1,6 +1,7 @@
 package apihttp
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -18,6 +20,13 @@ import (
 
 	"torrentstream/internal/domain"
 )
+
+const dlnaContentFeatures = "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+
+func setDLNAHeaders(header http.Header) {
+	header.Set("transferMode.dlna.org", "Streaming")
+	header.Set("contentFeatures.dlna.org", dlnaContentFeatures)
+}
 
 func (s *Server) handleStreamTorrent(w http.ResponseWriter, r *http.Request, id string) {
 	if s.streamTorrent == nil {
@@ -46,6 +55,7 @@ func (s *Server) handleStreamTorrent(w http.ResponseWriter, r *http.Request, id 
 				filePath, pathErr := resolveDataFilePath(s.mediaDataDir, file.Path)
 				if pathErr == nil {
 					if info, statErr := os.Stat(filePath); statErr == nil && !info.IsDir() {
+						setDLNAHeaders(w.Header())
 						http.ServeFile(w, r, filePath)
 						return
 					}
@@ -80,6 +90,7 @@ func (s *Server) handleStreamTorrent(w http.ResponseWriter, r *http.Request, id 
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Accept-Ranges", "bytes")
+	setDLNAHeaders(w.Header())
 	// Close the connection after streaming to prevent keep-alive from holding
 	// the reader open after the player stops playback.
 	w.Header().Set("Connection", "close")
@@ -323,6 +334,127 @@ type seekResponse struct {
 	SeekMode string  `json:"seekMode"`
 }
 
+func (s *Server) handleSubtitleTrackVTT(w http.ResponseWriter, r *http.Request, id string, tail []string) {
+	if len(tail) != 2 {
+		http.NotFound(w, r)
+		return
+	}
+
+	fileIndex, err := strconv.Atoi(tail[0])
+	if err != nil || fileIndex < 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid fileIndex")
+		return
+	}
+
+	trackToken := tail[1]
+	if !strings.HasSuffix(strings.ToLower(trackToken), ".vtt") {
+		http.NotFound(w, r)
+		return
+	}
+	trackToken = trackToken[:len(trackToken)-len(".vtt")]
+	subtitleTrack, err := strconv.Atoi(trackToken)
+	if err != nil || subtitleTrack < 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid subtitleTrack")
+		return
+	}
+
+	if s.mediaDataDir == "" || s.hls == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.ensureStreamingAllowed(r.Context(), domain.TorrentID(id)); err != nil {
+		writeDomainError(w, err)
+		return
+	}
+
+	file, ok := s.resolveFileRef(r.Context(), domain.TorrentID(id), fileIndex)
+	if !ok || strings.TrimSpace(file.Path) == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if file.Length > 0 && file.BytesCompleted < file.Length {
+		http.NotFound(w, r)
+		return
+	}
+
+	filePath, pathErr := resolveDataFilePath(s.mediaDataDir, file.Path)
+	if pathErr != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if info, statErr := os.Stat(filePath); statErr != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	convertCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	payload, err := extractWebVTT(convertCtx, s.hls.ffmpegPath, filePath, subtitleTrack)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(convertCtx.Err(), context.DeadlineExceeded) {
+			writeError(w, http.StatusGatewayTimeout, "stream_unavailable", "subtitle conversion timeout")
+			return
+		}
+		lower := strings.ToLower(err.Error())
+		if strings.Contains(lower, "matches no streams") ||
+			strings.Contains(lower, "stream map") ||
+			strings.Contains(lower, "no subtitle") {
+			writeError(w, http.StatusNotFound, "not_found", "subtitle track not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to convert subtitles")
+		return
+	}
+	if len(payload) == 0 {
+		writeError(w, http.StatusNotFound, "not_found", "subtitle track not found")
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(payload)
+}
+
+func extractWebVTT(ctx context.Context, ffmpegPath, filePath string, subtitleTrack int) ([]byte, error) {
+	ffmpegBin := strings.TrimSpace(ffmpegPath)
+	if ffmpegBin == "" {
+		ffmpegBin = "ffmpeg"
+	}
+
+	args := []string{
+		"-hide_banner",
+		"-loglevel", "error",
+		"-nostdin",
+		"-i", filePath,
+		"-map", fmt.Sprintf("0:s:%d", subtitleTrack),
+		"-f", "webvtt",
+		"pipe:1",
+	}
+	cmd := exec.CommandContext(ctx, ffmpegBin, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	out, err := cmd.Output()
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return nil, fmt.Errorf("ffmpeg webvtt: %s", msg)
+	}
+	return out, nil
+}
+
 func (s *Server) handleHLSSeek(w http.ResponseWriter, r *http.Request, id domain.TorrentID, fileIndex, audioTrack, subtitleTrack int) {
 	timeStr := r.URL.Query().Get("time")
 	if timeStr == "" {
@@ -334,8 +466,10 @@ func (s *Server) handleHLSSeek(w http.ResponseWriter, r *http.Request, id domain
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid time parameter")
 		return
 	}
+	mode := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("mode")))
+	forceHard := mode == "hard" || mode == "restart" || mode == "1"
 
-	job, seekMode, err := s.hls.SeekJob(id, fileIndex, audioTrack, subtitleTrack, seekTime)
+	job, seekMode, err := s.hls.SeekJob(id, fileIndex, audioTrack, subtitleTrack, seekTime, forceHard)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to start hls seek")
 		return
@@ -377,7 +511,7 @@ func (s *Server) handleHLSSeek(w http.ResponseWriter, r *http.Request, id domain
 			slog.Int("requestedSubtitleTrack", subtitleTrack),
 			slog.Float64("seekTime", seekTime),
 		)
-		job, seekMode, err = s.hls.SeekJob(id, fileIndex, audioTrack, -1, seekTime)
+		job, seekMode, err = s.hls.SeekJob(id, fileIndex, audioTrack, -1, seekTime, forceHard)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal_error", "failed to start hls seek without subtitles")
 			return
@@ -531,7 +665,7 @@ func (s *Server) handleMediaInfo(w http.ResponseWriter, r *http.Request, id stri
 		}
 	}
 
-	// Subtitles require the file to exist on disk for ffmpeg -vf subtitles.
+	// Subtitles require the file to exist on disk for ffmpeg extraction.
 	if filePathRel != "" && s.mediaDataDir != "" {
 		if resolved, err := resolveDataFilePath(s.mediaDataDir, filePathRel); err == nil {
 			if info, statErr := os.Stat(resolved); statErr == nil && !info.IsDir() {
@@ -720,6 +854,7 @@ func (s *Server) handleDirectPlayback(w http.ResponseWriter, r *http.Request, id
 
 	// MP4/M4V: serve directly — already browser-compatible.
 	if ext == ".mp4" || ext == ".m4v" {
+		setDLNAHeaders(w.Header())
 		if r.Method == http.MethodHead {
 			w.WriteHeader(http.StatusOK)
 			return
@@ -747,6 +882,7 @@ func (s *Server) handleDirectPlayback(w http.ResponseWriter, r *http.Request, id
 	// Check if a remuxed MP4 is ready.
 	remuxPath, ready := s.hls.checkRemux(domain.TorrentID(id), fileIndex)
 	if ready {
+		setDLNAHeaders(w.Header())
 		if r.Method == http.MethodHead {
 			w.WriteHeader(http.StatusOK)
 			return

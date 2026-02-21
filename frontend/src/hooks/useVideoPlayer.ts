@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildDirectPlaybackUrl,
   buildHlsUrl,
+  buildSubtitleTrackUrl,
   buildStreamUrl,
   getMediaInfo,
   hlsSeek,
@@ -113,9 +114,8 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
     if (!selectedFile) return false;
     if (!directPlayable) return true;
     if (audioTrack !== null) return true;
-    if (subtitleTrack !== null) return true;
     return false;
-  }, [selectedFile, directPlayable, audioTrack, subtitleTrack]);
+  }, [selectedFile, directPlayable, audioTrack]);
 
   // Derived from runtime activeMode (can change via fallback).
   const useHls = activeMode === 'hls';
@@ -144,15 +144,17 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
   const hlsStreamUrl = useMemo(() => {
     if (!selectedTorrent || selectedFileIndex === null) return '';
     const audio = audioTrack ?? findDefaultAudioTrack(mediaInfo);
-    let url = buildHlsUrl(selectedTorrent.id, selectedFileIndex, {
-      audioTrack: audio,
-      subtitleTrack,
-    });
+    let url = buildHlsUrl(selectedTorrent.id, selectedFileIndex, { audioTrack: audio });
     if (seekToken > 0) {
       url = appendToken(url, '_st', seekToken);
     }
     return appendToken(url, '_rt', streamRetryToken);
-  }, [selectedTorrent, selectedFileIndex, audioTrack, subtitleTrack, mediaInfo, seekToken, streamRetryToken, appendToken]);
+  }, [selectedTorrent, selectedFileIndex, audioTrack, mediaInfo, seekToken, streamRetryToken, appendToken]);
+
+  const subtitleTrackUrl = useMemo(() => {
+    if (!selectedTorrent || selectedFileIndex === null || subtitleTrack === null || subtitleTrack < 0) return '';
+    return buildSubtitleTrackUrl(selectedTorrent.id, selectedFileIndex, subtitleTrack);
+  }, [selectedTorrent, selectedFileIndex, subtitleTrack]);
 
   // The URL that VideoPlayer actually uses — switches with activeMode.
   const streamUrl = useHls ? hlsStreamUrl : directStreamUrl;
@@ -198,7 +200,6 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
           const audio = audioTrack ?? findDefaultAudioTrack(mediaInfo);
           const result = await hlsSeek(torrentId, fileIndex, resumePos, {
             audioTrack: audio,
-            subtitleTrack,
           });
           if (signal.aborted) return { success: false, mode };
           probeSeekOffset = result.seekTime;
@@ -212,10 +213,7 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
       // Use the base HLS URL (without seek/retry tokens) if we did a seek,
       // since the seek creates a new manifest.
       const manifestUrl = probeSeekOffset !== undefined
-        ? buildHlsUrl(torrentId, fileIndex, {
-            audioTrack: audioTrack ?? findDefaultAudioTrack(mediaInfo),
-            subtitleTrack,
-          })
+        ? buildHlsUrl(torrentId, fileIndex, { audioTrack: audioTrack ?? findDefaultAudioTrack(mediaInfo) })
         : hlsUrl;
       for (let attempt = 0; attempt < HLS_PROBE_MAX_ATTEMPTS; attempt += 1) {
         if (signal.aborted) return { success: false, mode };
@@ -230,7 +228,7 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
       }
       return { success: false, mode: 'hls' };
     },
-    [audioTrack, subtitleTrack, mediaInfo, directPlayable],
+    [audioTrack, mediaInfo, directPlayable],
   );
 
   // Launch probe whenever file selection or retry token changes.
@@ -536,7 +534,6 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
           setVideoError(null);
           hlsSeek(selectedTorrent.id, selectedFileIndex, currentTime, {
             audioTrack: audio,
-            subtitleTrack,
           })
             .then((result) => {
               if (trackSwitchTokenRef.current !== token) return;
@@ -557,43 +554,15 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
       setAudioTrack(index);
       setVideoError(null);
     },
-    [useHls, selectedTorrent, selectedFileIndex, mediaInfo, subtitleTrack, videoRef],
+    [useHls, selectedTorrent, selectedFileIndex, mediaInfo, videoRef],
   );
 
   const selectSubtitleTrack = useCallback(
     (index: number | null) => {
-      if (useHls && selectedTorrent && selectedFileIndex !== null) {
-        const video = videoRef.current;
-        const currentTime = video && Number.isFinite(video.currentTime) ? video.currentTime : 0;
-        if (currentTime > 0) {
-          const audio = audioTrack ?? findDefaultAudioTrack(mediaInfo);
-          const token = ++trackSwitchTokenRef.current;
-          hlsDestroyRef.current?.();
-          setTrackSwitchInProgress(true);
-          setVideoError(null);
-          hlsSeek(selectedTorrent.id, selectedFileIndex, currentTime, {
-            audioTrack: audio,
-            subtitleTrack: index,
-          })
-            .then((result) => {
-              if (trackSwitchTokenRef.current !== token) return;
-              setSeekOffset(result.seekTime);
-              setSubtitleTrack(index);
-              setSeekToken(Date.now());
-              setTrackSwitchInProgress(false);
-            })
-            .catch(() => {
-              if (trackSwitchTokenRef.current !== token) return;
-              setSubtitleTrack(index);
-              setTrackSwitchInProgress(false);
-            });
-          return;
-        }
-      }
       setSubtitleTrack(index);
       setVideoError(null);
     },
-    [useHls, selectedTorrent, selectedFileIndex, audioTrack, mediaInfo, videoRef],
+    [],
   );
 
   const hlsSeekTo = useCallback(
@@ -641,8 +610,8 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
               try {
                 const result = await hlsSeek(selectedTorrent.id, selectedFileIndex, clamped, {
                   audioTrack: audio,
-                  subtitleTrack,
                   signal: controller.signal,
+                  forceHard: true,
                 });
                 if (controller.signal.aborted) return;
 
@@ -662,10 +631,7 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
                 // Hard / restart seek: a new FFmpeg job was created.
                 // Update seekOffset and reload HLS.js.
                 setSeekOffset(result.seekTime);
-                const pollUrl = buildHlsUrl(selectedTorrent.id, selectedFileIndex, {
-                  audioTrack: audio,
-                  subtitleTrack,
-                });
+                const pollUrl = buildHlsUrl(selectedTorrent.id, selectedFileIndex, { audioTrack: audio });
                 for (let i = 0; i < 20; i++) {
                   if (controller.signal.aborted) return;
                   const ready = await probeHlsManifest(pollUrl, controller.signal);
@@ -701,7 +667,7 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
         }, 300);
       });
     },
-    [selectedTorrent, selectedFileIndex, audioTrack, subtitleTrack, mediaInfo],
+    [selectedTorrent, selectedFileIndex, audioTrack, mediaInfo],
   );
 
   const retryStreamInitialization = useCallback(() => {
@@ -731,6 +697,7 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
     subtitleTracks,
     audioTrack,
     subtitleTrack,
+    subtitleTrackUrl,
     seekOffset,
     hlsSeekTo,
     retryStreamInitialization,

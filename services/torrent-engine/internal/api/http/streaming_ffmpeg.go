@@ -18,7 +18,7 @@ import (
 // This is a value type — pass it by value to buildStreamingFFmpegArgs().
 type FFmpegArgConfig struct {
 	FFmpegPath      string
-	Input           string  // file path, http URL, or "pipe:0"
+	Input           string // file path, http URL, or "pipe:0"
 	OutputDir       string
 	SeekSeconds     float64
 	SegmentDuration int
@@ -143,11 +143,6 @@ func buildStreamingFFmpegArgs(cfg FFmpegArgConfig) []string {
 			"-crf", strconv.Itoa(cfg.CRF),
 		)
 		args = append(args, gopArgs...)
-		if cfg.SubtitleTrack >= 0 && cfg.SubtitleFile != "" {
-			args = append(args,
-				"-vf", subtitleFilterArg(cfg.SubtitleFile, cfg.SubtitleTrack),
-			)
-		}
 		args = append(args,
 			"-c:a", "aac",
 			"-b:a", cfg.AudioBitrate,

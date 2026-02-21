@@ -376,6 +376,46 @@ func TestListTorrentsFull(t *testing.T) {
 	}
 }
 
+func TestListTorrentsFullIncludesMediaOrganization(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC)
+	repo := &fakeRepo{
+		list: []domain.TorrentRecord{
+			{
+				ID:         "t1",
+				Name:       "Show Pack",
+				Status:     domain.TorrentActive,
+				Files:      []domain.FileRef{{Index: 0, Path: "Show.S01E01.mkv", Length: 100}},
+				TotalBytes: 100,
+				DoneBytes:  100,
+				CreatedAt:  now,
+				UpdatedAt:  now,
+			},
+		},
+	}
+	server := NewServer(&fakeCreateTorrent{}, WithRepository(repo))
+
+	req := httptest.NewRequest(http.MethodGet, "/torrents?view=full", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	var payload struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(payload.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(payload.Items))
+	}
+	if _, ok := payload.Items[0]["mediaOrganization"]; !ok {
+		t.Fatalf("expected mediaOrganization in response: %+v", payload.Items[0])
+	}
+}
+
 func TestListTorrentsCompactViewAlias(t *testing.T) {
 	now := time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC)
 	repo := &fakeRepo{
@@ -545,6 +585,39 @@ func TestGetTorrentByID(t *testing.T) {
 	}
 	if repo.getCalled != 1 || repo.lastID != "t1" {
 		t.Fatalf("repo not called")
+	}
+}
+
+func TestGetTorrentByIDIncludesMediaOrganization(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC)
+	repo := &fakeRepo{
+		get: domain.TorrentRecord{
+			ID:         "t1",
+			Name:       "Movie",
+			Status:     domain.TorrentActive,
+			Files:      []domain.FileRef{{Index: 0, Path: "Movie.2025.1080p.mkv", Length: 100}},
+			TotalBytes: 100,
+			DoneBytes:  100,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		},
+	}
+	server := NewServer(&fakeCreateTorrent{}, WithRepository(repo))
+
+	req := httptest.NewRequest(http.MethodGet, "/torrents/t1", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	var payload map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := payload["mediaOrganization"]; !ok {
+		t.Fatalf("expected mediaOrganization in response: %+v", payload)
 	}
 }
 
@@ -1778,6 +1851,29 @@ func TestStreamTorrentConnectionCloseHeader(t *testing.T) {
 
 	if w.Header().Get("Connection") != "close" {
 		t.Fatalf("Connection header = %q, want close", w.Header().Get("Connection"))
+	}
+}
+
+func TestStreamTorrentDLNAHeaders(t *testing.T) {
+	data := []byte("x")
+	reader := &testStreamReader{Reader: bytes.NewReader(data)}
+	stream := &fakeStreamTorrent{
+		result: usecase.StreamResult{
+			Reader: reader,
+			File:   domain.FileRef{Index: 0, Path: "movie.mp4", Length: 1},
+		},
+	}
+	server := NewServer(&fakeCreateTorrent{}, WithStreamTorrent(stream))
+
+	req := httptest.NewRequest(http.MethodGet, "/torrents/t1/stream?fileIndex=0", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if got := w.Header().Get("transferMode.dlna.org"); got != "Streaming" {
+		t.Fatalf("transferMode.dlna.org = %q", got)
+	}
+	if got := w.Header().Get("contentFeatures.dlna.org"); got == "" {
+		t.Fatal("contentFeatures.dlna.org must be set")
 	}
 }
 

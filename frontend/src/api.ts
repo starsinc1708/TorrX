@@ -28,6 +28,7 @@ import type {
   SearchResponse,
   SearchSortBy,
   SearchSortOrder,
+  StorageSettings,
 } from './types';
 
 const rawBase = (import.meta as any).env?.VITE_API_BASE_URL ?? '';
@@ -526,19 +527,22 @@ export const probeHlsManifest = async (
 export const buildHlsUrl = (
   id: string,
   fileIndex: number,
-  options?: { audioTrack?: number | null; subtitleTrack?: number | null },
+  options?: { audioTrack?: number | null },
 ) => {
   const params = new URLSearchParams();
   if (options?.audioTrack !== undefined && options.audioTrack !== null) {
     params.set('audioTrack', String(options.audioTrack));
   }
-  if (options?.subtitleTrack !== undefined && options.subtitleTrack !== null) {
-    params.set('subtitleTrack', String(options.subtitleTrack));
-  }
   const query = params.toString();
   const suffix = query ? `?${query}` : '';
   return buildUrl(`/torrents/${id}/hls/${fileIndex}/index.m3u8${suffix}`);
 };
+
+export const buildSubtitleTrackUrl = (
+  id: string,
+  fileIndex: number,
+  subtitleTrack: number,
+) => buildUrl(`/torrents/${id}/subtitles/${fileIndex}/${subtitleTrack}.vtt`);
 
 export const getMediaInfo = async (id: string, fileIndex: number): Promise<MediaInfo> => {
   const response = await deduplicatedFetch(
@@ -640,19 +644,35 @@ export const updateHLSSettings = async (
   return handleResponse(response);
 };
 
+export const getStorageSettings = async (): Promise<StorageSettings> => {
+  const response = await fetch(buildUrl('/settings/storage'));
+  return handleResponse(response);
+};
+
+export const updateStorageSettings = async (
+  input: Partial<Pick<StorageSettings, 'maxSessions' | 'minDiskSpaceBytes'>>,
+): Promise<StorageSettings> => {
+  const response = await fetch(buildUrl('/settings/storage'), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return handleResponse(response);
+};
+
 export const hlsSeek = async (
   id: string,
   fileIndex: number,
   time: number,
-  options?: { audioTrack?: number | null; subtitleTrack?: number | null; signal?: AbortSignal },
+  options?: { audioTrack?: number | null; signal?: AbortSignal; forceHard?: boolean },
 ): Promise<{ seekTime: number; seekMode?: string }> => {
   const params = new URLSearchParams();
   params.set('time', String(time));
   if (options?.audioTrack !== undefined && options.audioTrack !== null) {
     params.set('audioTrack', String(options.audioTrack));
   }
-  if (options?.subtitleTrack !== undefined && options.subtitleTrack !== null) {
-    params.set('subtitleTrack', String(options.subtitleTrack));
+  if (options?.forceHard) {
+    params.set('mode', 'hard');
   }
   const response = await fetch(
     buildUrl(`/torrents/${id}/hls/${fileIndex}/seek?${params.toString()}`),

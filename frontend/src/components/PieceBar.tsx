@@ -5,6 +5,7 @@ import { cn } from '../lib/cn';
 interface PieceBarProps {
   numPieces?: number;
   pieceBitfield?: string;
+  pieces?: boolean[];
   height?: number;
   className?: string;
 }
@@ -12,13 +13,13 @@ interface PieceBarProps {
 const SEGMENT_WIDTH = 3;
 const GAP = 1;
 
-const PieceBar: React.FC<PieceBarProps> = ({ numPieces, pieceBitfield, height = 14, className }) => {
+const PieceBar: React.FC<PieceBarProps> = ({ numPieces, pieceBitfield, pieces: piecesProp, height = 14, className }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const pieces = useMemo(
-    () => (numPieces && pieceBitfield ? decodePieceBitfield(pieceBitfield, numPieces) : []),
-    [numPieces, pieceBitfield],
+    () => (piecesProp && piecesProp.length > 0 ? piecesProp : (numPieces && pieceBitfield ? decodePieceBitfield(pieceBitfield, numPieces) : [])),
+    [piecesProp, numPieces, pieceBitfield],
   );
 
   useEffect(() => {
@@ -108,7 +109,7 @@ const PieceBar: React.FC<PieceBarProps> = ({ numPieces, pieceBitfield, height = 
     return () => observer.disconnect();
   }, [pieces, height]);
 
-  if (!numPieces || !pieceBitfield) return null;
+  if (pieces.length === 0) return null;
 
   return (
     <div

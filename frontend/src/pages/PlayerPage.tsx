@@ -1,17 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, X } from 'lucide-react';
+import { AlertTriangle, Eye, EyeOff, PanelRightClose, PanelRightOpen, X } from 'lucide-react';
 import VideoPlayer from '../components/VideoPlayer';
+import PlayerBufferWindows from '../components/PlayerBufferWindows';
 import PlayerFilesPanel from '../components/PlayerFilesPanel';
 import { Alert } from '../components/ui/alert';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
-import { focusTorrent, getPlayerHealth, getTorrent, getWatchHistory, isApiError, startTorrent } from '../api';
+import { focusTorrent, getHLSSettings, getPlayerHealth, getTorrent, getWatchHistory, isApiError, startTorrent } from '../api';
 import { useSessionState } from '../hooks/useSessionState';
 import { useWS } from '../app/providers/WebSocketProvider';
 import { useVideoPlayer } from '../hooks/useVideoPlayer';
 import { getTorrentPlayerPreferences, patchTorrentPlayerPreferences } from '../playerPreferences';
-import type { PlayerHealth, TorrentRecord, WatchPosition } from '../types';
+import type { HLSSettings, PlayerHealth, TorrentRecord, WatchPosition } from '../types';
 import { formatTime, isVideoFile } from '../utils';
 import { cn } from '../lib/cn';
 import { getTorrentWatchState, upsertTorrentWatchState, type TorrentWatchState } from '../watchState';
@@ -38,8 +39,19 @@ const PlayerPage: React.FC = () => {
   const [resumeRequest, setResumeRequest] = useState<{ requestId: number; fileIndex: number; position: number } | null>(null);
   const [resumeHintDismissed, setResumeHintDismissed] = useState(false);
   const [playerHealth, setPlayerHealth] = useState<PlayerHealth | null>(null);
+  const [hlsSettings, setHlsSettings] = useState<HLSSettings | null>(null);
+  const [bufferPanelVisible, setBufferPanelVisible] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    const raw = window.localStorage.getItem('player:buffer-panel-visible');
+    if (raw === null) return true;
+    return raw !== '0';
+  });
   const [infoOpen, setInfoOpen] = useState(false);
   const [filesPanelOpen, setFilesPanelOpen] = useState(true);
+  const [bufferProbe, setBufferProbe] = useState<{ currentTime: number; ranges: Array<{ start: number; end: number }> }>({
+    currentTime: 0,
+    ranges: [],
+  });
   const { toast } = useToast();
 
   const lastWatchKey = 'lastWatch';
@@ -127,6 +139,7 @@ const PlayerPage: React.FC = () => {
     subtitleTracks,
     audioTrack,
     subtitleTrack,
+    subtitleTrackUrl,
     seekOffset,
     hlsSeekTo,
     retryStreamInitialization,
@@ -140,6 +153,15 @@ const PlayerPage: React.FC = () => {
     trackSwitchInProgress,
     hlsDestroyRef,
   } = useVideoPlayer(torrent, effectiveSessionState);
+
+  const selectedFileLiveProgress = useMemo(() => {
+    if (selectedFileIndex === null) return { lengthBytes: 0, completedBytes: 0 };
+    const selected = availableFiles.find((file) => file.index === selectedFileIndex);
+    const live = effectiveSessionState?.files?.find((file) => file.index === selectedFileIndex);
+    const lengthBytes = Math.max(0, selected?.length ?? 0);
+    const completedBytes = Math.max(0, live?.bytesCompleted ?? selected?.bytesCompleted ?? 0);
+    return { lengthBytes, completedBytes };
+  }, [selectedFileIndex, availableFiles, effectiveSessionState?.files]);
 
   const torrentPreferences = useMemo(
     () => (torrentId ? getTorrentPlayerPreferences(torrentId) : null),
@@ -358,6 +380,93 @@ const PlayerPage: React.FC = () => {
   }, [wsHealth]);
 
   useEffect(() => {
+    let cancelled = false;
+    void getHLSSettings()
+      .then((settings) => {
+        if (!cancelled) setHlsSettings(settings);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('player:buffer-panel-visible', bufferPanelVisible ? '1' : '0');
+  }, [bufferPanelVisible]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtmlOverflow = html.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+
+    html.style.overflow = 'hidden';
+    body.style.overflow = 'hidden';
+
+    return () => {
+      html.style.overflow = prevHtmlOverflow;
+      body.style.overflow = prevBodyOverflow;
+    };
+  }, []);
+
+  const readVideoBufferProbe = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+    const ranges: Array<{ start: number; end: number }> = [];
+    for (let i = 0; i < video.buffered.length; i += 1) {
+      const start = video.buffered.start(i);
+      const end = video.buffered.end(i);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+      ranges.push({ start, end });
+    }
+
+    setBufferProbe((prev) => {
+      if (Math.abs(prev.currentTime - currentTime) > 0.1) {
+        return { currentTime, ranges };
+      }
+      if (prev.ranges.length !== ranges.length) {
+        return { currentTime, ranges };
+      }
+      for (let i = 0; i < ranges.length; i += 1) {
+        if (Math.abs(prev.ranges[i].start - ranges[i].start) > 0.1 || Math.abs(prev.ranges[i].end - ranges[i].end) > 0.1) {
+          return { currentTime, ranges };
+        }
+      }
+      return prev;
+    });
+  }, [videoRef]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const onUpdate = () => readVideoBufferProbe();
+    video.addEventListener('timeupdate', onUpdate);
+    video.addEventListener('progress', onUpdate);
+    video.addEventListener('seeking', onUpdate);
+    video.addEventListener('seeked', onUpdate);
+    video.addEventListener('loadedmetadata', onUpdate);
+
+    const interval = window.setInterval(onUpdate, 500);
+    onUpdate();
+
+    return () => {
+      window.clearInterval(interval);
+      video.removeEventListener('timeupdate', onUpdate);
+      video.removeEventListener('progress', onUpdate);
+      video.removeEventListener('seeking', onUpdate);
+      video.removeEventListener('seeked', onUpdate);
+      video.removeEventListener('loadedmetadata', onUpdate);
+    };
+  }, [readVideoBufferProbe, videoRef, streamUrl, selectedFileIndex]);
+
+  useEffect(() => {
     // Skip REST polling when WS is providing health data.
     if (wsHealth) return;
 
@@ -472,7 +581,7 @@ const PlayerPage: React.FC = () => {
   }
 
   return (
-    <div className="h-[calc(100dvh-56px)] overflow-hidden">
+    <div className="h-[calc(100dvh-56px)] max-h-[calc(100dvh-56px)] overflow-hidden overscroll-none">
       <Dialog open={infoOpen} onOpenChange={setInfoOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
@@ -521,6 +630,7 @@ const PlayerPage: React.FC = () => {
             subtitleTracks={subtitleTracks}
             selectedAudioTrack={audioTrack}
             selectedSubtitleTrack={subtitleTrack}
+            subtitleTrackUrl={subtitleTrackUrl}
             subtitlesReady={mediaInfo?.subtitlesReady ?? false}
             mediaDuration={mediaInfo?.duration ?? 0}
             seekOffset={seekOffset}
@@ -549,6 +659,40 @@ const PlayerPage: React.FC = () => {
             trackSwitchInProgress={trackSwitchInProgress}
             hlsDestroyRef={hlsDestroyRef}
           />
+
+          <div className="absolute right-3 top-3 z-20 flex items-start gap-2 sm:right-4 sm:top-4">
+            {bufferPanelVisible ? (
+              <PlayerBufferWindows
+                className="w-[min(92vw,460px)]"
+                settings={hlsSettings}
+                selectedFileLengthBytes={selectedFileLiveProgress.lengthBytes}
+                selectedFileCompletedBytes={selectedFileLiveProgress.completedBytes}
+                mediaDurationSec={mediaInfo?.duration ?? 0}
+                currentTimeSec={bufferProbe.currentTime}
+                bufferedRanges={bufferProbe.ranges}
+              />
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-9 w-9 rounded-lg border-border/70 bg-background/85 backdrop-blur"
+              onClick={() => setBufferPanelVisible((prev) => !prev)}
+              title={bufferPanelVisible ? 'Hide buffer panel' : 'Show buffer panel'}
+            >
+              {bufferPanelVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-9 w-9 rounded-lg border-border/70 bg-background/85 backdrop-blur"
+              onClick={() => setFilesPanelOpen((prev) => !prev)}
+              title={filesPanelOpen ? 'Hide files list' : 'Show files list'}
+            >
+              {filesPanelOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+            </Button>
+          </div>
 
           {isResumeHintVisible && resumeHint ? (
             <div className="absolute bottom-4 left-4 right-4 z-30 animate-[ts-fade-in_300ms_ease-out]">
@@ -587,6 +731,7 @@ const PlayerPage: React.FC = () => {
               files={availableFiles}
               selectedFileIndex={selectedFileIndex}
               sessionState={effectiveSessionState}
+              mediaOrganization={torrent?.mediaOrganization}
               onSelectFile={handleSelectFile}
               className="h-full"
             />

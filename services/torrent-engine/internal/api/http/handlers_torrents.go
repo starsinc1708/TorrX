@@ -136,8 +136,8 @@ type torrentListSummary struct {
 }
 
 type torrentListFull struct {
-	Items []domain.TorrentRecord `json:"items"`
-	Count int                    `json:"count"`
+	Items []torrentRecordView `json:"items"`
+	Count int                 `json:"count"`
 }
 
 func (s *Server) handleListTorrents(w http.ResponseWriter, r *http.Request) {
@@ -216,7 +216,11 @@ func (s *Server) handleListTorrents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if view == "full" {
-		writeJSON(w, http.StatusOK, torrentListFull{Items: records, Count: len(records)})
+		items := make([]torrentRecordView, 0, len(records))
+		for _, record := range records {
+			items = append(items, buildTorrentRecordView(record))
+		}
+		writeJSON(w, http.StatusOK, torrentListFull{Items: items, Count: len(items)})
 		return
 	}
 
@@ -365,6 +369,12 @@ func (s *Server) handleTorrentByID(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			s.handleDirectPlayback(w, r, id, directFileIndex)
+		case "subtitles":
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			s.handleSubtitleTrackVTT(w, r, id, parts[2:])
 		case "tags":
 			if r.Method != http.MethodPut {
 				w.WriteHeader(http.StatusMethodNotAllowed)
@@ -392,7 +402,7 @@ func (s *Server) handleGetTorrent(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 
-	writeJSON(w, http.StatusOK, record)
+	writeJSON(w, http.StatusOK, buildTorrentRecordView(record))
 }
 
 func (s *Server) handleStartTorrent(w http.ResponseWriter, r *http.Request, id string) {

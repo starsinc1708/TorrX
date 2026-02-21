@@ -38,16 +38,17 @@ Common `error.code` values:
 
 ## Storage Settings
 - `GET /settings/storage`
-  - returns current storage mode and memory-spill settings.
+  - returns storage limits and data directory usage snapshot.
 - `PATCH /settings/storage`
-  - body:
+  - body (partial update supported):
 ```json
 {
-  "memoryLimitBytes": 536870912
+  "maxSessions": 8,
+  "minDiskSpaceBytes": 2147483648
 }
 ```
-  - updates RAM limit at runtime (`0` = unlimited).
-  - for `disk` mode returns `409 unsupported_operation`.
+  - `maxSessions`: `0` means unlimited.
+  - `minDiskSpaceBytes`: threshold used by disk-pressure guard.
 
 ## Media Streaming
 - `GET /torrents/{id}/stream?fileIndex={n}`
@@ -56,10 +57,13 @@ Common `error.code` values:
 - `GET /torrents/{id}/hls/{fileIndex}/index.m3u8`
   - optional query:
   - `audioTrack` (int, default `0`)
-  - `subtitleTrack` (int, optional, burn-in)
   - returns playlist and triggers/reuses transcoding job
 - `GET /torrents/{id}/hls/{fileIndex}/{segment}`
   - returns `.ts` segment
+- `GET /torrents/{id}/subtitles/{fileIndex}/{subtitleTrack}.vtt`
+  - returns subtitle track as WebVTT (`text/vtt`)
+  - `subtitleTrack` index is taken from `GET /torrents/{id}/media/{fileIndex}` subtitle tracks
+  - `HEAD` is supported for readiness checks
 
 ## Media Metadata
 - `GET /torrents/{id}/media/{fileIndex}`
@@ -83,7 +87,12 @@ Common `error.code` values:
 
 If probing fails (e.g. metadata not available yet), API returns `200` with empty `tracks`.
 
+## Media Organization
+- `GET /torrents?view=full` and `GET /torrents/{id}` include optional `mediaOrganization`:
+  - `contentType`: `series | movie | mixed | unknown`
+  - `groups`: grouped files (seasons, movies, other) with stable file references (`fileIndex`, `filePath`)
+
 ## Notes
 - `TorrentRecord.Source` is persisted internally for session restore and not exposed in API JSON.
-- `subtitleTrack` is implemented as subtitle burn-in in ffmpeg HLS pipeline.
+- Subtitle rendering uses WebVTT endpoint (`/subtitles/...vtt`) instead of burn-in in HLS video.
 - Complete schema reference: `docs/openapi.json`.

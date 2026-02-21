@@ -43,6 +43,21 @@ func (f *fakeHLSSettingsCtrl) Update(s app.HLSSettings) error {
 	return nil
 }
 
+type fakeStorageSettingsCtrl struct {
+	settings  app.StorageSettingsView
+	updateErr error
+}
+
+func (f *fakeStorageSettingsCtrl) Get() app.StorageSettingsView { return f.settings }
+func (f *fakeStorageSettingsCtrl) Update(s app.StorageSettings) error {
+	if f.updateErr != nil {
+		return f.updateErr
+	}
+	f.settings.MaxSessions = s.MaxSessions
+	f.settings.MinDiskSpaceBytes = s.MinDiskSpaceBytes
+	return nil
+}
+
 // ---- helpers ----
 
 func makeSettingsServer(encCtrl *fakeEncodingCtrl, hlsCtrl *fakeHLSSettingsCtrl) *Server {
@@ -465,5 +480,111 @@ func TestUpdateHLSSettings_StoreError(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500 for store error, got %d", rec.Code)
+	}
+}
+
+// ---- Storage Settings tests ----
+
+func TestGetStorageSettings_ReturnsCurrentValues(t *testing.T) {
+	ctrl := &fakeStorageSettingsCtrl{
+		settings: app.StorageSettingsView{
+			MaxSessions:       4,
+			MinDiskSpaceBytes: 2147483648,
+			Usage:             app.StorageUsage{DataDir: "data", DataDirExists: true, DataDirSizeBytes: 1024},
+		},
+	}
+	s := makeSettingsServer(nil, nil)
+	s.SetStorageSettings(ctrl)
+
+	rec := doSettingsRequest(s, http.MethodGet, "/settings/storage", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var got app.StorageSettingsView
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.MaxSessions != 4 || got.MinDiskSpaceBytes != 2147483648 {
+		t.Fatalf("unexpected payload: %+v", got)
+	}
+}
+
+func TestGetStorageSettings_NotConfigured(t *testing.T) {
+	s := makeSettingsServer(nil, nil)
+	rec := doSettingsRequest(s, http.MethodGet, "/settings/storage", nil)
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501, got %d", rec.Code)
+	}
+}
+
+func TestUpdateStorageSettings_PartialUpdate(t *testing.T) {
+	ctrl := &fakeStorageSettingsCtrl{
+		settings: app.StorageSettingsView{
+			MaxSessions:       2,
+			MinDiskSpaceBytes: 1073741824,
+		},
+	}
+	s := makeSettingsServer(nil, nil)
+	s.SetStorageSettings(ctrl)
+
+	body, _ := json.Marshal(map[string]any{"maxSessions": 8})
+	rec := doSettingsRequest(s, http.MethodPatch, "/settings/storage", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ctrl.settings.MaxSessions != 8 || ctrl.settings.MinDiskSpaceBytes != 1073741824 {
+		t.Fatalf("unexpected settings: %+v", ctrl.settings)
+	}
+}
+
+func TestUpdateStorageSettings_InvalidValues(t *testing.T) {
+	ctrl := &fakeStorageSettingsCtrl{
+		settings: app.StorageSettingsView{MaxSessions: 2, MinDiskSpaceBytes: 1024},
+	}
+	s := makeSettingsServer(nil, nil)
+	s.SetStorageSettings(ctrl)
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "negative maxSessions", body: `{"maxSessions":-1}`},
+		{name: "negative minDiskSpaceBytes", body: `{"minDiskSpaceBytes":-1}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doSettingsRequest(s, http.MethodPatch, "/settings/storage", []byte(tc.body))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d", rec.Code)
+			}
+		})
+	}
+}
+
+func TestUpdateStorageSettings_BadJSON(t *testing.T) {
+	ctrl := &fakeStorageSettingsCtrl{
+		settings: app.StorageSettingsView{MaxSessions: 2, MinDiskSpaceBytes: 1024},
+	}
+	s := makeSettingsServer(nil, nil)
+	s.SetStorageSettings(ctrl)
+
+	rec := doSettingsRequest(s, http.MethodPatch, "/settings/storage", []byte("{bad"))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestStorageSettings_MethodNotAllowed(t *testing.T) {
+	ctrl := &fakeStorageSettingsCtrl{
+		settings: app.StorageSettingsView{MaxSessions: 2, MinDiskSpaceBytes: 1024},
+	}
+	s := makeSettingsServer(nil, nil)
+	s.SetStorageSettings(ctrl)
+
+	rec := doSettingsRequest(s, http.MethodDelete, "/settings/storage", nil)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rec.Code)
 	}
 }

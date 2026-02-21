@@ -315,3 +315,71 @@ func (s *Server) handleUpdateHLSSettings(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, s.hlsSettingsCtrl.Get())
 }
 
+// Storage settings handlers.
+
+type updateStorageSettingsRequest struct {
+	MaxSessions       *int   `json:"maxSessions"`
+	MinDiskSpaceBytes *int64 `json:"minDiskSpaceBytes"`
+}
+
+func (s *Server) handleStorageSettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleGetStorageSettings(w, r)
+	case http.MethodPatch, http.MethodPut:
+		s.handleUpdateStorageSettings(w, r)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleGetStorageSettings(w http.ResponseWriter, _ *http.Request) {
+	if s.storage == nil {
+		writeError(w, http.StatusNotImplemented, "not_configured", "storage settings not configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.storage.Get())
+}
+
+func (s *Server) handleUpdateStorageSettings(w http.ResponseWriter, r *http.Request) {
+	if s.storage == nil {
+		writeError(w, http.StatusNotImplemented, "not_configured", "storage settings not configured")
+		return
+	}
+
+	var body updateStorageSettingsRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json")
+		return
+	}
+
+	current := s.storage.Get()
+	next := app.StorageSettings{
+		MaxSessions:       current.MaxSessions,
+		MinDiskSpaceBytes: current.MinDiskSpaceBytes,
+	}
+
+	if body.MaxSessions != nil {
+		if *body.MaxSessions < 0 {
+			writeError(w, http.StatusBadRequest, "invalid_request", "maxSessions must be >= 0")
+			return
+		}
+		next.MaxSessions = *body.MaxSessions
+	}
+	if body.MinDiskSpaceBytes != nil {
+		if *body.MinDiskSpaceBytes < 0 {
+			writeError(w, http.StatusBadRequest, "invalid_request", "minDiskSpaceBytes must be >= 0")
+			return
+		}
+		next.MinDiskSpaceBytes = *body.MinDiskSpaceBytes
+	}
+
+	if err := s.storage.Update(next); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to update storage settings")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, s.storage.Get())
+}

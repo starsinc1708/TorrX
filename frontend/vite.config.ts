@@ -26,6 +26,10 @@ export default defineConfig(({ mode }) => {
           target: proxyTarget,
           changeOrigin: true,
         },
+        '/settings/hls': {
+          target: proxyTarget,
+          changeOrigin: true,
+        },
         '/swagger': {
           target: proxyTarget,
           changeOrigin: true,

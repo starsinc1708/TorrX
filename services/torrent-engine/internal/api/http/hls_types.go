@@ -348,17 +348,12 @@ func subtitleFilterArg(sourcePath string, subtitleTrack int) string {
 }
 
 // buildMultiVariantFilterComplex constructs an FFmpeg filter_complex string
-// that splits the input video into multiple quality variants with optional
-// subtitle burning applied before the split.
-func buildMultiVariantFilterComplex(variants []qualityVariant, subtitleSourcePath string, subtitleTrack int) string {
+// that splits the input video into multiple quality variants.
+func buildMultiVariantFilterComplex(variants []qualityVariant, _ string, _ int) string {
 	n := len(variants)
 	var b strings.Builder
 
 	b.WriteString("[0:v:0]")
-	if subtitleTrack >= 0 && subtitleSourcePath != "" {
-		b.WriteString(subtitleFilterArg(subtitleSourcePath, subtitleTrack))
-		b.WriteString(",")
-	}
 	b.WriteString(fmt.Sprintf("split=%d", n))
 
 	for i := 0; i < n; i++ {
@@ -416,7 +411,7 @@ func parseM3U8Segments(playlistPath string) ([]m3u8Segment, error) {
 
 // remuxEntry tracks a background FFmpeg remux (MKV → MP4 codec copy).
 type remuxEntry struct {
-	path    string       // absolute path to the output .mp4
+	path    string        // absolute path to the output .mp4
 	ready   chan struct{} // closed when remux is complete (check err)
 	err     error
 	started time.Time

@@ -70,6 +70,11 @@ type PlayerSettingsController interface {
 	SetCurrentTorrentID(id domain.TorrentID) error
 }
 
+type StorageSettingsController interface {
+	Get() app.StorageSettingsView
+	Update(settings app.StorageSettings) error
+}
+
 type MediaProbe interface {
 	Probe(ctx context.Context, filePath string) (domain.MediaInfo, error)
 	ProbeReader(ctx context.Context, reader io.Reader) (domain.MediaInfo, error)
@@ -107,6 +112,7 @@ type Server struct {
 	encoding        EncodingSettingsController
 	hlsSettingsCtrl HLSSettingsController
 	player          PlayerSettingsController
+	storage         StorageSettingsController
 	engine          domainports.Engine
 	allowedOrigins  []string
 	logger          *slog.Logger
@@ -203,6 +209,12 @@ func WithPlayerSettings(ctrl PlayerSettingsController) ServerOption {
 	}
 }
 
+func WithStorageSettings(ctrl StorageSettingsController) ServerOption {
+	return func(s *Server) {
+		s.storage = ctrl
+	}
+}
+
 func WithEngine(engine domainports.Engine) ServerOption {
 	return func(s *Server) {
 		s.engine = engine
@@ -243,6 +255,11 @@ func (s *Server) HLSSettingsEngine() app.HLSSettingsEngine {
 // SetHLSSettings sets the HLS settings controller after construction.
 func (s *Server) SetHLSSettings(ctrl HLSSettingsController) {
 	s.hlsSettingsCtrl = ctrl
+}
+
+// SetStorageSettings sets the storage settings controller after construction.
+func (s *Server) SetStorageSettings(ctrl StorageSettingsController) {
+	s.storage = ctrl
 }
 
 // HLSCacheTotalSize returns the current total size of the HLS segment cache in bytes.
@@ -363,6 +380,7 @@ func NewServer(create CreateTorrentUseCase, opts ...ServerOption) *Server {
 	mux.HandleFunc("/settings/encoding", s.handleEncodingSettings)
 	mux.HandleFunc("/settings/hls", s.handleHLSSettings)
 	mux.HandleFunc("/settings/player", s.handlePlayerSettings)
+	mux.HandleFunc("/settings/storage", s.handleStorageSettings)
 	mux.HandleFunc("/watch-history", s.handleWatchHistory)
 	mux.HandleFunc("/watch-history/", s.handleWatchHistoryByID)
 	mux.HandleFunc("/internal/health/player", s.handlePlayerHealth)

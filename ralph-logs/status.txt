@@ -1,8 +1,0 @@
-﻿state=finished
-iteration=11
-detail=iterations=10 tasks_done=55
-pending=0
-in_progress=0
-done=55
-updated=2026-02-20 16:34:30
-pid=10332

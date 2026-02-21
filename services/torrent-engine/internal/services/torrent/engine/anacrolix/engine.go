@@ -34,22 +34,22 @@ type Config struct {
 }
 
 type Engine struct {
-	client         *torrent.Client
-	sessions       map[domain.TorrentID]*torrent.Torrent
-	modes          map[domain.TorrentID]domain.SessionMode
-	mu             sync.RWMutex
-	speedMu        sync.Mutex
-	priorityMu     sync.Mutex
-	speeds         map[domain.TorrentID]speedSample
-	focusedPieces  map[domain.TorrentID]focusedPieceRange
-	focusedID      domain.TorrentID // cached; always consistent with modes
-	peakCompleted  map[domain.TorrentID]int64  // high-water mark for BytesCompleted per torrent
-	peakBitfield   map[domain.TorrentID][]byte // high-water mark for piece completion bitfield
-	lastAccess     map[domain.TorrentID]time.Time // LRU tracking for session eviction
-	rateLimits     map[domain.TorrentID]int64 // per-torrent download rate limit (bytes/sec); 0 = unlimited
-	maxSessions    int
-	idleTimeout    time.Duration
-	reaperCancel   context.CancelFunc
+	client        *torrent.Client
+	sessions      map[domain.TorrentID]*torrent.Torrent
+	modes         map[domain.TorrentID]domain.SessionMode
+	mu            sync.RWMutex
+	speedMu       sync.Mutex
+	priorityMu    sync.Mutex
+	speeds        map[domain.TorrentID]speedSample
+	focusedPieces map[domain.TorrentID]focusedPieceRange
+	focusedID     domain.TorrentID               // cached; always consistent with modes
+	peakCompleted map[domain.TorrentID]int64     // high-water mark for BytesCompleted per torrent
+	peakBitfield  map[domain.TorrentID][]byte    // high-water mark for piece completion bitfield
+	lastAccess    map[domain.TorrentID]time.Time // LRU tracking for session eviction
+	rateLimits    map[domain.TorrentID]int64     // per-torrent download rate limit (bytes/sec); 0 = unlimited
+	maxSessions   int
+	idleTimeout   time.Duration
+	reaperCancel  context.CancelFunc
 }
 
 func New(cfg Config) (*Engine, error) {
@@ -190,8 +190,8 @@ func (e *Engine) resumeTorrentForStreaming(t *torrent.Torrent) {
 // a magnet link. AddMagnet can block on an internal client mutex when the
 // client is busy (e.g. resolving metadata for another torrent).
 const (
-	addMagnetTimeout     = 10 * time.Second
-	metadataWaitTimeout  = 10 * time.Minute // Max time to wait for torrent metadata (zero-peer torrents timeout after this)
+	addMagnetTimeout    = 10 * time.Second
+	metadataWaitTimeout = 10 * time.Minute // Max time to wait for torrent metadata (zero-peer torrents timeout after this)
 )
 
 func (e *Engine) Open(ctx context.Context, src domain.TorrentSource) (ports.Session, error) {
@@ -735,6 +735,24 @@ func (e *Engine) SetDownloadRateLimit(ctx context.Context, id domain.TorrentID, 
 	return nil
 }
 
+// MaxSessions returns the current session limit. 0 means unlimited.
+func (e *Engine) MaxSessions() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.maxSessions
+}
+
+// SetMaxSessions updates the session limit at runtime.
+// Values below zero are treated as 0 (unlimited).
+func (e *Engine) SetMaxSessions(limit int) {
+	if limit < 0 {
+		limit = 0
+	}
+	e.mu.Lock()
+	e.maxSessions = limit
+	e.mu.Unlock()
+}
+
 // GetDownloadRateLimit returns the current download rate limit for a torrent
 // in bytes/sec. Returns 0 if no limit is set.
 func (e *Engine) GetDownloadRateLimit(id domain.TorrentID) int64 {
@@ -870,6 +888,8 @@ func mapFiles(t *torrent.Torrent) (mapped []domain.FileRef) {
 			Path:           f.Path(),
 			Length:         f.Length(),
 			BytesCompleted: f.BytesCompleted(),
+			PieceStart:     f.BeginPieceIndex(),
+			PieceEnd:       f.EndPieceIndex(),
 		})
 	}
 	return mapped
@@ -990,4 +1010,3 @@ func (e *Engine) evictIdleSessionLocked() (*torrent.Torrent, domain.TorrentID, e
 	// synchronously outside the lock (avoids a race condition).
 	return t, evictID, nil
 }
-

@@ -1,4 +1,25 @@
-ï»¿import React, { useCallback, useEffect, useState } from 'react';
+# Frontend Settings + PWA Exploration Dump
+
+## Manifest / Service Worker Search
+
+```text
+<none>
+```
+
+## frontend/public/ listing
+
+```text
+DIR  C:\1_Projects\torrent-stream\frontend\public\logo
+FILE C:\1_Projects\torrent-stream\frontend\public\logo\full_logo_v1.png | size=2244125 | sha256=B68891E4569A1D749D772E74E51CE9CC68182780BCD90D55FD3BC25A785D6316
+FILE C:\1_Projects\torrent-stream\frontend\public\logo\only_x_logo_v1.png | size=1614961 | sha256=4EA2AFA8079393AF5E1AF4B98E3A500F91041254FCE0A36B9FA70B2F1D3266AD
+```
+
+Note: `frontend/public` currently contains only binary PNG assets (no text files to inline).
+
+## frontend/src/pages/SettingsPage.tsx
+
+```tsx
+import React, { useCallback, useEffect, useState } from 'react';
 import { Check, KeyRound, Palette, RefreshCw } from 'lucide-react';
 import {
   autodetectSearchProviderRuntimeConfig,
@@ -6,14 +27,12 @@ import {
   getFlareSolverrSettings,
   getEncodingSettings,
   getHLSSettings,
-  getStorageSettings,
   getSearchProviderRuntimeConfigs,
   isApiError,
   listSearchProviders,
   updateSearchProviderRuntimeConfig,
   updateEncodingSettings,
   updateHLSSettings,
-  updateStorageSettings,
 } from '../api';
 import { useToast } from '../app/providers/ToastProvider';
 import { useThemeAccent } from '../app/providers/ThemeAccentProvider';
@@ -30,7 +49,6 @@ import type {
   FlareSolverrProviderStatus,
   SearchProviderInfo,
   SearchProviderRuntimeConfig,
-  StorageSettings,
 } from '../types';
 import { resolveEnabledSearchProviders, saveEnabledSearchProviders } from '../searchProviderSettings';
 
@@ -48,18 +66,6 @@ const qualityLevel = (s: EncodingSettings): string => {
   if (s.crf <= 20) return 'quality';
   if (s.crf <= 24) return 'balanced';
   return 'fast';
-};
-
-const formatBytes = (value?: number) => {
-  if (!value || value <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let n = value;
-  let idx = 0;
-  while (n >= 1024 && idx < units.length - 1) {
-    n /= 1024;
-    idx++;
-  }
-  return `${n.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
 };
 
 type FlareApplyTarget = 'all' | 'jackett' | 'prowlarr';
@@ -90,13 +96,6 @@ const SettingsPage: React.FC = () => {
   const [hlsError, setHlsError] = useState<string | null>(null);
   const [hlsForm, setHlsForm] = useState({ ramBufSizeMB: '', prebufferMB: '', windowBeforeMB: '', windowAfterMB: '', segmentDuration: 4 });
   const [hlsMaxBuffer, setHlsMaxBuffer] = useState(() => Number(localStorage.getItem('hlsMaxBufferLength')) || 60);
-
-  // Storage
-  const [storageSettings, setStorageSettings] = useState<StorageSettings | null>(null);
-  const [storageLoading, setStorageLoading] = useState(false);
-  const [storageSaving, setStorageSaving] = useState(false);
-  const [storageError, setStorageError] = useState<string | null>(null);
-  const [storageForm, setStorageForm] = useState({ maxSessions: '', minDiskSpaceGB: '' });
 
   // Search sources
   const [searchProviders, setSearchProviders] = useState<SearchProviderInfo[]>([]);
@@ -150,24 +149,6 @@ const SettingsPage: React.FC = () => {
       else if (error instanceof Error) setHlsError(error.message);
     } finally {
       setHlsLoading(false);
-    }
-  }, []);
-
-  const loadStorage = useCallback(async () => {
-    setStorageLoading(true);
-    try {
-      const settings = await getStorageSettings();
-      setStorageSettings(settings);
-      setStorageForm({
-        maxSessions: String(settings.maxSessions),
-        minDiskSpaceGB: String(Math.round(settings.minDiskSpaceBytes / (1024 * 1024 * 1024))),
-      });
-      setStorageError(null);
-    } catch (error) {
-      if (isApiError(error)) setStorageError(`${error.code ?? 'error'}: ${error.message}`);
-      else if (error instanceof Error) setStorageError(error.message);
-    } finally {
-      setStorageLoading(false);
     }
   }, []);
 
@@ -238,11 +219,10 @@ const SettingsPage: React.FC = () => {
   useEffect(() => {
     loadEncoding();
     loadHLSSettings();
-    loadStorage();
     loadSearchProviders();
     loadRuntimeConfigs();
     loadFlareSolverrSettings();
-  }, [loadEncoding, loadHLSSettings, loadStorage, loadSearchProviders, loadRuntimeConfigs, loadFlareSolverrSettings]);
+  }, [loadEncoding, loadHLSSettings, loadSearchProviders, loadRuntimeConfigs, loadFlareSolverrSettings]);
 
   const flareConfiguredCount = flareSolverrProviders.filter((item) => item.configured).length;
 
@@ -291,31 +271,6 @@ const SettingsPage: React.FC = () => {
       else if (error instanceof Error) setHlsError(error.message);
     } finally {
       setHlsSaving(false);
-    }
-  };
-
-  const handleSaveStorageSettings = async () => {
-    const maxSessions = Number(storageForm.maxSessions);
-    const minDiskSpaceGB = Number(storageForm.minDiskSpaceGB);
-    if (!Number.isFinite(maxSessions) || !Number.isFinite(minDiskSpaceGB)) return;
-
-    setStorageSaving(true);
-    try {
-      const updated = await updateStorageSettings({
-        maxSessions: Math.max(0, Math.floor(maxSessions)),
-        minDiskSpaceBytes: Math.max(0, Math.floor(minDiskSpaceGB * 1024 * 1024 * 1024)),
-      });
-      setStorageSettings(updated);
-      setStorageForm({
-        maxSessions: String(updated.maxSessions),
-        minDiskSpaceGB: String(Math.round(updated.minDiskSpaceBytes / (1024 * 1024 * 1024))),
-      });
-      setStorageError(null);
-    } catch (error) {
-      if (isApiError(error)) setStorageError(`${error.code ?? 'error'}: ${error.message}`);
-      else if (error instanceof Error) setStorageError(error.message);
-    } finally {
-      setStorageSaving(false);
     }
   };
 
@@ -702,7 +657,7 @@ const SettingsPage: React.FC = () => {
               const isSaving = runtimeSaving === providerName;
               const isDetecting = runtimeDetecting === providerName;
               const hasStoredApiKey = item.hasApiKey && !form.apiKey.trim();
-              const apiKeyVisualValue = hasStoredApiKey ? 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢' : form.apiKey;
+              const apiKeyVisualValue = hasStoredApiKey ? '••••••••••••' : form.apiKey;
               return (
                 <div key={item.name} className="rounded-xl border border-border/70 bg-muted/20 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -851,10 +806,6 @@ const SettingsPage: React.FC = () => {
             <CardDescription>Streaming window, transcoding presets and playback settings.</CardDescription>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => void loadStorage()} disabled={storageLoading}>
-              <RefreshCw className={cn('h-4 w-4', storageLoading ? 'animate-spin' : '')} />
-              Storage
-            </Button>
             <Button variant="outline" size="sm" onClick={() => void loadEncoding()} disabled={encodingLoading}>
               <RefreshCw className={cn('h-4 w-4', encodingLoading ? 'animate-spin' : '')} />
               Encoding
@@ -866,65 +817,6 @@ const SettingsPage: React.FC = () => {
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
-          <div className="space-y-3">
-            <div className="text-sm font-semibold">Storage</div>
-            {storageLoading ? <div className="text-sm text-muted-foreground">Loading...</div> : null}
-
-            {!storageLoading && storageSettings ? (
-              <>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">Max sessions</div>
-                    <Input
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={storageForm.maxSessions}
-                      onChange={(e) => setStorageForm((prev) => ({ ...prev, maxSessions: e.target.value }))}
-                      disabled={storageSaving}
-                    />
-                    <div className="text-xs text-muted-foreground">
-                      0 = unlimited active torrent sessions.
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">Min free space (GB)</div>
-                    <Input
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={storageForm.minDiskSpaceGB}
-                      onChange={(e) => setStorageForm((prev) => ({ ...prev, minDiskSpaceGB: e.target.value }))}
-                      disabled={storageSaving}
-                    />
-                    <div className="text-xs text-muted-foreground">
-                      Disk pressure threshold for auto-pausing downloads.
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
-                  <div>Data dir: <span className="font-mono text-foreground">{storageSettings.usage.dataDir || '-'}</span></div>
-                  <div>Exists: <span className="text-foreground">{storageSettings.usage.dataDirExists ? 'yes' : 'no'}</span></div>
-                  <div>Current usage: <span className="text-foreground">{formatBytes(storageSettings.usage.dataDirSizeBytes)}</span></div>
-                </div>
-
-                <div className="flex justify-end">
-                  <Button onClick={() => void handleSaveStorageSettings()} disabled={storageSaving}>
-                    {storageSaving ? 'Saving...' : 'Save'}
-                  </Button>
-                </div>
-              </>
-            ) : null}
-
-            {storageError ? (
-              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
-                {storageError}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="border-t border-border/70 pt-5">
           <div className="space-y-3">
             <div className="text-sm font-semibold">Streaming</div>
             {hlsLoading ? <div className="text-sm text-muted-foreground">Loading...</div> : null}
@@ -1035,7 +927,6 @@ const SettingsPage: React.FC = () => {
               </div>
             ) : null}
           </div>
-          </div>
 
           <div className="border-t border-border/70 pt-5">
             <div className="space-y-3">
@@ -1091,4 +982,830 @@ const SettingsPage: React.FC = () => {
 };
 
 export default SettingsPage;
+
+```
+
+## frontend/src/api.ts
+
+```ts
+import type {
+  ApiErrorPayload,
+  EncodingSettings,
+  HLSSettings,
+  FlareSolverrApplyResponse,
+  FlareSolverrSettings,
+  MediaInfo,
+  SessionState,
+  SessionStateList,
+  PlayerSettings,
+  TorrentListFull,
+  TorrentListSummary,
+  TorrentRecord,
+  BulkResponse,
+  SortOrder,
+  TorrentSortBy,
+  TorrentStatusFilter,
+  TorrentView,
+  WatchPosition,
+  PlayerHealth,
+  SearchProviderInfo,
+  SearchProviderDiagnostics,
+  SearchProviderTestResult,
+  SearchProviderAutodetectResult,
+  SearchProviderRuntimeConfig,
+  SearchProviderRuntimePatch,
+  SearchRankingProfile,
+  SearchResponse,
+  SearchSortBy,
+  SearchSortOrder,
+} from './types';
+
+const rawBase = (import.meta as any).env?.VITE_API_BASE_URL ?? '';
+const API_BASE = typeof rawBase === 'string' ? rawBase.replace(/\/$/, '') : '';
+
+export const buildUrl = (path: string) => (API_BASE ? `${API_BASE}${path}` : path);
+const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+const POLL_REQUEST_TIMEOUT_MS = 7000;
+const LONG_REQUEST_TIMEOUT_MS = 90000;
+
+// ---- GET request deduplication ----
+// If an identical GET is already in-flight, return the same promise instead of
+// creating a new HTTP request. This collapses bursts of duplicate polls into a
+// single network round-trip.
+const inflightGets = new Map<string, Promise<Response>>();
+
+const deduplicatedFetch = async (
+  url: string,
+  init?: RequestInit,
+  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+): Promise<Response> => {
+  const method = init?.method?.toUpperCase() ?? 'GET';
+
+  // Don't deduplicate mutations (POST, PUT, DELETE, etc.) because different
+  // request bodies should not share the same response. Mutations are idempotent
+  // by design and should execute independently.
+  if (method !== 'GET') {
+    return fetchWithTimeout(url, init, timeoutMs);
+  }
+
+  const existing = inflightGets.get(url);
+  if (existing) return existing.then((r) => r.clone());
+
+  const promise = fetchWithTimeout(url, init, timeoutMs).finally(() => {
+    inflightGets.delete(url);
+  });
+  inflightGets.set(url, promise);
+  return promise;
+};
+
+class ApiRequestError extends Error {
+  code?: string;
+  status?: number;
+
+  constructor(message: string, code?: string, status?: number) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
+const parseErrorPayload = async (response: Response): Promise<ApiErrorPayload | null> => {
+  try {
+    const data = (await response.json()) as ApiErrorPayload;
+    if (data && typeof data === 'object') {
+      return data;
+    }
+  } catch (error) {
+    return null;
+  }
+  return null;
+};
+
+const handleResponse = async <T>(response: Response): Promise<T> => {
+  if (response.ok) {
+    if (response.status === 204) {
+      return undefined as T;
+    }
+    return (await response.json()) as T;
+  }
+
+  const payload = await parseErrorPayload(response);
+  const code = payload?.error?.code ?? 'request_failed';
+  const message = payload?.error?.message ?? response.statusText;
+  throw new ApiRequestError(message, code, response.status);
+};
+
+const fetchWithTimeout = async (
+  url: string,
+  init?: RequestInit,
+  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+): Promise<Response> => {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiRequestError('request timeout', 'timeout');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+};
+
+export const listTorrents = async (options?: {
+  status?: TorrentStatusFilter;
+  view?: TorrentView;
+  search?: string;
+  tags?: string[];
+  sortBy?: TorrentSortBy;
+  sortOrder?: SortOrder;
+  limit?: number;
+  offset?: number;
+}): Promise<TorrentListFull | TorrentListSummary> => {
+  const params = new URLSearchParams();
+  params.set('status', options?.status ?? 'all');
+  params.set('view', options?.view ?? 'full');
+  if (options?.search?.trim()) params.set('search', options.search.trim());
+  if (options?.tags && options.tags.length > 0) params.set('tags', options.tags.join(','));
+  if (options?.sortBy) params.set('sortBy', options.sortBy);
+  if (options?.sortOrder) params.set('sortOrder', options.sortOrder);
+  if (options?.limit) params.set('limit', String(options.limit));
+  if (options?.offset) params.set('offset', String(options.offset));
+  const response = await deduplicatedFetch(
+    buildUrl(`/torrents?${params.toString()}`),
+    undefined,
+    POLL_REQUEST_TIMEOUT_MS,
+  );
+  return handleResponse(response);
+};
+
+export const listSearchProviders = async (): Promise<SearchProviderInfo[]> => {
+  const response = await fetch(buildUrl('/search/providers'));
+  const payload = await handleResponse<{ items: SearchProviderInfo[] }>(response);
+  return payload.items ?? [];
+};
+
+export const getSearchProviderRuntimeConfigs = async (): Promise<SearchProviderRuntimeConfig[]> => {
+  const response = await fetch(buildUrl('/search/settings/providers'));
+  const payload = await handleResponse<{ items: SearchProviderRuntimeConfig[] }>(response);
+  return payload.items ?? [];
+};
+
+export const updateSearchProviderRuntimeConfig = async (
+  input: SearchProviderRuntimePatch,
+): Promise<SearchProviderRuntimeConfig> => {
+  const response = await fetch(buildUrl('/search/settings/providers'), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return handleResponse<SearchProviderRuntimeConfig>(response);
+};
+
+export const autodetectSearchProviderRuntimeConfig = async (
+  provider?: string,
+): Promise<{
+  items: SearchProviderRuntimeConfig[];
+  results?: SearchProviderAutodetectResult[];
+  errors?: { provider: string; error: string }[];
+}> => {
+  const response = await fetch(buildUrl('/search/settings/providers/autodetect'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(provider ? { provider } : {}),
+  });
+  return handleResponse<{
+    items: SearchProviderRuntimeConfig[];
+    results?: SearchProviderAutodetectResult[];
+    errors?: { provider: string; error: string }[];
+  }>(response);
+};
+
+export const getFlareSolverrSettings = async (): Promise<FlareSolverrSettings> => {
+  const response = await fetch(buildUrl('/search/settings/flaresolverr'));
+  return handleResponse<FlareSolverrSettings>(response);
+};
+
+export const applyFlareSolverrSettings = async (
+  input: { url: string; provider?: string },
+): Promise<FlareSolverrApplyResponse> => {
+  const response = await fetch(buildUrl('/search/settings/flaresolverr'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return handleResponse<FlareSolverrApplyResponse>(response);
+};
+
+export const getSearchProviderDiagnostics = async (): Promise<SearchProviderDiagnostics[]> => {
+  const response = await fetch(buildUrl('/search/providers/health'), { cache: 'no-store' });
+  const payload = await handleResponse<{ items: SearchProviderDiagnostics[] }>(response);
+  return payload.items ?? [];
+};
+
+export const testSearchProvider = async (provider: string, query: string): Promise<SearchProviderTestResult> => {
+  const params = new URLSearchParams();
+  params.set('provider', provider.trim().toLowerCase());
+  params.set('q', query.trim() || 'spider man');
+  params.set('limit', '10');
+  params.set('nocache', '1');
+  const response = await fetch(buildUrl(`/search/providers/test?${params.toString()}`), { cache: 'no-store' });
+  return handleResponse<SearchProviderTestResult>(response);
+};
+
+export const searchTorrents = async (options: {
+  query: string;
+  limit?: number;
+  offset?: number;
+  sortBy?: SearchSortBy;
+  sortOrder?: SearchSortOrder;
+  providers?: string[];
+  profile?: SearchRankingProfile;
+  noCache?: boolean;
+}): Promise<SearchResponse> => {
+  const params = buildSearchParams(options);
+  // Avoid browser/proxy caching for search results (but allow server-side Redis cache).
+  params.set('_ts', String(Date.now()));
+  const response = await fetch(buildUrl(`/search?${params.toString()}`), {
+    cache: 'no-store',
+    headers: { 'Cache-Control': 'no-store' },
+  });
+  return handleResponse(response);
+};
+
+export const searchTorrentsStream = (
+  options: {
+    query: string;
+    limit?: number;
+    offset?: number;
+    sortBy?: SearchSortBy;
+    sortOrder?: SearchSortOrder;
+    providers?: string[];
+    profile?: SearchRankingProfile;
+    noCache?: boolean;
+  },
+  handlers: {
+    onPhase: (response: SearchResponse) => void;
+    onDone?: () => void;
+    onError?: (message: string) => void;
+  },
+): (() => void) => {
+  const params = buildSearchParams(options);
+  // Avoid browser/proxy caching for SSE streams.
+  params.set('_ts', String(Date.now()));
+  const source = new EventSource(buildUrl(`/search/stream?${params.toString()}`));
+  let closed = false;
+
+  const closeStream = () => {
+    if (closed) return;
+    closed = true;
+    source.close();
+  };
+
+  const handlePhase = (event: MessageEvent<string>) => {
+    try {
+      const payload = JSON.parse(event.data) as SearchResponse;
+      handlers.onPhase(payload);
+    } catch {
+      handlers.onError?.('invalid stream payload');
+    }
+  };
+
+  const handleDone = () => {
+    handlers.onDone?.();
+    closeStream();
+  };
+
+  const handleError = (event: MessageEvent<string> | Event) => {
+    if (event instanceof MessageEvent) {
+      try {
+        const payload = JSON.parse(event.data) as { message?: string };
+        handlers.onError?.(payload.message || 'search stream failed');
+      } catch {
+        handlers.onError?.('search stream failed');
+      }
+    } else {
+      handlers.onError?.('search stream failed');
+    }
+  };
+
+  source.addEventListener('phase', handlePhase as EventListener);
+  source.addEventListener('update', handlePhase as EventListener);
+  source.addEventListener('bootstrap', handlePhase as EventListener);
+  source.addEventListener('done', handleDone as EventListener);
+  source.addEventListener('error', handleError as EventListener);
+  source.onerror = () => {
+    if (closed) return;
+    handlers.onError?.('search stream disconnected');
+    closeStream();
+  };
+
+  return () => {
+    source.removeEventListener('phase', handlePhase as EventListener);
+    source.removeEventListener('update', handlePhase as EventListener);
+    source.removeEventListener('bootstrap', handlePhase as EventListener);
+    source.removeEventListener('done', handleDone as EventListener);
+    source.removeEventListener('error', handleError as EventListener);
+    closeStream();
+  };
+};
+
+const buildSearchParams = (options: {
+  query: string;
+  limit?: number;
+  offset?: number;
+  sortBy?: SearchSortBy;
+  sortOrder?: SearchSortOrder;
+  providers?: string[];
+  profile?: SearchRankingProfile;
+  noCache?: boolean;
+}) => {
+  const params = new URLSearchParams();
+  params.set('q', options.query.trim());
+  // Only bypass cache when explicitly requested (e.g., force refresh button).
+  if (options.noCache) {
+    params.set('nocache', '1');
+  }
+  if (options.limit && options.limit > 0) params.set('limit', String(options.limit));
+  if (options.offset && options.offset >= 0) params.set('offset', String(options.offset));
+  if (options.sortBy) params.set('sortBy', options.sortBy);
+  if (options.sortOrder) params.set('sortOrder', options.sortOrder);
+  if (options.providers && options.providers.length > 0) params.set('providers', options.providers.join(','));
+  appendRankingProfile(params, options.profile);
+  return params;
+};
+
+const appendRankingProfile = (params: URLSearchParams, profile?: SearchRankingProfile) => {
+  if (!profile) return;
+  params.set('freshnessWeight', String(profile.freshnessWeight));
+  params.set('seedersWeight', String(profile.seedersWeight));
+  params.set('qualityWeight', String(profile.qualityWeight));
+  params.set('languageWeight', String(profile.languageWeight));
+  params.set('sizeWeight', String(profile.sizeWeight));
+  if (profile.preferSeries) params.set('preferSeries', '1');
+  if (profile.preferMovies) params.set('preferMovies', '1');
+  if (profile.preferredAudio.length > 0) params.set('preferredAudio', profile.preferredAudio.join(','));
+  if (profile.preferredSubtitles.length > 0) {
+    params.set('preferredSubtitles', profile.preferredSubtitles.join(','));
+  }
+  if (profile.targetSizeBytes > 0) params.set('targetSizeBytes', String(profile.targetSizeBytes));
+};
+
+export const getTorrent = async (id: string): Promise<TorrentRecord> => {
+  const response = await fetch(buildUrl(`/torrents/${id}`));
+  return handleResponse(response);
+};
+
+export const createTorrentFromMagnet = async (magnet: string, name?: string): Promise<TorrentRecord> => {
+  const response = await fetchWithTimeout(
+    buildUrl('/torrents'),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ magnet, name: name || undefined }),
+    },
+    LONG_REQUEST_TIMEOUT_MS,
+  );
+  return handleResponse(response);
+};
+
+export const createTorrentFromFile = async (file: File, name?: string): Promise<TorrentRecord> => {
+  const form = new FormData();
+  form.append('torrent', file);
+  if (name) {
+    form.append('name', name);
+  }
+
+  const response = await fetch(buildUrl('/torrents'), {
+    method: 'POST',
+    body: form,
+  });
+  return handleResponse(response);
+};
+
+export const startTorrent = async (id: string): Promise<TorrentRecord> => {
+  const response = await deduplicatedFetch(buildUrl(`/torrents/${id}/start`), { method: 'POST' });
+  return handleResponse(response);
+};
+
+export const stopTorrent = async (id: string): Promise<TorrentRecord> => {
+  const response = await deduplicatedFetch(buildUrl(`/torrents/${id}/stop`), { method: 'POST' });
+  return handleResponse(response);
+};
+
+export const deleteTorrent = async (id: string, deleteFiles: boolean): Promise<void> => {
+  const params = new URLSearchParams();
+  if (deleteFiles) {
+    params.set('deleteFiles', 'true');
+  }
+  const url = params.toString() ? `/torrents/${id}?${params.toString()}` : `/torrents/${id}`;
+  const response = await deduplicatedFetch(buildUrl(url), { method: 'DELETE' });
+  return handleResponse(response);
+};
+
+export const updateTorrentTags = async (id: string, tags: string[]): Promise<TorrentRecord> => {
+  const response = await fetch(buildUrl(`/torrents/${id}/tags`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tags }),
+  });
+  return handleResponse(response);
+};
+
+export const bulkStartTorrents = async (ids: string[]): Promise<BulkResponse> => {
+  const response = await fetch(buildUrl('/torrents/bulk/start'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  return handleResponse(response);
+};
+
+export const bulkStopTorrents = async (ids: string[]): Promise<BulkResponse> => {
+  const response = await fetch(buildUrl('/torrents/bulk/stop'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  return handleResponse(response);
+};
+
+export const bulkDeleteTorrents = async (ids: string[], deleteFiles: boolean): Promise<BulkResponse> => {
+  const response = await fetch(buildUrl('/torrents/bulk/delete'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, deleteFiles }),
+  });
+  return handleResponse(response);
+};
+
+export const getTorrentState = async (id: string, signal?: AbortSignal): Promise<SessionState> => {
+  const response = await deduplicatedFetch(
+    buildUrl(`/torrents/${id}/state`),
+    { signal },
+    POLL_REQUEST_TIMEOUT_MS,
+  );
+  return handleResponse(response);
+};
+
+export const listActiveStates = async (): Promise<SessionStateList> => {
+  const response = await deduplicatedFetch(
+    buildUrl('/torrents/state?status=active'),
+    undefined,
+    POLL_REQUEST_TIMEOUT_MS,
+  );
+  return handleResponse(response);
+};
+
+export const buildStreamUrl = (id: string, fileIndex: number) =>
+  buildUrl(`/torrents/${id}/stream?fileIndex=${fileIndex}`);
+
+export const buildDirectPlaybackUrl = (id: string, fileIndex: number) =>
+  buildUrl(`/torrents/${id}/direct/${fileIndex}`);
+
+/** HEAD probe for the /direct/ endpoint. Returns 'ready', 'remuxing', or false. */
+export const probeDirectPlayback = async (
+  id: string,
+  fileIndex: number,
+  signal?: AbortSignal,
+): Promise<'ready' | 'remuxing' | false> => {
+  try {
+    const res = await fetch(buildDirectPlaybackUrl(id, fileIndex), { method: 'HEAD', signal });
+    if (res.status === 200) return 'ready';
+    if (res.status === 202) return 'remuxing';
+    return false;
+  } catch {
+    return false;
+  }
+};
+
+/** HEAD request to direct stream URL. Resolves true if 200/206, false otherwise. */
+export const probeDirectStream = async (
+  id: string,
+  fileIndex: number,
+  signal?: AbortSignal,
+): Promise<boolean> => {
+  try {
+    const res = await fetch(buildStreamUrl(id, fileIndex), { method: 'HEAD', signal });
+    return res.ok;
+  } catch {
+    return false;
+  }
+};
+
+/** Fetches HLS manifest. Returns true if it contains segments or variant streams. */
+export const probeHlsManifest = async (
+  url: string,
+  signal?: AbortSignal,
+): Promise<boolean> => {
+  try {
+    const res = await fetch(url, { signal });
+    if (!res.ok) return false;
+    const text = await res.text();
+    // Single-variant: has #EXTINF (segment entries).
+    // Multi-variant (master): has #EXT-X-STREAM-INF (variant references).
+    return text.includes('#EXTINF') || text.includes('#EXT-X-STREAM-INF');
+  } catch {
+    return false;
+  }
+};
+
+export const buildHlsUrl = (
+  id: string,
+  fileIndex: number,
+  options?: { audioTrack?: number | null; subtitleTrack?: number | null },
+) => {
+  const params = new URLSearchParams();
+  if (options?.audioTrack !== undefined && options.audioTrack !== null) {
+    params.set('audioTrack', String(options.audioTrack));
+  }
+  if (options?.subtitleTrack !== undefined && options.subtitleTrack !== null) {
+    params.set('subtitleTrack', String(options.subtitleTrack));
+  }
+  const query = params.toString();
+  const suffix = query ? `?${query}` : '';
+  return buildUrl(`/torrents/${id}/hls/${fileIndex}/index.m3u8${suffix}`);
+};
+
+export const getMediaInfo = async (id: string, fileIndex: number): Promise<MediaInfo> => {
+  const response = await deduplicatedFetch(
+    buildUrl(`/torrents/${id}/media/${fileIndex}`),
+    undefined,
+    POLL_REQUEST_TIMEOUT_MS,
+  );
+  return handleResponse(response);
+};
+
+export const saveWatchPosition = async (
+  torrentId: string,
+  fileIndex: number,
+  position: number,
+  duration: number,
+  torrentName?: string,
+  filePath?: string,
+): Promise<void> => {
+  const response = await fetch(buildUrl(`/watch-history/${torrentId}/${fileIndex}`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ position, duration, torrentName: torrentName ?? '', filePath: filePath ?? '' }),
+  });
+  return handleResponse(response);
+};
+
+export const getWatchPosition = async (
+  torrentId: string,
+  fileIndex: number,
+): Promise<WatchPosition | null> => {
+  const response = await fetch(buildUrl(`/watch-history/${torrentId}/${fileIndex}`));
+  if (response.status === 404) return null;
+  return handleResponse(response);
+};
+
+export const getWatchHistory = async (limit = 20): Promise<WatchPosition[]> => {
+  const response = await deduplicatedFetch(
+    buildUrl(`/watch-history?limit=${limit}`),
+    undefined,
+    POLL_REQUEST_TIMEOUT_MS,
+  );
+  return handleResponse(response);
+};
+
+export const getEncodingSettings = async (): Promise<EncodingSettings> => {
+  const response = await fetch(buildUrl('/settings/encoding'));
+  return handleResponse(response);
+};
+
+export const getPlayerSettings = async (): Promise<PlayerSettings> => {
+  const response = await deduplicatedFetch(buildUrl('/settings/player'), undefined, POLL_REQUEST_TIMEOUT_MS);
+  return handleResponse(response);
+};
+
+export const getPlayerHealth = async (): Promise<PlayerHealth> => {
+  const response = await deduplicatedFetch(
+    buildUrl('/internal/health/player'),
+    undefined,
+    POLL_REQUEST_TIMEOUT_MS,
+  );
+  return handleResponse(response);
+};
+
+export const updatePlayerSettings = async (
+  input: { currentTorrentId: string | null },
+): Promise<PlayerSettings> => {
+  const response = await fetch(buildUrl('/settings/player'), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ currentTorrentId: input.currentTorrentId ?? '' }),
+  });
+  return handleResponse(response);
+};
+
+export const updateEncodingSettings = async (
+  input: Partial<EncodingSettings>,
+): Promise<EncodingSettings> => {
+  const response = await fetch(buildUrl('/settings/encoding'), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return handleResponse(response);
+};
+
+export const getHLSSettings = async (): Promise<HLSSettings> => {
+  const response = await fetch(buildUrl('/settings/hls'));
+  return handleResponse(response);
+};
+
+export const updateHLSSettings = async (
+  input: Partial<HLSSettings>,
+): Promise<HLSSettings> => {
+  const response = await fetch(buildUrl('/settings/hls'), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return handleResponse(response);
+};
+
+export const hlsSeek = async (
+  id: string,
+  fileIndex: number,
+  time: number,
+  options?: { audioTrack?: number | null; subtitleTrack?: number | null; signal?: AbortSignal },
+): Promise<{ seekTime: number; seekMode?: string }> => {
+  const params = new URLSearchParams();
+  params.set('time', String(time));
+  if (options?.audioTrack !== undefined && options.audioTrack !== null) {
+    params.set('audioTrack', String(options.audioTrack));
+  }
+  if (options?.subtitleTrack !== undefined && options.subtitleTrack !== null) {
+    params.set('subtitleTrack', String(options.subtitleTrack));
+  }
+  const response = await fetch(
+    buildUrl(`/torrents/${id}/hls/${fileIndex}/seek?${params.toString()}`),
+    { method: 'POST', signal: options?.signal },
+  );
+  return handleResponse(response);
+};
+
+export const focusTorrent = async (id: string): Promise<void> => {
+  const response = await fetch(buildUrl(`/torrents/${id}/focus`), { method: 'POST' });
+  return handleResponse(response);
+};
+
+export const unfocusTorrents = async (): Promise<void> => {
+  const response = await fetch(buildUrl('/torrents/unfocus'), { method: 'POST' });
+  return handleResponse(response);
+};
+
+export const isApiError = (error: unknown): error is ApiRequestError =>
+  error instanceof ApiRequestError;
+```
+
+## frontend/index.html
+
+```html
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>T?RRX</title>
+    <link rel="icon" type="image/png" href="/logo/only_x_logo_v1.png" />
+    <link rel="apple-touch-icon" href="/logo/only_x_logo_v1.png" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
+```
+
+## frontend/vite.config.ts
+
+```ts
+import { defineConfig, loadEnv } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+  const proxyTarget = env.VITE_API_PROXY_TARGET || 'http://localhost:8080';
+  const searchProxyTarget = env.VITE_SEARCH_PROXY_TARGET || 'http://localhost:8090';
+
+  return {
+    plugins: [react()],
+    server: {
+      proxy: {
+        '/torrents': {
+          target: proxyTarget,
+          changeOrigin: true,
+        },
+        '/settings/storage': {
+          target: proxyTarget,
+          changeOrigin: true,
+        },
+        '/settings/player': {
+          target: proxyTarget,
+          changeOrigin: true,
+        },
+        '/settings/encoding': {
+          target: proxyTarget,
+          changeOrigin: true,
+        },
+        '/swagger': {
+          target: proxyTarget,
+          changeOrigin: true,
+        },
+        '/watch-history': {
+          target: proxyTarget,
+          changeOrigin: true,
+        },
+        '/ws': {
+          target: proxyTarget,
+          changeOrigin: true,
+          ws: true,
+        },
+        '/search': {
+          target: searchProxyTarget,
+          changeOrigin: true,
+        },
+      },
+    },
+    build: {
+      outDir: 'dist',
+    },
+    define: {
+      __APP_MODE__: JSON.stringify(mode),
+    },
+  };
+});
+```
+
+## frontend/package.json
+
+```json
+{
+  "name": "torrent-stream-web-client",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write src/",
+    "format:check": "prettier --check src/",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.2.6",
+    "@fontsource-variable/jetbrains-mono": "^5.2.6",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@radix-ui/react-slot": "^1.2.3",
+    "@radix-ui/react-switch": "^1.2.6",
+    "@radix-ui/react-tabs": "^1.1.13",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "hls.js": "^1.5.15",
+    "lucide-react": "^0.563.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.13.0",
+    "tailwind-merge": "^3.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^9.39.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.0",
+    "jsdom": "^28.1.0",
+    "postcss": "^8.5.3",
+    "prettier": "^3.8.1",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.55.0",
+    "vite": "^5.4.10",
+    "vitest": "^4.0.18"
+  }
+}
+```
+
 

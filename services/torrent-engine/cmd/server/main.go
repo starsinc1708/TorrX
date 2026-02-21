@@ -77,6 +77,7 @@ func main() {
 	watchHistoryRepo := sessionmongo.NewWatchHistoryRepository(mongoClient, cfg.MongoDatabase)
 	encodingSettingsRepo := mongorepo.NewEncodingSettingsRepository(mongoClient, cfg.MongoDatabase)
 	hlsSettingsRepo := mongorepo.NewHLSSettingsRepository(mongoClient, cfg.MongoDatabase)
+	storageSettingsRepo := mongorepo.NewStorageSettingsRepository(mongoClient, cfg.MongoDatabase)
 	playerSettingsRepo := sessionmongo.NewPlayerSettingsRepository(mongoClient, cfg.MongoDatabase)
 
 	if err := repo.EnsureIndexes(ctx); err != nil {
@@ -111,6 +112,17 @@ func main() {
 		}
 	}
 
+	if storage, ok, err := storageSettingsRepo.GetStorageSettings(ctx); err != nil {
+		logger.Warn("storage settings load failed", slog.String("error", err.Error()))
+	} else if ok {
+		if storage.MaxSessions >= 0 {
+			cfg.MaxSessions = storage.MaxSessions
+		}
+		if storage.MinDiskSpaceBytes >= 0 {
+			cfg.MinDiskSpaceBytes = storage.MinDiskSpaceBytes
+		}
+	}
+
 	currentTorrentID := domain.TorrentID("")
 	if id, ok, err := playerSettingsRepo.GetCurrentTorrentID(ctx); err != nil {
 		logger.Warn("player settings load failed", slog.String("error", err.Error()))
@@ -140,11 +152,11 @@ func main() {
 	// Start disk pressure monitor.
 	if cfg.MinDiskSpaceBytes > 0 {
 		diskUC := usecase.DiskPressure{
-			Engine:        engine,
-			Logger:        logger,
-			DataDir:       cfg.TorrentDataDir,
-			MinFreeBytes:  cfg.MinDiskSpaceBytes,
-			ResumeBytes:   cfg.MinDiskSpaceBytes * 2,
+			Engine:       engine,
+			Logger:       logger,
+			DataDir:      cfg.TorrentDataDir,
+			MinFreeBytes: cfg.MinDiskSpaceBytes,
+			ResumeBytes:  cfg.MinDiskSpaceBytes * 2,
 		}
 		go diskUC.Run(rootCtx)
 	}
@@ -188,6 +200,15 @@ func main() {
 		apihttp.WithWatchHistory(watchHistoryRepo),
 		apihttp.WithEngine(engine),
 		apihttp.WithPlayerSettings(playerSettings),
+		apihttp.WithStorageSettings(app.NewStorageSettingsManager(
+			cfg.TorrentDataDir,
+			app.StorageSettings{
+				MaxSessions:       cfg.MaxSessions,
+				MinDiskSpaceBytes: cfg.MinDiskSpaceBytes,
+			},
+			engine,
+			storageSettingsRepo,
+		)),
 		apihttp.WithAllowedOrigins(cfg.CORSAllowedOrigins),
 	}
 	if cfg.OpenAPIPath != "" {

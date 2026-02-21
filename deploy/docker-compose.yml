@@ -173,6 +173,8 @@ services:
     restart: unless-stopped
     env_file:
       - ./.env
+    ports:
+      - "8090:8090"
     environment:
       HTTP_ADDR: ":8090"
       LOG_LEVEL: "info"
@@ -206,6 +208,8 @@ services:
       context: ../services/torrent-engine
       dockerfile: ../../build/torrent-engine.Dockerfile
     restart: unless-stopped
+    ports:
+      - "8080:8080"
     environment:
       HTTP_ADDR: ":8080"
       LOG_LEVEL: "info"

@@ -53,6 +53,8 @@ func TestFileRefJSONTags(t *testing.T) {
 	expectJSONTag(t, FileRef{}, "Index", "index")
 	expectJSONTag(t, FileRef{}, "Path", "path")
 	expectJSONTag(t, FileRef{}, "Length", "length")
+	expectJSONTag(t, FileRef{}, "PieceStart", "pieceStart,omitempty")
+	expectJSONTag(t, FileRef{}, "PieceEnd", "pieceEnd,omitempty")
 }
 
 func TestRangeJSONTags(t *testing.T) {

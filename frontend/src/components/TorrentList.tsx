@@ -55,6 +55,14 @@ const sortOrderOptions: Array<{ value: SortOrder; label: string }> = [
   { value: 'asc', label: 'Asc' },
 ];
 
+const formatEpisodeCode = (season?: number, episode?: number): string | null => {
+  if (!Number.isFinite(season) || !Number.isFinite(episode)) return null;
+  const seasonNumber = Math.trunc(season ?? 0);
+  const episodeNumber = Math.trunc(episode ?? 0);
+  if (seasonNumber <= 0 || episodeNumber <= 0) return null;
+  return `S${String(seasonNumber).padStart(2, '0')}E${String(episodeNumber).padStart(2, '0')}`;
+};
+
 interface TorrentListProps {
   torrents: TorrentRecord[];
   activeStateMap: Map<string, SessionState>;
@@ -185,6 +193,15 @@ const TorrentList: React.FC<TorrentListProps> = ({
     const watchEntries = watchHistoryByTorrent.get(torrent.id) ?? [];
     const latestWatch = watchEntries[0] ?? null;
     const watchEntryChips = watchEntries.slice(0, 3);
+    const episodeCodeByFileIndex = new Map<number, string>();
+    for (const group of torrent.mediaOrganization?.groups ?? []) {
+      if (group.type !== 'series') continue;
+      for (const item of group.items ?? []) {
+        const code = formatEpisodeCode(item.season, item.episode);
+        if (!code) continue;
+        episodeCodeByFileIndex.set(item.fileIndex, code);
+      }
+    }
 
     return (
       <Card
@@ -253,7 +270,9 @@ const TorrentList: React.FC<TorrentListProps> = ({
                 <div className="flex flex-wrap gap-1.5">
                   {watchEntryChips.map((entry) => {
                     const ratio = entry.duration > 0 ? Math.max(0, Math.min(1, entry.position / entry.duration)) : 0;
-                    const label = `F${entry.fileIndex + 1} ${formatPercent(ratio)} · ${formatTime(entry.position)}`;
+                    const code = episodeCodeByFileIndex.get(entry.fileIndex);
+                    const fileLabel = code ?? `F${entry.fileIndex + 1}`;
+                    const label = `${fileLabel} ${formatPercent(ratio)} · ${formatTime(entry.position)}`;
                     return (
                       <button
                         key={`${torrent.id}-${entry.fileIndex}-${entry.updatedAt}`}

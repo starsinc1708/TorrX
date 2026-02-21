@@ -65,11 +65,11 @@ func TestComputeVariants(t *testing.T) {
 	}{
 		{"1080p source", 1080, 3, false},
 		{"720p source", 720, 2, false},
-		{"480p source", 480, 0, true},     // single variant → nil
-		{"360p source", 360, 0, true},     // below all presets
-		{"4k source", 2160, 3, false},     // >= all presets
-		{"exact 720", 720, 2, false},      // 480 + 720
-		{"just under 720", 719, 0, true},  // only 480 → single variant → nil
+		{"480p source", 480, 0, true},    // single variant → nil
+		{"360p source", 360, 0, true},    // below all presets
+		{"4k source", 2160, 3, false},    // >= all presets
+		{"exact 720", 720, 2, false},     // 480 + 720
+		{"just under 720", 719, 0, true}, // only 480 → single variant → nil
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -228,13 +228,10 @@ func TestBuildMultiVariantFilterComplex(t *testing.T) {
 		t.Fatalf("should not contain subtitles filter when track=-1")
 	}
 
-	// With subtitles.
+	// Subtitle arguments are ignored for WebVTT-first playback.
 	fc2 := buildMultiVariantFilterComplex(variants, "/data/movie.mkv", 1)
-	if !strings.Contains(fc2, "subtitles=") {
-		t.Fatalf("expected subtitles filter, got %q", fc2)
-	}
-	if !strings.Contains(fc2, ":si=1") {
-		t.Fatalf("expected subtitle index 1, got %q", fc2)
+	if strings.Contains(fc2, "subtitles=") {
+		t.Fatalf("subtitle burn-in filter should not be present, got %q", fc2)
 	}
 }
 
@@ -293,12 +290,12 @@ func TestEstimateByteOffset(t *testing.T) {
 		want      int64
 	}{
 		{"mid-point", 50.0, 100.0, 1000, 500},
-		{"start", 0.0, 100.0, 1000, -1},           // targetSec <= 0
+		{"start", 0.0, 100.0, 1000, -1},            // targetSec <= 0
 		{"end", 100.0, 100.0, 1000, 1000},          // ratio = 1.0
 		{"over-end", 150.0, 100.0, 1000, 1000},     // clamped to 1.0
 		{"zero duration", 50.0, 0.0, 1000, -1},     // invalid
 		{"zero file length", 50.0, 100.0, 0, -1},   // invalid
-		{"negative target", -5.0, 100.0, 1000, -1},  // invalid
+		{"negative target", -5.0, 100.0, 1000, -1}, // invalid
 		{"quarter", 25.0, 100.0, 4000, 1000},
 	}
 	for _, tc := range tests {
@@ -548,11 +545,11 @@ func TestBuildStreamingFFmpegArgsSubtitles(t *testing.T) {
 	})
 
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "-vf") {
-		t.Fatal("missing -vf for subtitle burn-in")
+	if strings.Contains(joined, "-vf") {
+		t.Fatal("subtitle burn-in flag should not be present")
 	}
-	if !strings.Contains(joined, "subtitles=") {
-		t.Fatal("missing subtitles filter")
+	if strings.Contains(joined, "subtitles=") {
+		t.Fatal("subtitle burn-in filter should not be present")
 	}
 }
 
@@ -882,17 +879,17 @@ func TestStreamJobStartPlaybackIdempotent(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type mockEngine struct {
-	mu        sync.Mutex
-	calls     []setPriorityCall
-	stateErr  error
-	state     domain.SessionState
+	mu       sync.Mutex
+	calls    []setPriorityCall
+	stateErr error
+	state    domain.SessionState
 }
 
 type setPriorityCall struct {
-	id     domain.TorrentID
-	file   domain.FileRef
-	rng    domain.Range
-	prio   domain.Priority
+	id   domain.TorrentID
+	file domain.FileRef
+	rng  domain.Range
+	prio domain.Priority
 }
 
 func (e *mockEngine) SetPiecePriority(_ context.Context, id domain.TorrentID, file domain.FileRef, rng domain.Range, prio domain.Priority) error {
@@ -907,16 +904,20 @@ func (e *mockEngine) GetSessionState(_ context.Context, id domain.TorrentID) (do
 }
 
 // Stub out remaining Engine interface methods (not used by PriorityManager).
-func (e *mockEngine) Open(context.Context, domain.TorrentSource) (ports.Session, error) { return nil, nil }
-func (e *mockEngine) Close() error                                                       { return nil }
-func (e *mockEngine) GetSession(context.Context, domain.TorrentID) (ports.Session, error) { return nil, nil }
-func (e *mockEngine) ListActiveSessions(context.Context) ([]domain.TorrentID, error)     { return nil, nil }
-func (e *mockEngine) ListSessions(context.Context) ([]domain.TorrentID, error)           { return nil, nil }
-func (e *mockEngine) StopSession(context.Context, domain.TorrentID) error                { return nil }
-func (e *mockEngine) StartSession(context.Context, domain.TorrentID) error               { return nil }
-func (e *mockEngine) RemoveSession(context.Context, domain.TorrentID) error              { return nil }
-func (e *mockEngine) FocusSession(context.Context, domain.TorrentID) error               { return nil }
-func (e *mockEngine) UnfocusAll(context.Context) error                                   { return nil }
+func (e *mockEngine) Open(context.Context, domain.TorrentSource) (ports.Session, error) {
+	return nil, nil
+}
+func (e *mockEngine) Close() error { return nil }
+func (e *mockEngine) GetSession(context.Context, domain.TorrentID) (ports.Session, error) {
+	return nil, nil
+}
+func (e *mockEngine) ListActiveSessions(context.Context) ([]domain.TorrentID, error) { return nil, nil }
+func (e *mockEngine) ListSessions(context.Context) ([]domain.TorrentID, error)       { return nil, nil }
+func (e *mockEngine) StopSession(context.Context, domain.TorrentID) error            { return nil }
+func (e *mockEngine) StartSession(context.Context, domain.TorrentID) error           { return nil }
+func (e *mockEngine) RemoveSession(context.Context, domain.TorrentID) error          { return nil }
+func (e *mockEngine) FocusSession(context.Context, domain.TorrentID) error           { return nil }
+func (e *mockEngine) UnfocusAll(context.Context) error                               { return nil }
 func (e *mockEngine) GetSessionMode(context.Context, domain.TorrentID) (domain.SessionMode, error) {
 	return domain.ModeIdle, nil
 }
@@ -1376,12 +1377,12 @@ func TestRewritePlaylistMasterVariants(t *testing.T) {
 // nopStreamReader is a no-op implementation of ports.StreamReader for tests.
 type nopStreamReader struct{}
 
-func (n *nopStreamReader) Read([]byte) (int, error)        { return 0, io.EOF }
-func (n *nopStreamReader) Seek(int64, int) (int64, error)  { return 0, nil }
-func (n *nopStreamReader) Close() error                    { return nil }
-func (n *nopStreamReader) SetContext(context.Context)      {}
-func (n *nopStreamReader) SetReadahead(int64)              {}
-func (n *nopStreamReader) SetResponsive()                  {}
+func (n *nopStreamReader) Read([]byte) (int, error)       { return 0, io.EOF }
+func (n *nopStreamReader) Seek(int64, int) (int64, error) { return 0, nil }
+func (n *nopStreamReader) Close() error                   { return nil }
+func (n *nopStreamReader) SetContext(context.Context)     {}
+func (n *nopStreamReader) SetReadahead(int64)             {}
+func (n *nopStreamReader) SetResponsive()                 {}
 
 func TestHLSNotConfigured(t *testing.T) {
 	server := NewServer(&fakeCreateTorrent{})
