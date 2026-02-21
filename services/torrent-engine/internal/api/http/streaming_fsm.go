@@ -95,6 +95,10 @@ type StreamJob struct {
 	streamResult *usecase.StreamResult
 	isPipeSource bool
 
+	// Timing instrumentation
+	loadingStartedAt time.Time // set at doLoading() entry
+	readyStartedAt   time.Time // set at doReady() entry
+
 	// Monitoring
 	lastSegPath      string
 	lastSegSize      int64
@@ -265,6 +269,7 @@ func (j *StreamJob) run() {
 
 // doLoading gets the torrent reader, creates data source, prebuffers.
 func (j *StreamJob) doLoading() error {
+	j.loadingStartedAt = time.Now()
 	j.mgr.logger.Info("stream loading",
 		slog.String("torrentId", string(j.key.id)),
 		slog.Int("fileIndex", j.key.fileIndex),
@@ -353,6 +358,7 @@ func (j *StreamJob) doLoading() error {
 
 // doReady builds FFmpeg args, starts FFmpeg, waits for first segment.
 func (j *StreamJob) doReady() error {
+	j.readyStartedAt = time.Now()
 	input, pipeReader := j.dataSource.InputSpec()
 	useReader := pipeReader != nil
 	isLocalFile := !useReader &&
@@ -454,7 +460,12 @@ func (j *StreamJob) doReady() error {
 		if _, statErr := os.Stat(j.playlist); statErr == nil {
 			j.mgr.logger.Info("stream playlist ready", slog.String("dir", j.dir))
 			j.lastSegChangedAt = time.Now()
-			metrics.HLSEncodeDuration.Observe(0) // placeholder
+			if !j.readyStartedAt.IsZero() {
+				metrics.HLSTTFFSeconds.Observe(time.Since(j.readyStartedAt).Seconds())
+			}
+			if !j.loadingStartedAt.IsZero() {
+				metrics.HLSPrebufferDuration.Observe(time.Since(j.loadingStartedAt).Seconds())
+			}
 			j.signalReady()
 			j.transitionTo(StreamPlaying)
 			return nil
