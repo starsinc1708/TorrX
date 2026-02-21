@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -11,6 +11,7 @@ import {
   Square,
   Trash2,
   Users,
+  X,
 } from 'lucide-react';
 import type { FileRef, MediaOrganizationItem, SessionState, TorrentRecord } from '../types';
 import { cn } from '../lib/cn';
@@ -82,6 +83,31 @@ const getMoviePartNumber = (item: MediaOrganizationItem | undefined, fallback: n
   return fallback;
 };
 
+const normalizeTagsList = (tags: string[]): string[] => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const rawTag of tags) {
+    const tag = rawTag.trim();
+    if (!tag) continue;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(tag);
+  }
+  return result;
+};
+
+const areTagsEqual = (a: string[], b: string[]) => {
+  if (a.length !== b.length) return false;
+  const normalizedA = normalizeTagsList(a).map((t) => t.toLowerCase()).sort();
+  const normalizedB = normalizeTagsList(b).map((t) => t.toLowerCase()).sort();
+  if (normalizedA.length !== normalizedB.length) return false;
+  for (let i = 0; i < normalizedA.length; i += 1) {
+    if (normalizedA[i] !== normalizedB[i]) return false;
+  }
+  return true;
+};
+
 const TorrentDetails: React.FC<TorrentDetailsProps> = ({
   torrent,
   sessionState,
@@ -92,8 +118,9 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
   onWatchFile,
   onUpdateTags,
 }) => {
-  const [deleteFiles, setDeleteFiles] = useState(false);
-  const [tagsInput, setTagsInput] = useState((torrent.tags ?? []).join(', '));
+  const [deleteFiles, setDeleteFiles] = useState(true);
+  const [tagDraft, setTagDraft] = useState('');
+  const [editableTags, setEditableTags] = useState<string[]>(() => normalizeTagsList(torrent.tags ?? []));
   const [tagsSaving, setTagsSaving] = useState(false);
   const [selectedSeasonGroupId, setSelectedSeasonGroupId] = useState<string | null>(null);
   const progress = Math.max(sessionState?.progress ?? 0, normalizeProgress(torrent));
@@ -104,7 +131,7 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
     files.forEach((file, idx) => map.set(file.index, idx));
     return map;
   }, [files]);
-  const tagsDisplay = (torrent.tags ?? []).filter((tag) => tag.trim().length > 0);
+  const tagsDisplay = editableTags;
 
   const organizedSections = useMemo(() => {
     const byIndex = new Map<number, FileRef>();
@@ -187,8 +214,25 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
   }, [seasonGroups, selectedSeasonGroupId]);
 
   useEffect(() => {
-    setTagsInput((torrent.tags ?? []).join(', '));
+    setEditableTags(normalizeTagsList(torrent.tags ?? []));
+    setTagDraft('');
   }, [torrent.id, torrent.tags]);
+
+  const addTag = useCallback(() => {
+    const nextTag = tagDraft.trim();
+    if (!nextTag) return;
+    setEditableTags((prev) => normalizeTagsList([...prev, nextTag]));
+    setTagDraft('');
+  }, [tagDraft]);
+
+  const removeTag = useCallback((tag: string) => {
+    const target = tag.trim().toLowerCase();
+    setEditableTags((prev) => prev.filter((item) => item.trim().toLowerCase() !== target));
+  }, []);
+
+  const tagsChanged = useMemo(() => {
+    return !areTagsEqual(editableTags, torrent.tags ?? []);
+  }, [editableTags, torrent.tags]);
 
   return (
     <div className="grid gap-4 lg:h-[calc(100dvh-3.5rem-2*theme(spacing.5))] lg:grid-cols-[minmax(420px,1fr)_minmax(0,1.35fr)] lg:overflow-hidden">
@@ -293,38 +337,69 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
             <div className="flex flex-wrap gap-2">
               {tagsDisplay.length > 0 ? (
                 tagsDisplay.map((tag) => (
-                  <span
-                    key={`${torrent.id}-tag-${tag}`}
-                    className="rounded-full border border-border/70 bg-muted/20 px-2 py-0.5 text-xs text-muted-foreground"
-                  >
-                    #{tag}
-                  </span>
+                  onUpdateTags ? (
+                    <button
+                      key={`${torrent.id}-editable-tag-${tag}`}
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-muted/20 px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted/35"
+                      onClick={() => removeTag(tag)}
+                      title={`Remove #${tag}`}
+                    >
+                      <span>#{tag}</span>
+                      <X className="h-3 w-3" />
+                    </button>
+                  ) : (
+                    <span
+                      key={`${torrent.id}-tag-${tag}`}
+                      className="rounded-full border border-border/70 bg-muted/20 px-2 py-0.5 text-xs text-muted-foreground"
+                    >
+                      #{tag}
+                    </span>
+                  )
                 ))
               ) : (
                 <span className="text-sm text-muted-foreground">No tags</span>
               )}
             </div>
             {onUpdateTags ? (
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <Input
-                  value={tagsInput}
-                  onChange={(event) => setTagsInput(event.target.value)}
-                  placeholder="movie, 4k, anime"
-                />
-                <Button
-                  variant="outline"
-                  onClick={async () => {
-                    setTagsSaving(true);
-                    try {
-                      await onUpdateTags(tagsInput);
-                    } finally {
-                      setTagsSaving(false);
-                    }
-                  }}
-                  disabled={tagsSaving}
-                >
-                  {tagsSaving ? 'Saving...' : 'Save tags'}
-                </Button>
+              <div className="space-y-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <Input
+                    value={tagDraft}
+                    onChange={(event) => setTagDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter') return;
+                      event.preventDefault();
+                      addTag();
+                    }}
+                    placeholder="Add one tag and press Enter"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="whitespace-nowrap"
+                    onClick={addTag}
+                    disabled={!tagDraft.trim()}
+                  >
+                    Add tag
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-w-[110px] whitespace-nowrap"
+                    onClick={async () => {
+                      setTagsSaving(true);
+                      try {
+                        await onUpdateTags(editableTags.join(', '));
+                      } finally {
+                        setTagsSaving(false);
+                      }
+                    }}
+                    disabled={tagsSaving || !tagsChanged}
+                  >
+                    {tagsSaving ? 'Saving...' : 'Save tags'}
+                  </Button>
+                </div>
               </div>
             ) : null}
           </div>

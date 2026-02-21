@@ -1319,6 +1319,67 @@ func TestDataSourceFilePath(t *testing.T) {
 	}
 }
 
+func TestNewStreamDataSource_UsesDirectFileWhenDiskSizeComplete(t *testing.T) {
+	dir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mgr := newStreamJobManager(nil, nil, HLSConfig{DataDir: dir}, logger)
+	job := newStreamJob(mgr, hlsKey{id: "t1", fileIndex: 0}, t.TempDir(), 0)
+
+	content := []byte("0123456789")
+	mediaPath := filepath.Join(dir, "movie.mkv")
+	if err := os.WriteFile(mediaPath, content, 0o644); err != nil {
+		t.Fatalf("write media file: %v", err)
+	}
+
+	result := usecase.StreamResult{
+		File: domain.FileRef{
+			Path:           "movie.mkv",
+			Length:         int64(len(content)),
+			BytesCompleted: 0, // stale progress value
+		},
+		Reader: &nopStreamReader{},
+	}
+
+	ds, subtitlePath := mgr.newStreamDataSource(result, job)
+	defer ds.Close()
+
+	if _, ok := ds.(*directFileSource); !ok {
+		t.Fatalf("data source = %T, want *directFileSource", ds)
+	}
+	if subtitlePath != mediaPath {
+		t.Fatalf("subtitlePath = %q, want %q", subtitlePath, mediaPath)
+	}
+}
+
+func TestNewStreamDataSource_UsesPipeWhenDiskFileIncomplete(t *testing.T) {
+	dir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mgr := newStreamJobManager(nil, nil, HLSConfig{DataDir: dir}, logger)
+	job := newStreamJob(mgr, hlsKey{id: "t1", fileIndex: 0}, t.TempDir(), 0)
+
+	// File exists but is shorter than expected torrent length.
+	mediaPath := filepath.Join(dir, "movie.mkv")
+	if err := os.WriteFile(mediaPath, []byte("short"), 0o644); err != nil {
+		t.Fatalf("write media file: %v", err)
+	}
+
+	result := usecase.StreamResult{
+		File: domain.FileRef{
+			Path:           "movie.mkv",
+			Length:         100,
+			BytesCompleted: 0,
+		},
+		Reader: &nopStreamReader{},
+	}
+
+	ds, _ := mgr.newStreamDataSource(result, job)
+	defer ds.Close()
+
+	if _, ok := ds.(*streamPipeSource); !ok {
+		t.Fatalf("data source = %T, want *streamPipeSource", ds)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // handlers_streaming.go — rewritePlaylistSegmentURLs and HLS handler tests
 // ---------------------------------------------------------------------------

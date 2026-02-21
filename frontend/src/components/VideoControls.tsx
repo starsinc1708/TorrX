@@ -13,7 +13,6 @@ import {
   Camera,
   Maximize2,
   Minimize2,
-  Info,
 } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { formatTime } from '../utils';
@@ -70,8 +69,6 @@ interface VideoControlsProps {
   onQualityChange: (level: number) => void;
   useHls: boolean;
   videoRef: React.RefObject<HTMLVideoElement>;
-  handleOpenInfo?: () => void;
-  torrentId: string | null;
   takeScreenshot: () => void;
   toggleFullscreen: () => void;
   isFullscreen: boolean;
@@ -114,8 +111,6 @@ export const VideoControls: React.FC<VideoControlsProps> = React.memo(({
   onQualityChange,
   useHls,
   videoRef,
-  handleOpenInfo,
-  torrentId,
   takeScreenshot,
   toggleFullscreen,
   isFullscreen,
@@ -356,16 +351,6 @@ export const VideoControls: React.FC<VideoControlsProps> = React.memo(({
           </DropdownMenu>
         )}
 
-        {handleOpenInfo && torrentId ? (
-          <button
-            className={ctrlBtnClassName}
-            onClick={handleOpenInfo}
-            title="Torrent info"
-            aria-label="Torrent info"
-          >
-            <Info size={18} />
-          </button>
-        ) : null}
         <button className={ctrlBtnClassName} onClick={takeScreenshot} title="Screenshot (S)">
           <Camera size={18} />
         </button>

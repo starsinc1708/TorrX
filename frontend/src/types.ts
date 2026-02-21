@@ -129,6 +129,9 @@ export interface StorageUsage {
   dataDir: string;
   dataDirExists: boolean;
   dataDirSizeBytes: number;
+  dataDirLogicalBytes: number;
+  dataDirAllocatedBytes: number;
+  torrentClientDownloadedBytes: number;
   scannedAt: string;
 }
 

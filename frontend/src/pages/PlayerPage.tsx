@@ -644,7 +644,6 @@ const PlayerPage: React.FC = () => {
             onSelectFile={handleSelectFile}
             onSelectAudioTrack={handleSelectAudioTrack}
             onSelectSubtitleTrack={handleSelectSubtitleTrack}
-            onOpenInfo={() => setInfoOpen(true)}
             playerHealth={playerHealth}
             onShowHealth={handleShowHealth}
             filesPanelOpen={filesPanelOpen}

@@ -906,7 +906,15 @@ const SettingsPage: React.FC = () => {
                 <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
                   <div>Data dir: <span className="font-mono text-foreground">{storageSettings.usage.dataDir || '-'}</span></div>
                   <div>Exists: <span className="text-foreground">{storageSettings.usage.dataDirExists ? 'yes' : 'no'}</span></div>
-                  <div>Current usage: <span className="text-foreground">{formatBytes(storageSettings.usage.dataDirSizeBytes)}</span></div>
+                  <div>
+                    Logical size: <span className="text-foreground">{formatBytes(storageSettings.usage.dataDirLogicalBytes ?? storageSettings.usage.dataDirSizeBytes)}</span>
+                  </div>
+                  <div>
+                    Physically allocated: <span className="text-foreground">{formatBytes(storageSettings.usage.dataDirAllocatedBytes)}</span>
+                  </div>
+                  <div>
+                    Downloaded by torrent client: <span className="text-foreground">{formatBytes(storageSettings.usage.torrentClientDownloadedBytes)}</span>
+                  </div>
                 </div>
 
                 <div className="flex justify-end">

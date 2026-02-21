@@ -506,6 +506,18 @@ func (m *StreamJobManager) newStreamDataSource(result usecase.StreamResult, job 
 		if pathErr == nil {
 			if info, statErr := os.Stat(candidatePath); statErr == nil && !info.IsDir() {
 				subtitleSourcePath = candidatePath
+				// BytesCompleted can be temporarily stale (e.g. right after restart
+				// while piece verification is still in progress). If the file on disk
+				// already has the full expected length, treat it as complete and stream
+				// directly from disk to avoid RAM-buffer stalls/timeouts.
+				if !fileComplete && result.File.Length > 0 && info.Size() >= result.File.Length {
+					fileComplete = true
+					m.logger.Info("stream using on-disk size to detect complete file",
+						slog.String("path", candidatePath),
+						slog.Int64("expectedBytes", result.File.Length),
+						slog.Int64("actualBytes", info.Size()),
+					)
+				}
 				if fileComplete {
 					m.logger.Info("stream using directFileSource",
 						slog.String("path", candidatePath),

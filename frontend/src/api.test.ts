@@ -165,7 +165,7 @@ describe('deleteTorrent', () => {
 
     await deleteTorrent('abc', false);
     const url = mockFetch.mock.calls[0][0] as string;
-    expect(url).toContain('/torrents/abc');
+    expect(url).toContain('/torrents/abc?deleteFiles=false');
     expect(mockFetch.mock.calls[0][1].method).toBe('DELETE');
   });
 

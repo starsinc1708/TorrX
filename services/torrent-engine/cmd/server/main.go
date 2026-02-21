@@ -208,6 +208,27 @@ func main() {
 			},
 			engine,
 			storageSettingsRepo,
+			func(ctx context.Context) (int64, error) {
+				records, err := repo.List(ctx, domain.TorrentFilter{})
+				if err != nil {
+					return 0, err
+				}
+				var total int64
+				for _, record := range records {
+					if len(record.Files) == 0 {
+						if record.DoneBytes > 0 {
+							total += record.DoneBytes
+						}
+						continue
+					}
+					for _, file := range record.Files {
+						if file.BytesCompleted > 0 {
+							total += file.BytesCompleted
+						}
+					}
+				}
+				return total, nil
+			},
 		)),
 		apihttp.WithAllowedOrigins(cfg.CORSAllowedOrigins),
 	}

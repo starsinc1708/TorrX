@@ -409,9 +409,7 @@ export const stopTorrent = async (id: string): Promise<TorrentRecord> => {
 
 export const deleteTorrent = async (id: string, deleteFiles: boolean): Promise<void> => {
   const params = new URLSearchParams();
-  if (deleteFiles) {
-    params.set('deleteFiles', 'true');
-  }
+  params.set('deleteFiles', deleteFiles ? 'true' : 'false');
   const url = params.toString() ? `/torrents/${id}?${params.toString()}` : `/torrents/${id}`;
   const response = await deduplicatedFetch(buildUrl(url), { method: 'DELETE' });
   return handleResponse(response);

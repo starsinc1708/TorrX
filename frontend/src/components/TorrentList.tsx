@@ -136,7 +136,7 @@ const TorrentList: React.FC<TorrentListProps> = ({
   onClearFilters,
 }) => {
   const [bulkRunning, setBulkRunning] = useState(false);
-  const [bulkDeleteFiles, setBulkDeleteFiles] = useState(false);
+  const [bulkDeleteFiles, setBulkDeleteFiles] = useState(true);
 
   const currentTorrent =
     currentTorrentId !== null ? torrents.find((torrent) => torrent.id === currentTorrentId) ?? null : null;

@@ -50,7 +50,6 @@ interface VideoPlayerProps {
   onPlaybackRateChange?: (rate: number) => void;
   initialQualityLevel?: number;
   onQualityLevelChange?: (level: number) => void;
-  onOpenInfo?: () => void;
   playerHealth?: PlayerHealth | null;
   onShowHealth?: () => void;
   filesPanelOpen?: boolean;
@@ -145,7 +144,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onPlaybackRateChange,
   initialQualityLevel = -1,
   onQualityLevelChange,
-  onOpenInfo,
   playerHealth,
   onShowHealth,
   filesPanelOpen = true,
@@ -1109,25 +1107,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [hlsError, videoError, streamUrl, onRetryInitialize]);
 
-  const handleOpenInfo = useCallback(() => {
-    if (!onOpenInfo) return;
-    const d = document as any;
-    const fullscreenElement = getFullscreenElement();
-    if (fullscreenElement) {
-      const exit =
-        document.exitFullscreen ?? d.webkitExitFullscreen ?? d.mozCancelFullScreen ?? d.msExitFullscreen;
-      if (typeof exit === 'function') {
-        Promise.resolve(exit.call(document))
-          .catch(() => {})
-          .finally(() => {
-            onOpenInfo();
-          });
-        return;
-      }
-    }
-    onOpenInfo();
-  }, [onOpenInfo, getFullscreenElement]);
-
   const requestServerSeek = useCallback(
     async (absoluteTarget: number, forceResume = false) => {
       const video = videoRef.current;
@@ -1618,8 +1597,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       onQualityChange={handleQualityChange}
                       useHls={useHls}
                       videoRef={videoRef}
-                      handleOpenInfo={handleOpenInfo}
-                      torrentId={torrentId}
                       takeScreenshot={takeScreenshot}
                       toggleFullscreen={toggleFullscreen}
                       isFullscreen={isFullscreen}

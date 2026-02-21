@@ -14,10 +14,13 @@ type StorageSettings struct {
 }
 
 type StorageUsage struct {
-	DataDir          string    `json:"dataDir"`
-	DataDirExists    bool      `json:"dataDirExists"`
-	DataDirSizeBytes int64     `json:"dataDirSizeBytes"`
-	ScannedAt        time.Time `json:"scannedAt"`
+	DataDir                      string    `json:"dataDir"`
+	DataDirExists                bool      `json:"dataDirExists"`
+	DataDirSizeBytes             int64     `json:"dataDirSizeBytes"` // Deprecated alias for dataDirLogicalBytes.
+	DataDirLogicalBytes          int64     `json:"dataDirLogicalBytes"`
+	DataDirAllocatedBytes        int64     `json:"dataDirAllocatedBytes"`
+	TorrentClientDownloadedBytes int64     `json:"torrentClientDownloadedBytes"`
+	ScannedAt                    time.Time `json:"scannedAt"`
 }
 
 type StorageSettingsView struct {
@@ -40,6 +43,7 @@ type StorageSettingsManager struct {
 	mu                sync.RWMutex
 	runtime           StorageSettingsRuntime
 	store             StorageSettingsStore
+	downloadedBytesFn func(ctx context.Context) (int64, error)
 	dataDir           string
 	maxSessions       int
 	minDiskSpaceBytes int64
@@ -51,10 +55,12 @@ func NewStorageSettingsManager(
 	initial StorageSettings,
 	runtime StorageSettingsRuntime,
 	store StorageSettingsStore,
+	downloadedBytesFn func(ctx context.Context) (int64, error),
 ) *StorageSettingsManager {
 	return &StorageSettingsManager{
 		runtime:           runtime,
 		store:             store,
+		downloadedBytesFn: downloadedBytesFn,
 		dataDir:           filepath.Clean(dataDir),
 		maxSessions:       initial.MaxSessions,
 		minDiskSpaceBytes: initial.MinDiskSpaceBytes,
@@ -73,10 +79,19 @@ func (m *StorageSettingsManager) Get() StorageSettingsView {
 		currentMax = m.runtime.MaxSessions()
 	}
 
+	usage := scanStorageUsage(dataDir)
+	if m.downloadedBytesFn != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
+		defer cancel()
+		if total, err := m.downloadedBytesFn(ctx); err == nil && total >= 0 {
+			usage.TorrentClientDownloadedBytes = total
+		}
+	}
+
 	return StorageSettingsView{
 		MaxSessions:       currentMax,
 		MinDiskSpaceBytes: currentMinFree,
-		Usage:             scanStorageUsage(dataDir),
+		Usage:             usage,
 	}
 }
 
@@ -127,7 +142,8 @@ func scanStorageUsage(dataDir string) StorageUsage {
 	}
 	usage.DataDirExists = true
 
-	var total int64
+	var logicalTotal int64
+	var allocatedTotal int64
 	_ = filepath.WalkDir(dataDir, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil || d.IsDir() {
 			return nil
@@ -136,9 +152,18 @@ func scanStorageUsage(dataDir string) StorageUsage {
 		if err != nil {
 			return nil
 		}
-		total += fileInfo.Size()
+		size := fileInfo.Size()
+		if size > 0 {
+			logicalTotal += size
+		}
+		allocated := fileAllocatedBytes(fileInfo)
+		if allocated > 0 {
+			allocatedTotal += allocated
+		}
 		return nil
 	})
-	usage.DataDirSizeBytes = total
+	usage.DataDirLogicalBytes = logicalTotal
+	usage.DataDirSizeBytes = logicalTotal
+	usage.DataDirAllocatedBytes = allocatedTotal
 	return usage
 }
