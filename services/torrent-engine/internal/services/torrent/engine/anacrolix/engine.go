@@ -441,7 +441,8 @@ func (e *Engine) GetSessionState(ctx context.Context, id domain.TorrentID) (doma
 	}
 
 	length := t.Length()
-	completed := t.BytesCompleted()
+	rawCompleted := t.BytesCompleted()
+	completed := rawCompleted
 
 	// Maintain high-water mark: after restart anacrolix re-verifies pieces
 	// from disk and BytesCompleted() can temporarily be lower than peak.
@@ -501,18 +502,22 @@ func (e *Engine) GetSessionState(ctx context.Context, id domain.TorrentID) (doma
 	mode = e.modes[id]
 	e.mu.RUnlock()
 
+	transferPhase, verificationProgress := deriveTransferPhase(status, mode, completed, rawCompleted)
+
 	return domain.SessionState{
-		ID:            id,
-		Status:        status,
-		Mode:          mode,
-		Progress:      progress,
-		Peers:         stats.ActivePeers,
-		DownloadSpeed: downloadSpeed,
-		UploadSpeed:   uploadSpeed,
-		Files:         mapFiles(t),
-		NumPieces:     numPieces,
-		PieceBitfield: bitfield,
-		UpdatedAt:     time.Now().UTC(),
+		ID:                   id,
+		Status:               status,
+		Mode:                 mode,
+		TransferPhase:        transferPhase,
+		Progress:             progress,
+		VerificationProgress: verificationProgress,
+		Peers:                stats.ActivePeers,
+		DownloadSpeed:        downloadSpeed,
+		UploadSpeed:          uploadSpeed,
+		Files:                mapFiles(t),
+		NumPieces:            numPieces,
+		PieceBitfield:        bitfield,
+		UpdatedAt:            time.Now().UTC(),
 	}, nil
 }
 
@@ -866,6 +871,26 @@ func pieceBitfield(t *torrent.Torrent) (numPieces int, encoded string) {
 	return n, base64.StdEncoding.EncodeToString(buf)
 }
 
+// mapPriorityString converts an anacrolix PiecePriority to a human-readable
+// string for the FileRef.Priority field exposed via the API.
+func mapPriorityString(p torrent.PiecePriority) string {
+	switch p {
+	case torrent.PiecePriorityNone:
+		return "none"
+	case torrent.PiecePriorityNormal, torrent.PiecePriorityReadahead:
+		return "normal"
+	case torrent.PiecePriorityHigh:
+		return "high"
+	case torrent.PiecePriorityNow:
+		return "now"
+	default:
+		if p < torrent.PiecePriorityNormal {
+			return "low"
+		}
+		return "normal"
+	}
+}
+
 func mapFiles(t *torrent.Torrent) (mapped []domain.FileRef) {
 	if !torrentInfoReady(t) {
 		return nil
@@ -883,13 +908,29 @@ func mapFiles(t *torrent.Torrent) (mapped []domain.FileRef) {
 	files := t.Files()
 	mapped = make([]domain.FileRef, 0, len(files))
 	for i, f := range files {
+		start := f.BeginPieceIndex()
+		end := f.EndPieceIndex()
+		total := end - start
+		completed := 0
+		for p := start; p < end; p++ {
+			if t.PieceState(p).Complete {
+				completed++
+			}
+		}
+		progress := 0.0
+		if total > 0 {
+			progress = float64(completed) / float64(total)
+		}
+
 		mapped = append(mapped, domain.FileRef{
 			Index:          i,
 			Path:           f.Path(),
 			Length:         f.Length(),
 			BytesCompleted: f.BytesCompleted(),
-			PieceStart:     f.BeginPieceIndex(),
-			PieceEnd:       f.EndPieceIndex(),
+			PieceStart:     start,
+			PieceEnd:       end,
+			Progress:       progress,
+			Priority:       mapPriorityString(f.Priority()),
 		})
 	}
 	return mapped
