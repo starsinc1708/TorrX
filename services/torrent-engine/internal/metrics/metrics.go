@@ -152,6 +152,40 @@ var (
 		Name:      "hls_rate_limit_bytes_per_sec",
 		Help:      "Current applied download rate limit in bytes per second (0 = unlimited).",
 	})
+
+	HLSSeekLatency = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "engine",
+		Name:      "hls_seek_latency_seconds",
+		Help:      "Latency from seek request to new playlist ready in seconds.",
+		Buckets:   []float64{0.5, 1, 2, 5, 10, 30},
+	})
+
+	HLSSeekFailuresTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "engine",
+		Name:      "hls_seek_failures_total",
+		Help:      "Total number of HLS seek failures.",
+	})
+
+	HLSTTFFSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "engine",
+		Name:      "hls_ttff_seconds",
+		Help:      "Time-to-first-frame: from FFmpeg start to first playlist ready.",
+		Buckets:   []float64{1, 3, 5, 10, 15, 30, 60},
+	})
+
+	HLSPrebufferDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "engine",
+		Name:      "hls_prebuffer_duration_seconds",
+		Help:      "Duration of the prebuffer phase before FFmpeg start.",
+		Buckets:   []float64{0.5, 1, 3, 5, 10, 15},
+	})
+
+	VerifyDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "engine",
+		Name:      "verify_duration_seconds",
+		Help:      "Duration of piece re-verification phase after restart.",
+		Buckets:   []float64{1, 5, 10, 30, 60, 120, 300},
+	})
 )
 
 func Register(reg prometheus.Registerer) {
@@ -180,5 +214,10 @@ func Register(reg prometheus.Registerer) {
 		HLSBufferResizesTotal,
 		HLSBufferSizeBytes,
 		HLSRateLimitBytesPerSec,
+		HLSSeekLatency,
+		HLSSeekFailuresTotal,
+		HLSTTFFSeconds,
+		HLSPrebufferDuration,
+		VerifyDuration,
 	)
 }
