@@ -180,3 +180,25 @@ groups:
         annotations:
           summary: "API error budget exhausted"
           description: "API SLO breached — budget {{ $value | humanizePercentage }}."
+
+      # ── Player/HLS: seek latency ─────────────────────────────────────
+      - alert: HLSSeekLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(engine_hls_seek_latency_seconds_bucket[5m])) by (le)) > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: player
+        annotations:
+          summary: "HLS seek P95 latency > 5s"
+          description: "HLS seek P95 latency is {{ $value | humanizeDuration }}."
+
+      # ── Player/HLS: time-to-first-frame ──────────────────────────────
+      - alert: HLSTTFFHigh
+        expr: histogram_quantile(0.95, sum(rate(engine_hls_ttff_seconds_bucket[5m])) by (le)) > 15
+        for: 5m
+        labels:
+          severity: warning
+          service: player
+        annotations:
+          summary: "HLS TTFF P95 > 15s"
+          description: "Time-to-first-frame P95 is {{ $value | humanizeDuration }}."
