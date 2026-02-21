@@ -74,6 +74,7 @@ type StreamJobManager struct {
 	totalSeekRequests     uint64
 	totalSeekFailures     uint64
 	lastSeekAt            time.Time
+	lastSeekStartedAt     time.Time // for seek latency calculation
 	lastSeekTarget        float64
 	lastSeekError         string
 	lastSeekErrorAt       time.Time
@@ -343,6 +344,7 @@ func (m *StreamJobManager) SeekJob(id domain.TorrentID, fileIndex, audioTrack, s
 	m.lastSeekAt = time.Now().UTC()
 	m.lastSeekTarget = seekSeconds
 	metrics.HLSSeekTotal.Inc()
+	m.lastSeekStartedAt = time.Now()
 
 	seekModeEmitted := false
 	if old, ok := m.jobs[key]; ok {
@@ -463,6 +465,9 @@ func (m *StreamJobManager) chooseSeekMode(key hlsKey, job *StreamJob, targetSec 
 	if job == nil {
 		return SeekModeHard
 	}
+	if job.ffmpeg == nil {
+		return SeekModeHard
+	}
 
 	segDur := float64(segDurInt)
 	if segDur <= 0 {
@@ -470,22 +475,25 @@ func (m *StreamJobManager) chooseSeekMode(key hlsKey, job *StreamJob, targetSec 
 	}
 	currentSec := job.seekSeconds
 
-	distance := targetSec - currentSec
-	absDistance := math.Abs(distance)
+	// Current job timeline starts at currentSec. Going back before it requires
+	// a hard restart.
+	if targetSec < currentSec {
+		return SeekModeHard
+	}
 
-	// Soft: target within 2×segDur of job seekSeconds.
-	if absDistance < 2*segDur {
+	progressUs := job.ffmpeg.ProgressUs()
+	encoded := currentSec + float64(progressUs)/1e6
+
+	// Target is already encoded in this job timeline.
+	if targetSec <= encoded {
 		return SeekModeSoft
 	}
 
-	// Forward soft: FFmpeg already encoded past target, or gap small enough.
-	if distance > 0 && job.ffmpeg != nil {
-		progressUs := job.ffmpeg.ProgressUs()
-		encoded := job.seekSeconds + float64(progressUs)/1e6
-		gap := targetSec - encoded
-		if gap < estimatedRestartCostSec {
-			return SeekModeSoft
-		}
+	// Small forward seeks are cheaper to keep in-place than restarting FFmpeg.
+	gap := targetSec - encoded
+	softWindow := math.Min(estimatedRestartCostSec, 2*segDur)
+	if gap < softWindow {
+		return SeekModeSoft
 	}
 
 	return SeekModeHard
@@ -1091,6 +1099,8 @@ func (m *StreamJobManager) recordJobFailure(job *StreamJob, err error) {
 		m.totalSeekFailures++
 		m.lastSeekError = msg
 		m.lastSeekErrorAt = now
+		metrics.HLSSeekFailuresTotal.Inc()
+		m.lastSeekStartedAt = time.Time{} // reset
 	}
 	m.mu.Unlock()
 }
@@ -1102,6 +1112,10 @@ func (m *StreamJobManager) recordPlaylistReady(job *StreamJob) {
 	if job != nil && job.seekSeconds > 0 {
 		m.lastSeekError = ""
 		m.lastSeekErrorAt = time.Time{}
+		if !m.lastSeekStartedAt.IsZero() {
+			metrics.HLSSeekLatency.Observe(time.Since(m.lastSeekStartedAt).Seconds())
+			m.lastSeekStartedAt = time.Time{}
+		}
 	}
 	m.mu.Unlock()
 }
@@ -1127,11 +1141,74 @@ func (m *StreamJobManager) PurgeTorrent(id domain.TorrentID) {
 	// Also remove the torrent's base directory from the HLS working area.
 	torrentDir := filepath.Join(m.baseDir, string(id))
 	_ = os.RemoveAll(torrentDir)
+	_ = os.RemoveAll(filepath.Join(m.baseDir, "remux", string(id)))
 
 	// Clean up any seek directories that may have been created outside the base.
 	for _, d := range dirs {
 		_ = os.RemoveAll(d)
 	}
+}
+
+// CleanupOrphanArtifacts removes cached HLS/remux artifacts for torrent IDs
+// that do not exist in the repository anymore.
+func (m *StreamJobManager) CleanupOrphanArtifacts(valid map[domain.TorrentID]struct{}) error {
+	if len(valid) == 0 {
+		valid = map[domain.TorrentID]struct{}{}
+	}
+
+	m.mu.RLock()
+	for key := range m.jobs {
+		valid[key.id] = struct{}{}
+	}
+	m.mu.RUnlock()
+
+	var errs []error
+
+	baseEntries, err := os.ReadDir(m.baseDir)
+	if err == nil {
+		for _, entry := range baseEntries {
+			name := entry.Name()
+			if name == "remux" || name == "codec_cache.json" || strings.HasPrefix(name, ".") {
+				continue
+			}
+			if !entry.IsDir() {
+				continue
+			}
+			id := domain.TorrentID(name)
+			if _, ok := valid[id]; ok {
+				continue
+			}
+			if rmErr := os.RemoveAll(filepath.Join(m.baseDir, name)); rmErr != nil {
+				errs = append(errs, rmErr)
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		errs = append(errs, err)
+	}
+
+	remuxRoot := filepath.Join(m.baseDir, "remux")
+	remuxEntries, remuxErr := os.ReadDir(remuxRoot)
+	if remuxErr == nil {
+		for _, entry := range remuxEntries {
+			if !entry.IsDir() {
+				continue
+			}
+			id := domain.TorrentID(entry.Name())
+			if _, ok := valid[id]; ok {
+				continue
+			}
+			if rmErr := os.RemoveAll(filepath.Join(remuxRoot, entry.Name())); rmErr != nil {
+				errs = append(errs, rmErr)
+			}
+		}
+	} else if !os.IsNotExist(remuxErr) {
+		errs = append(errs, remuxErr)
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
 }
 
 // ---- Shutdown ---------------------------------------------------------------
