@@ -612,8 +612,108 @@
     },
 
     {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "\u0422\u0435\u043a\u0443\u0449\u0438\u0439 \u0440\u0430\u0437\u043c\u0435\u0440 \u0441\u043a\u043e\u043b\u044c\u0437\u044f\u0449\u0435\u0433\u043e \u0431\u0443\u0444\u0435\u0440\u0430 \u0447\u0442\u0435\u043d\u0438\u044f. \u0410\u0434\u0430\u043f\u0442\u0438\u0432\u043d\u043e \u043c\u0435\u043d\u044f\u0435\u0442\u0441\u044f \u0432 \u0437\u0430\u0432\u0438\u0441\u0438\u043c\u043e\u0441\u0442\u0438 \u043e\u0442 \u0441\u043a\u043e\u0440\u043e\u0441\u0442\u0438 \u043f\u043e\u0442\u043e\u043a\u0430",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "light-blue", "mode": "fixed" },
+          "custom": {
+            "drawStyle": "line", "fillOpacity": 15, "lineInterpolation": "smooth",
+            "lineWidth": 2, "pointSize": 3, "showPoints": "never",
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 40 },
+      "id": 33,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "engine_hls_buffer_size_bytes",
+          "legendFormat": "\u0420\u0430\u0437\u043c\u0435\u0440 \u0431\u0443\u0444\u0435\u0440\u0430",
+          "range": true, "refId": "A"
+        }
+      ],
+      "title": "\u0421\u043a\u043e\u043b\u044c\u0437\u044f\u0449\u0438\u0439 \u0431\u0443\u0444\u0435\u0440",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "\u0427\u0430\u0441\u0442\u043e\u0442\u0430 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0439 \u0440\u0430\u0437\u043c\u0435\u0440\u0430 \u0441\u043a\u043e\u043b\u044c\u0437\u044f\u0449\u0435\u0433\u043e \u0431\u0443\u0444\u0435\u0440\u0430. \u0427\u0430\u0441\u0442\u044b\u0435 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u0433\u043e\u0432\u043e\u0440\u044f\u0442 \u043e \u043d\u0435\u0441\u0442\u0430\u0431\u0438\u043b\u044c\u043d\u043e\u043c \u043f\u043e\u0442\u043e\u043a\u0435",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "orange", "mode": "fixed" },
+          "custom": {
+            "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth",
+            "lineWidth": 2, "pointSize": 3, "showPoints": "never",
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 40 },
+      "id": 34,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "rate(engine_hls_buffer_resizes_total[5m])",
+          "legendFormat": "\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f/\u0441",
+          "range": true, "refId": "A"
+        }
+      ],
+      "title": "\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u0440\u0430\u0437\u043c\u0435\u0440\u0430 \u0431\u0443\u0444\u0435\u0440\u0430",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "\u0422\u0435\u043a\u0443\u0449\u0435\u0435 \u043e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d\u0438\u0435 \u0441\u043a\u043e\u0440\u043e\u0441\u0442\u0438 HLS-\u043f\u043e\u0442\u043e\u043a\u0430 (0 = \u0431\u0435\u0437 \u043e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d\u0438\u0439)",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "green", "mode": "fixed" },
+          "custom": {
+            "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth",
+            "lineWidth": 2, "pointSize": 3, "showPoints": "never",
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 40 },
+      "id": 35,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "engine_hls_rate_limit_bytes_per_sec",
+          "legendFormat": "\u041b\u0438\u043c\u0438\u0442",
+          "range": true, "refId": "A"
+        }
+      ],
+      "title": "\u041e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d\u0438\u0435 \u0441\u043a\u043e\u0440\u043e\u0441\u0442\u0438 HLS",
+      "type": "timeseries"
+    },
+
+    {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 48 },
       "id": 20,
       "title": "HLS \u2014 \u0421\u0442\u0430\u0431\u0438\u043b\u044c\u043d\u043e\u0441\u0442\u044c",
       "type": "row"
@@ -633,7 +733,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 49 },
       "id": 21,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
@@ -666,7 +766,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 41 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 49 },
       "id": 22,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
@@ -686,8 +786,75 @@
     },
 
     {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "\u0427\u0430\u0441\u0442\u043e\u0442\u0430 \u043f\u0435\u0440\u0435\u0445\u043e\u0434\u043e\u0432 \u043c\u0435\u0436\u0434\u0443 \u0441\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u044f\u043c\u0438 \u043a\u043e\u043d\u0435\u0447\u043d\u043e\u0433\u043e \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0430 HLS. \u041f\u043e\u043c\u043e\u0433\u0430\u0435\u0442 \u043e\u0442\u0441\u043b\u0435\u0436\u0438\u0432\u0430\u0442\u044c \u0436\u0438\u0437\u043d\u0435\u043d\u043d\u044b\u0439 \u0446\u0438\u043a\u043b \u043f\u043e\u0442\u043e\u043a\u0430",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth",
+            "lineWidth": 2, "pointSize": 3, "showPoints": "never",
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 57 },
+      "id": 36,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "rate(engine_hls_state_transitions_total[5m])",
+          "legendFormat": "{{from}} \u2192 {{to}}",
+          "range": true, "refId": "A"
+        }
+      ],
+      "title": "\u041f\u0435\u0440\u0435\u0445\u043e\u0434\u044b \u0441\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u0439 FSM",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "\u0420\u0430\u0441\u043f\u0440\u0435\u0434\u0435\u043b\u0435\u043d\u0438\u0435 \u0440\u0435\u0436\u0438\u043c\u043e\u0432 \u043f\u0435\u0440\u0435\u043c\u043e\u0442\u043a\u0438: soft (\u0432\u043d\u0443\u0442\u0440\u0438 \u0431\u0443\u0444\u0435\u0440\u0430), hard (\u0441\u043c\u0435\u043d\u0430 \u043f\u043e\u0437\u0438\u0446\u0438\u0438), restart (\u043f\u043e\u043b\u043d\u044b\u0439 \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0443\u0441\u043a)",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth",
+            "lineWidth": 2, "pointSize": 3, "showPoints": "never",
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 57 },
+      "id": 37,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "rate(engine_hls_seek_mode_total[5m])",
+          "legendFormat": "{{mode}}",
+          "range": true, "refId": "A"
+        }
+      ],
+      "title": "\u0420\u0435\u0436\u0438\u043c\u044b \u043f\u0435\u0440\u0435\u043c\u043e\u0442\u043a\u0438",
+      "type": "timeseries"
+    },
+
+    {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 49 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 65 },
       "id": 23,
       "title": "HTTP API",
       "type": "row"
@@ -707,7 +874,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 50 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 66 },
       "id": 24,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
@@ -740,7 +907,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 50 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 66 },
       "id": 25,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
@@ -773,7 +940,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 58 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 74 },
       "id": 26,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
@@ -794,7 +961,7 @@
 
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 66 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 82 },
       "id": 27,
       "title": "Player SLO",
       "type": "row"
@@ -811,7 +978,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 5, "x": 0, "y": 67 },
+      "gridPos": { "h": 4, "w": 5, "x": 0, "y": 83 },
       "id": 28,
       "options": {
         "colorMode": "background",
@@ -846,7 +1013,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 5, "x": 5, "y": 67 },
+      "gridPos": { "h": 4, "w": 5, "x": 5, "y": 83 },
       "id": 29,
       "options": {
         "colorMode": "background",
@@ -881,7 +1048,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 5, "x": 10, "y": 67 },
+      "gridPos": { "h": 4, "w": 5, "x": 10, "y": 83 },
       "id": 30,
       "options": {
         "colorMode": "background",
@@ -916,7 +1083,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 5, "x": 15, "y": 67 },
+      "gridPos": { "h": 4, "w": 5, "x": 15, "y": 83 },
       "id": 31,
       "options": {
         "colorMode": "background",
@@ -951,7 +1118,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 67 },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 83 },
       "id": 32,
       "options": {
         "colorMode": "background",
