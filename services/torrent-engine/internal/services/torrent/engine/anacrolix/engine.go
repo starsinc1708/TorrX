@@ -15,6 +15,7 @@ import (
 
 	"torrentstream/internal/domain"
 	"torrentstream/internal/domain/ports"
+	"torrentstream/internal/metrics"
 )
 
 var ErrSessionNotFound = domain.ErrNotFound
@@ -45,8 +46,9 @@ type Engine struct {
 	focusedID     domain.TorrentID               // cached; always consistent with modes
 	peakCompleted map[domain.TorrentID]int64     // high-water mark for BytesCompleted per torrent
 	peakBitfield  map[domain.TorrentID][]byte    // high-water mark for piece completion bitfield
-	lastAccess    map[domain.TorrentID]time.Time // LRU tracking for session eviction
-	rateLimits    map[domain.TorrentID]int64     // per-torrent download rate limit (bytes/sec); 0 = unlimited
+	lastAccess      map[domain.TorrentID]time.Time // LRU tracking for session eviction
+	rateLimits      map[domain.TorrentID]int64     // per-torrent download rate limit (bytes/sec); 0 = unlimited
+	verifyStartedAt map[domain.TorrentID]time.Time // tracks when verifying started per torrent
 	maxSessions   int
 	idleTimeout   time.Duration
 	reaperCancel  context.CancelFunc
@@ -64,17 +66,18 @@ func New(cfg Config) (*Engine, error) {
 	}
 
 	e := &Engine{
-		client:        client,
-		sessions:      make(map[domain.TorrentID]*torrent.Torrent),
-		modes:         make(map[domain.TorrentID]domain.SessionMode),
-		speeds:        make(map[domain.TorrentID]speedSample),
-		focusedPieces: make(map[domain.TorrentID]focusedPieceRange),
-		peakCompleted: make(map[domain.TorrentID]int64),
-		peakBitfield:  make(map[domain.TorrentID][]byte),
-		lastAccess:    make(map[domain.TorrentID]time.Time),
-		rateLimits:    make(map[domain.TorrentID]int64),
-		maxSessions:   cfg.MaxSessions,
-		idleTimeout:   cfg.IdleTimeout,
+		client:          client,
+		sessions:        make(map[domain.TorrentID]*torrent.Torrent),
+		modes:           make(map[domain.TorrentID]domain.SessionMode),
+		speeds:          make(map[domain.TorrentID]speedSample),
+		focusedPieces:   make(map[domain.TorrentID]focusedPieceRange),
+		peakCompleted:   make(map[domain.TorrentID]int64),
+		peakBitfield:    make(map[domain.TorrentID][]byte),
+		lastAccess:      make(map[domain.TorrentID]time.Time),
+		rateLimits:      make(map[domain.TorrentID]int64),
+		verifyStartedAt: make(map[domain.TorrentID]time.Time),
+		maxSessions:     cfg.MaxSessions,
+		idleTimeout:     cfg.IdleTimeout,
 	}
 
 	if e.idleTimeout > 0 {
@@ -88,15 +91,16 @@ func New(cfg Config) (*Engine, error) {
 
 func NewWithClient(client *torrent.Client) *Engine {
 	return &Engine{
-		client:        client,
-		sessions:      make(map[domain.TorrentID]*torrent.Torrent),
-		modes:         make(map[domain.TorrentID]domain.SessionMode),
-		speeds:        make(map[domain.TorrentID]speedSample),
-		focusedPieces: make(map[domain.TorrentID]focusedPieceRange),
-		peakCompleted: make(map[domain.TorrentID]int64),
-		peakBitfield:  make(map[domain.TorrentID][]byte),
-		lastAccess:    make(map[domain.TorrentID]time.Time),
-		rateLimits:    make(map[domain.TorrentID]int64),
+		client:          client,
+		sessions:        make(map[domain.TorrentID]*torrent.Torrent),
+		modes:           make(map[domain.TorrentID]domain.SessionMode),
+		speeds:          make(map[domain.TorrentID]speedSample),
+		focusedPieces:   make(map[domain.TorrentID]focusedPieceRange),
+		peakCompleted:   make(map[domain.TorrentID]int64),
+		peakBitfield:    make(map[domain.TorrentID][]byte),
+		lastAccess:      make(map[domain.TorrentID]time.Time),
+		rateLimits:      make(map[domain.TorrentID]int64),
+		verifyStartedAt: make(map[domain.TorrentID]time.Time),
 	}
 }
 
@@ -319,6 +323,7 @@ func (e *Engine) waitForInfo(t *torrent.Torrent, id domain.TorrentID) {
 			delete(e.peakBitfield, id)
 			delete(e.lastAccess, id)
 			delete(e.rateLimits, id)
+			delete(e.verifyStartedAt, id)
 		}
 		e.mu.Unlock()
 		e.forgetSpeed(id)
@@ -503,6 +508,20 @@ func (e *Engine) GetSessionState(ctx context.Context, id domain.TorrentID) (doma
 	e.mu.RUnlock()
 
 	transferPhase, verificationProgress := deriveTransferPhase(status, mode, completed, rawCompleted)
+
+	// Track verification phase duration for metrics.
+	e.mu.Lock()
+	if transferPhase == domain.TransferPhaseVerifying {
+		if _, tracking := e.verifyStartedAt[id]; !tracking {
+			e.verifyStartedAt[id] = time.Now()
+		}
+	} else {
+		if started, was := e.verifyStartedAt[id]; was {
+			delete(e.verifyStartedAt, id)
+			metrics.VerifyDuration.Observe(time.Since(started).Seconds())
+		}
+	}
+	e.mu.Unlock()
 
 	return domain.SessionState{
 		ID:                   id,
@@ -815,6 +834,7 @@ func (e *Engine) dropTorrent(id domain.TorrentID, t *torrent.Torrent) error {
 	delete(e.peakBitfield, id)
 	delete(e.lastAccess, id)
 	delete(e.rateLimits, id)
+	delete(e.verifyStartedAt, id)
 	wasFocused := e.focusedID == id
 	if wasFocused {
 		e.focusedID = ""
@@ -1043,6 +1063,7 @@ func (e *Engine) evictIdleSessionLocked() (*torrent.Torrent, domain.TorrentID, e
 	delete(e.peakBitfield, evictID)
 	delete(e.lastAccess, evictID)
 	delete(e.rateLimits, evictID)
+	delete(e.verifyStartedAt, evictID)
 	if e.focusedID == evictID {
 		e.focusedID = ""
 	}
