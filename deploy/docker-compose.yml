@@ -263,10 +263,9 @@ services:
       # Torrent download data — change host path for custom location:
       # - /path/on/host:/data
       - torrent_data:/data
-      # HLS transcode working directory:
-      # - /path/on/host:/hls
-      - hls_cache:/hls
       - anacrolix_cache:/root/.cache/anacrolix
+    tmpfs:
+      - /hls:size=2147483648,mode=1777
     depends_on:
       mongo:
         condition: service_healthy
@@ -393,7 +392,6 @@ volumes:
   mongo_data:
   mongo_backups:
   torrent_data:
-  hls_cache:
   anacrolix_cache:
   redis_data:
   prometheus_data:
