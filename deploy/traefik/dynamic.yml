@@ -35,6 +35,25 @@ http:
         - security-headers
       priority: 190
 
+    integrations:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/settings/integrations`) || PathPrefix(`/api/v2`) || PathPrefix(`/widget`)"
+      service: torrent-notifier-api
+      middlewares:
+        - security-headers
+      priority: 195
+
+    integrations-secure:
+      entryPoints:
+        - websecure
+      rule: "PathPrefix(`/settings/integrations`) || PathPrefix(`/api/v2`) || PathPrefix(`/widget`)"
+      service: torrent-notifier-api
+      middlewares:
+        - security-headers
+      priority: 195
+      tls: {}
+
     jackett:
       entryPoints:
         - web
@@ -101,6 +120,12 @@ http:
         serversTransport: backend-long-timeout
         servers:
           - url: "http://torrent-search:8090"
+
+    torrent-notifier-api:
+      loadBalancer:
+        serversTransport: backend-long-timeout
+        servers:
+          - url: "http://torrent-notifier:8070"
 
     jackett-ui:
       loadBalancer:
