@@ -6,11 +6,12 @@ import (
 )
 
 type Config struct {
-	HTTPAddr          string
-	MongoURI          string
-	MongoDatabase     string
-	TorrentEngineURL  string
-	LogLevel          string
+	HTTPAddr         string
+	MongoURI         string
+	MongoDatabase    string
+	TorrentEngineURL string
+	LogLevel         string
+	LogFormat        string
 }
 
 func LoadConfig() Config {
@@ -20,6 +21,7 @@ func LoadConfig() Config {
 		MongoDatabase:    getEnv("MONGO_DB", "torrentstream"),
 		TorrentEngineURL: getEnv("TORRENT_ENGINE_URL", "http://localhost:8080"),
 		LogLevel:         strings.ToLower(getEnv("LOG_LEVEL", "info")),
+		LogFormat:        strings.ToLower(getEnv("LOG_FORMAT", "text")),
 	}
 }
 
