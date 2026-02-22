@@ -66,8 +66,9 @@ func (w *Watcher) Run(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			}
-		} else {
-			// watch returned nil — context was cancelled
+		}
+		// nil return means cursor closed by server — retry immediately
+		if ctx.Err() != nil {
 			return
 		}
 	}
