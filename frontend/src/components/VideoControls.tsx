@@ -13,6 +13,7 @@ import {
   Camera,
   Maximize2,
   Minimize2,
+  BarChart2,
 } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { formatTime } from '../utils';
@@ -73,6 +74,8 @@ interface VideoControlsProps {
   toggleFullscreen: () => void;
   isFullscreen: boolean;
   streamUrl: string;
+  showStats: boolean;
+  onToggleStats: () => void;
 }
 
 export const VideoControls: React.FC<VideoControlsProps> = React.memo(({
@@ -115,6 +118,8 @@ export const VideoControls: React.FC<VideoControlsProps> = React.memo(({
   toggleFullscreen,
   isFullscreen,
   streamUrl,
+  showStats,
+  onToggleStats,
 }) => {
   const getQualityLabel = (levelIndex: number): string => {
     if (levelIndex === -1) return 'Auto';
@@ -351,6 +356,18 @@ export const VideoControls: React.FC<VideoControlsProps> = React.memo(({
           </DropdownMenu>
         )}
 
+        <button
+          className={cn(
+            ctrlBtnClassName,
+            showStats ? 'text-primary' : '',
+          )}
+          onClick={onToggleStats}
+          title="Stats overlay (Alt+D)"
+          aria-label="Toggle stats overlay"
+          aria-pressed={showStats}
+        >
+          <BarChart2 size={16} />
+        </button>
         <button className={ctrlBtnClassName} onClick={takeScreenshot} title="Screenshot (S)">
           <Camera size={18} />
         </button>
