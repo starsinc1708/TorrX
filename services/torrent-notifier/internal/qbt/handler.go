@@ -1,6 +1,7 @@
 package qbt
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -144,9 +145,17 @@ func (h *Handler) handleTorrentsAdd(w http.ResponseWriter, r *http.Request) {
 	magnet := r.FormValue("urls")
 	name := r.FormValue("rename")
 
-	body := fmt.Sprintf(`{"magnetURI":%q,"name":%q}`, magnet, name)
+	type addBody struct {
+		MagnetURI string `json:"magnetURI"`
+		Name      string `json:"name"`
+	}
+	b, err := json.Marshal(addBody{MagnetURI: magnet, Name: name})
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	resp, err := h.client.Post(h.engineURL+"/torrents", "application/json",
-		strings.NewReader(body))
+		bytes.NewReader(b))
 	if err != nil {
 		log.Printf("qbt: POST /torrents error: %v", err)
 		http.Error(w, "upstream error", http.StatusBadGateway)
@@ -169,7 +178,11 @@ func (h *Handler) handleTorrentsDelete(w http.ResponseWriter, r *http.Request) {
 	deleteFiles := r.FormValue("deleteFiles") == "true"
 
 	url := fmt.Sprintf("%s/torrents/%s?deleteFiles=%v", h.engineURL, hash, deleteFiles)
-	req, _ := http.NewRequestWithContext(r.Context(), http.MethodDelete, url, nil)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodDelete, url, nil)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	resp, err := h.client.Do(req)
 	if err != nil {
 		log.Printf("qbt: DELETE /torrents/%s error: %v", hash, err)

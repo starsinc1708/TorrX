@@ -2,6 +2,7 @@ package qbt_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -86,5 +87,91 @@ func TestQBT_AppVersion(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Body.String() != "4.6.0" {
 		t.Errorf("expected 4.6.0, got %q", w.Body.String())
+	}
+}
+
+func TestQBT_Login_SetsSIDCookie(t *testing.T) {
+	h := qbt.NewHandler("http://unused")
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v2/auth/login", nil)
+	h.ServeHTTP(w, r)
+	cookies := w.Result().Cookies()
+	found := false
+	for _, c := range cookies {
+		if c.Name == "SID" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected SID cookie to be set")
+	}
+}
+
+func TestQBT_WebapiVersion(t *testing.T) {
+	h := qbt.NewHandler("http://unused")
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/v2/app/webapiVersion", nil)
+	h.ServeHTTP(w, r)
+	if w.Body.String() != "2.8.3" {
+		t.Errorf("expected 2.8.3, got %q", w.Body.String())
+	}
+}
+
+func TestQBT_TorrentsAdd_ForwardsMagnet(t *testing.T) {
+	var gotBody []byte
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/torrents" {
+			t.Errorf("expected /torrents, got %s", r.URL.Path)
+		}
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer engine.Close()
+
+	h := qbt.NewHandler(engine.URL)
+	form := url.Values{"urls": {"magnet:?xt=urn:btih:abc123"}}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v2/torrents/add",
+		strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if w.Body.String() != "Ok." {
+		t.Errorf("expected Ok., got %q", w.Body.String())
+	}
+	if !strings.Contains(string(gotBody), "abc123") {
+		t.Errorf("engine body should contain magnet hash, got: %s", gotBody)
+	}
+}
+
+func TestQBT_TorrentsDelete_ForwardsDELETE(t *testing.T) {
+	var gotMethod, gotPath string
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer engine.Close()
+
+	h := qbt.NewHandler(engine.URL)
+	form := url.Values{"hashes": {"abc123"}, "deleteFiles": {"false"}}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v2/torrents/delete",
+		strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(w, r)
+
+	if gotMethod != http.MethodDelete {
+		t.Errorf("expected DELETE, got %s", gotMethod)
+	}
+	if gotPath != "/torrents/abc123" {
+		t.Errorf("expected /torrents/abc123, got %s", gotPath)
 	}
 }
