@@ -71,6 +71,7 @@ export const defaultRankingProfile: SearchRankingProfile = {
   preferredAudio: ['RU'],
   preferredSubtitles: ['RU'],
   targetSizeBytes: 0,
+  preferredQuality: '',
 };
 
 export const phaseLabels: Record<string, string> = {
@@ -142,6 +143,7 @@ export const loadStoredProfile = (): SearchRankingProfile => {
       preferredAudio: Array.isArray(parsed.preferredAudio) ? parsed.preferredAudio : [],
       preferredSubtitles: Array.isArray(parsed.preferredSubtitles) ? parsed.preferredSubtitles : [],
       targetSizeBytes: Number(parsed.targetSizeBytes) > 0 ? Number(parsed.targetSizeBytes) : 0,
+      preferredQuality: typeof parsed.preferredQuality === 'string' ? parsed.preferredQuality : '',
     };
   } catch {
     return defaultRankingProfile;

@@ -408,6 +408,7 @@ const appendRankingProfile = (params: URLSearchParams, profile?: SearchRankingPr
     params.set('preferredSubtitles', profile.preferredSubtitles.join(','));
   }
   if (profile.targetSizeBytes > 0) params.set('targetSizeBytes', String(profile.targetSizeBytes));
+  if (profile.preferredQuality) params.set('preferredQuality', profile.preferredQuality);
 };
 
 export const getTorrent = async (id: string): Promise<TorrentRecord> => {

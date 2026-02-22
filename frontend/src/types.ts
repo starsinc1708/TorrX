@@ -2,6 +2,7 @@ export type TorrentStatusFilter = 'all' | 'active' | 'completed' | 'stopped';
 export type TorrentView = 'summary' | 'full';
 export type TorrentSortBy = 'name' | 'createdAt' | 'updatedAt' | 'totalBytes' | 'progress';
 export type SortOrder = 'asc' | 'desc';
+export type FilePriority = 'none' | 'low' | 'normal' | 'high' | 'now';
 
 export interface FileRef {
   index: number;
@@ -11,7 +12,7 @@ export interface FileRef {
   pieceStart?: number; // inclusive
   pieceEnd?: number;   // exclusive
   progress?: number;
-  priority?: string;
+  priority?: FilePriority;
 }
 
 export interface TorrentRecord {
@@ -21,6 +22,7 @@ export interface TorrentRecord {
   infoHash?: string;
   files?: FileRef[];
   mediaOrganization?: MediaOrganization;
+  progress?: number;
   totalBytes?: number;
   doneBytes?: number;
   createdAt?: string;
@@ -366,6 +368,7 @@ export interface SearchRankingProfile {
   preferredAudio: string[];
   preferredSubtitles: string[];
   targetSizeBytes: number;
+  preferredQuality: string;
 }
 
 export interface SearchResponse {
