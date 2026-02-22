@@ -40,16 +40,16 @@ import type {
 } from '../types';
 import { formatBytes } from '../utils';
 
+const RANKING_PRESETS = {
+  balanced:    { freshnessWeight: 1,   seedersWeight: 2, qualityWeight: 2, languageWeight: 1, sizeWeight: 0.5 },
+  bestQuality: { freshnessWeight: 0.5, seedersWeight: 2, qualityWeight: 5, languageWeight: 2, sizeWeight: 0   },
+  mostSeeded:  { freshnessWeight: 0.5, seedersWeight: 5, qualityWeight: 1, languageWeight: 1, sizeWeight: 0   },
+  compact:     { freshnessWeight: 0.5, seedersWeight: 2, qualityWeight: 1, languageWeight: 1, sizeWeight: 5   },
+} as const;
+
+type PresetKey = keyof typeof RANKING_PRESETS;
+
 const SearchPage: React.FC = () => {
-  const RANKING_PRESETS = {
-    balanced:    { freshnessWeight: 1,   seedersWeight: 2, qualityWeight: 2, languageWeight: 1, sizeWeight: 0.5 },
-    bestQuality: { freshnessWeight: 0.5, seedersWeight: 2, qualityWeight: 5, languageWeight: 2, sizeWeight: 0   },
-    mostSeeded:  { freshnessWeight: 0.5, seedersWeight: 5, qualityWeight: 1, languageWeight: 1, sizeWeight: 0   },
-    compact:     { freshnessWeight: 0.5, seedersWeight: 2, qualityWeight: 1, languageWeight: 1, sizeWeight: 5   },
-  } as const;
-
-  type PresetKey = keyof typeof RANKING_PRESETS;
-
   const search = useSearch();
   const { toast } = useToast();
 
@@ -643,6 +643,7 @@ const SearchPage: React.FC = () => {
                   <button
                     key={key}
                     onClick={() => applyPreset(key)}
+                    aria-pressed={activePreset === key}
                     className={cn(
                       'rounded-lg border px-3 py-1.5 text-sm transition-colors',
                       activePreset === key
@@ -661,6 +662,7 @@ const SearchPage: React.FC = () => {
                 <select
                   value={profile.preferredQuality ?? ''}
                   onChange={(e) => setProfile((prev) => ({ ...prev, preferredQuality: e.target.value }))}
+                  aria-label="Quality target"
                   className="ts-select ts-dropdown-trigger rounded-lg px-2 py-1 text-sm"
                 >
                   <option value="">Auto</option>
