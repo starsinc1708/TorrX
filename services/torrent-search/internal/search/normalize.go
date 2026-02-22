@@ -717,12 +717,13 @@ func sourceTypeScore(sourceType string) float64 {
 
 // qualityTiers maps a quality label to a tier index.
 // Higher tier = higher resolution.
+// Aliases for the same resolution tier are grouped together.
 var qualityTiers = map[string]int{
 	"360p":  0,
 	"480p":  1,
-	"720p":  2,
-	"1080p": 3,
-	"4K":    4,
+	"720p":  2, "HD": 2,
+	"1080p": 3, "FHD": 3,
+	"4K":    4, "2160p": 4, "UHD": 4,
 }
 
 // preferredQualityBonus returns a score adjustment based on how close actual

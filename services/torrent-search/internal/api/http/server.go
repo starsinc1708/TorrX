@@ -873,7 +873,7 @@ func parseRankingProfile(r *http.Request) (domain.SearchRankingProfile, error) {
 		}
 		profile.TargetSizeBytes = value
 	}
-	if q := strings.TrimSpace(r.URL.Query().Get("preferred_quality")); q != "" {
+	if q := strings.TrimSpace(r.URL.Query().Get("preferredQuality")); q != "" {
 		profile.PreferredQuality = q
 	}
 	return domain.NormalizeRankingProfile(profile), nil

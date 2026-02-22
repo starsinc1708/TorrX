@@ -891,6 +891,11 @@ func TestPreferredQualityBonus(t *testing.T) {
 		{"1080p", "360p", -10},
 		{"4K", "480p", -10},
 		{"4K", "360p", -10},
+		// Alias exact matches → +20
+		{"4K", "2160p", 20},
+		{"4K", "UHD", 20},
+		{"1080p", "FHD", 20},
+		{"720p", "HD", 20},
 		// Unknown actual → 0
 		{"1080p", "", 0},
 		{"1080p", "Unknown", 0},
