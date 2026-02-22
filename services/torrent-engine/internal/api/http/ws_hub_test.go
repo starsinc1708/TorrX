@@ -442,6 +442,106 @@ func TestHandleWS_MultipleConcurrentClients(t *testing.T) {
 	}
 }
 
+func TestHandleWS_StatesPayloadMatchesRESTStateSnapshot(t *testing.T) {
+	now := time.Date(2026, 2, 22, 11, 0, 0, 0, time.UTC)
+	expected := domain.SessionState{
+		ID:                   "t1",
+		Status:               domain.TorrentActive,
+		TransferPhase:        domain.TransferPhaseVerifying,
+		Progress:             0.66,
+		VerificationProgress: 0.32,
+		Files: []domain.FileRef{
+			{
+				Index:          1,
+				Path:           "show/ep02.mkv",
+				Length:         2000,
+				BytesCompleted: 1320,
+				Progress:       0.6,
+				Priority:       "normal",
+				PieceStart:     20,
+				PieceEnd:       40,
+			},
+		},
+		UpdatedAt: now,
+	}
+
+	listStates := &fakeListTorrentStates{result: []domain.SessionState{expected}}
+	s := NewServer(nil, WithListTorrentStates(listStates))
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+
+	conn := dialWS(t, srv)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	restResp, err := http.Get(srv.URL + "/torrents/state?status=active")
+	if err != nil {
+		t.Fatalf("rest get states: %v", err)
+	}
+	defer restResp.Body.Close()
+	if restResp.StatusCode != http.StatusOK {
+		t.Fatalf("rest status=%d, want 200", restResp.StatusCode)
+	}
+	var restStates torrentStateList
+	if err := json.NewDecoder(restResp.Body).Decode(&restStates); err != nil {
+		t.Fatalf("decode rest states: %v", err)
+	}
+	if restStates.Count != 1 || len(restStates.Items) != 1 {
+		t.Fatalf("rest count/items mismatch: count=%d len=%d", restStates.Count, len(restStates.Items))
+	}
+
+	s.BroadcastStates(listStates.result)
+	msg := readWSMessage(t, conn, 2*time.Second)
+	if msg.Type != "states" {
+		t.Fatalf("ws type=%q, want states", msg.Type)
+	}
+	payload, err := json.Marshal(msg.Data)
+	if err != nil {
+		t.Fatalf("marshal ws data: %v", err)
+	}
+	var wsStates []domain.SessionState
+	if err := json.Unmarshal(payload, &wsStates); err != nil {
+		t.Fatalf("decode ws states: %v", err)
+	}
+	if len(wsStates) != 1 {
+		t.Fatalf("ws states len=%d, want 1", len(wsStates))
+	}
+
+	assertCanonical := func(name string, got domain.SessionState) {
+		t.Helper()
+		if got.Progress != expected.Progress {
+			t.Fatalf("%s: progress=%f want=%f", name, got.Progress, expected.Progress)
+		}
+		if got.TransferPhase != expected.TransferPhase {
+			t.Fatalf("%s: transferPhase=%q want=%q", name, got.TransferPhase, expected.TransferPhase)
+		}
+		if got.VerificationProgress != expected.VerificationProgress {
+			t.Fatalf("%s: verificationProgress=%f want=%f", name, got.VerificationProgress, expected.VerificationProgress)
+		}
+		if len(got.Files) != 1 {
+			t.Fatalf("%s: files len=%d want=1", name, len(got.Files))
+		}
+		file := got.Files[0]
+		wantFile := expected.Files[0]
+		if file.Progress != wantFile.Progress {
+			t.Fatalf("%s: file progress=%f want=%f", name, file.Progress, wantFile.Progress)
+		}
+		if file.Priority != wantFile.Priority {
+			t.Fatalf("%s: file priority=%q want=%q", name, file.Priority, wantFile.Priority)
+		}
+		if file.BytesCompleted != wantFile.BytesCompleted {
+			t.Fatalf("%s: file bytesCompleted=%d want=%d", name, file.BytesCompleted, wantFile.BytesCompleted)
+		}
+		if file.PieceStart != wantFile.PieceStart || file.PieceEnd != wantFile.PieceEnd {
+			t.Fatalf("%s: file piece range=%d..%d want=%d..%d",
+				name, file.PieceStart, file.PieceEnd, wantFile.PieceStart, wantFile.PieceEnd)
+		}
+	}
+
+	assertCanonical("rest", restStates.Items[0])
+	assertCanonical("ws", wsStates[0])
+}
+
 func TestHandleWS_ClientDisconnect(t *testing.T) {
 	s := makeWSServer()
 	srv := httptest.NewServer(s)

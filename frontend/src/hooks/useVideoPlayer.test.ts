@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useVideoPlayer } from './useVideoPlayer';
+import * as api from '../api';
 import type { TorrentRecord, SessionState } from '../types';
 
 vi.mock('../api', () => ({
@@ -156,5 +157,28 @@ describe('useVideoPlayer', () => {
     const { result } = renderHook(() => useVideoPlayer(torrent, session));
     expect(result.current.availableFiles).toHaveLength(1);
     expect(result.current.availableFiles[0].path).toBe('session-file.mkv');
+  });
+
+  it('uses backend file progress for completion checks', async () => {
+    const torrent = makeTorrent({
+      files: [{ index: 0, path: 'movie.mkv', length: 500, bytesCompleted: 500, progress: 0.4 }],
+    });
+    const session = {
+      id: 't1',
+      mode: 'downloading',
+      files: [{ index: 0, path: 'movie.mkv', length: 500, bytesCompleted: 500, progress: 0.4 }],
+    } as unknown as SessionState;
+    const probeDirectPlaybackMock = vi.mocked(api.probeDirectPlayback);
+
+    const { result } = renderHook(() => useVideoPlayer(torrent, session));
+    act(() => {
+      result.current.selectFile(0);
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(probeDirectPlaybackMock).not.toHaveBeenCalled();
   });
 });

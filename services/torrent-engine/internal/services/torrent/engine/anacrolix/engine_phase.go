@@ -30,3 +30,21 @@ func deriveTransferPhase(
 
 	return domain.TransferPhaseDownloading, 0
 }
+
+// nextVerificationPeak keeps verification progress monotonic during the
+// post-restart re-verification window.
+func nextVerificationPeak(prevPeak, stableCompleted, verifiedCompleted int64) int64 {
+	if stableCompleted <= 0 {
+		return 0
+	}
+	if verifiedCompleted < 0 {
+		verifiedCompleted = 0
+	}
+	if verifiedCompleted > stableCompleted {
+		verifiedCompleted = stableCompleted
+	}
+	if prevPeak > verifiedCompleted {
+		return prevPeak
+	}
+	return verifiedCompleted
+}

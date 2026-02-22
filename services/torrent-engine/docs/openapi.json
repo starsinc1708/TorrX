@@ -1096,7 +1096,7 @@
     "/ws": {
       "get": {
         "summary": "WebSocket stream for live updates",
-        "description": "Upgrade request to WebSocket endpoint.",
+        "description": "Upgrade request to WebSocket endpoint. Server sends JSON envelopes: {\"type\": \"states\"|\"torrents\"|\"player_settings\"|\"health\", \"data\": ...}. Canonical progress payloads are sent in type=states as SessionState[] with FileRef entries.",
         "responses": {
           "101": { "description": "Switching Protocols" }
         }
@@ -1212,8 +1212,36 @@
         "properties": {
           "index": { "type": "integer" },
           "path": { "type": "string" },
-          "length": { "type": "integer", "format": "int64" }
-        }
+          "length": { "type": "integer", "format": "int64" },
+          "bytesCompleted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Completed bytes for this file according to current backend session snapshot."
+          },
+          "progress": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Canonical backend file progress ratio. UI should display this value directly and must not recompute progress from bitfields."
+          },
+          "priority": {
+            "type": "string",
+            "enum": ["none", "low", "normal", "high", "now"],
+            "description": "Effective backend piece priority for this file."
+          },
+          "pieceStart": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Inclusive piece index where file starts."
+          },
+          "pieceEnd": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Exclusive piece index where file ends."
+          }
+        },
+        "required": ["index", "path", "length", "bytesCompleted", "progress"]
       },
       "SessionState": {
         "type": "object",
@@ -1221,14 +1249,43 @@
           "id": { "type": "string" },
           "status": { "type": "string" },
           "mode": { "type": "string", "enum": ["idle", "downloading", "stopped", "focused", "paused", "completed"] },
-          "transferPhase": { "type": "string", "enum": ["downloading", "verifying"] },
-          "progress": { "type": "number", "format": "double" },
-          "verificationProgress": { "type": "number", "format": "double" },
+          "transferPhase": {
+            "type": "string",
+            "enum": ["downloading", "verifying"],
+            "description": "Current transfer phase. verifying means post-restart piece verification is in progress."
+          },
+          "progress": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Canonical backend torrent progress ratio for current session state."
+          },
+          "verificationProgress": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Canonical verify progress (0..1). Meaningful when transferPhase=verifying."
+          },
           "peers": { "type": "integer" },
           "downloadSpeed": { "type": "integer", "format": "int64" },
           "uploadSpeed": { "type": "integer", "format": "int64" },
+          "files": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/FileRef" }
+          },
+          "numPieces": {
+            "type": "integer",
+            "description": "Total piece count for the torrent."
+          },
+          "pieceBitfield": {
+            "type": "string",
+            "description": "Base64-encoded piece completion bitfield for visualization."
+          },
           "updatedAt": { "type": "string", "format": "date-time" }
-        }
+        },
+        "required": ["id", "status", "progress", "updatedAt"]
       },
       "SessionStateList": {
         "type": "object",

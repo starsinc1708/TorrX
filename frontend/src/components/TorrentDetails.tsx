@@ -13,9 +13,13 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import type { FileRef, MediaOrganizationItem, SessionState, TorrentRecord } from '../types';
+import type { FilePriority, FileRef, MediaOrganizationItem, SessionState, TorrentRecord } from '../types';
 import { cn } from '../lib/cn';
 import {
+  countFilePriorities,
+  filePriorityOrder,
+  getFileProgress,
+  getTorrentProgress,
   formatBytes,
   formatDate,
   formatPercent,
@@ -23,7 +27,7 @@ import {
   isAudioFile,
   isImageFile,
   isVideoFile,
-  normalizeProgress,
+  normalizeFilePriority,
 } from '../utils';
 import PieceBar from './PieceBar';
 import { Badge } from './ui/badge';
@@ -35,6 +39,7 @@ import { Switch } from './ui/switch';
 interface TorrentDetailsProps {
   torrent: TorrentRecord;
   sessionState: SessionState | null;
+  prioritizeActiveFileOnly?: boolean;
   onBack: () => void;
   onStart: () => void;
   onStop: () => void;
@@ -42,6 +47,19 @@ interface TorrentDetailsProps {
   onWatchFile?: (torrentId: string, fileIndex: number) => void;
   onUpdateTags?: (tagsInput: string) => Promise<boolean> | boolean;
 }
+
+const filePriorityBadgeClass = (priority: FilePriority): string => {
+  if (priority === 'now' || priority === 'high') {
+    return 'border border-primary/35 bg-primary/20 text-primary';
+  }
+  if (priority === 'normal') {
+    return 'border border-emerald-500/35 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400';
+  }
+  if (priority === 'low') {
+    return 'border border-amber-500/35 bg-amber-500/15 text-amber-700 dark:text-amber-400';
+  }
+  return 'border border-border/70 bg-muted/40 text-muted-foreground';
+};
 
 const fileIcon = (file: FileRef) => {
   if (isVideoFile(file.path)) return <FileVideo className="h-4 w-4 text-primary" />;
@@ -111,6 +129,7 @@ const areTagsEqual = (a: string[], b: string[]) => {
 const TorrentDetails: React.FC<TorrentDetailsProps> = ({
   torrent,
   sessionState,
+  prioritizeActiveFileOnly = true,
   onBack,
   onStart,
   onStop,
@@ -123,9 +142,10 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
   const [editableTags, setEditableTags] = useState<string[]>(() => normalizeTagsList(torrent.tags ?? []));
   const [tagsSaving, setTagsSaving] = useState(false);
   const [selectedSeasonGroupId, setSelectedSeasonGroupId] = useState<string | null>(null);
-  const progress = sessionState?.progress ?? normalizeProgress(torrent);
+  const progress = getTorrentProgress(sessionState, torrent);
 
   const files = useMemo(() => sessionState?.files ?? torrent.files ?? [], [sessionState?.files, torrent.files]);
+  const priorityCounts = useMemo(() => countFilePriorities(files), [files]);
   const fileOrder = useMemo(() => {
     const map = new Map<number, number>();
     files.forEach((file, idx) => map.set(file.index, idx));
@@ -422,6 +442,28 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
               <CardTitle className="text-base">Files ({files.length})</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
+              <div className="rounded-lg border border-border/70 bg-muted/10 p-3">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                  Focus priority mode
+                </div>
+                <div className="mt-1.5 text-xs text-muted-foreground">
+                  {prioritizeActiveFileOnly ? 'Enabled (neighbors target: none)' : 'Disabled (neighbors target: low)'}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {filePriorityOrder.map((priority) => (
+                    <span
+                      key={`details-priority-${priority}`}
+                      className={cn(
+                        'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium',
+                        filePriorityBadgeClass(priority),
+                      )}
+                    >
+                      {priority} {priorityCounts[priority]}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
               {seasonGroups.length > 0 && activeSeasonGroup ? (
                 <div className="rounded-lg border border-border/70 bg-muted/10 p-3">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
@@ -469,7 +511,8 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
                   {section.entries.map((entry, idx) => {
                     const file = entry.file;
                     const targetFileIndex = entry.targetFileIndex;
-                    const fileProg = file.length > 0 ? (file.bytesCompleted ?? 0) / file.length : 0;
+                    const fileProg = getFileProgress(file);
+                    const filePriority = normalizeFilePriority(file.priority);
                     const fallbackTitle = entry.item?.displayName?.trim() || fileBaseName(file.path);
                     const cleanTitle = normalizeDisplayTitle(fallbackTitle) || fallbackTitle;
                     const partLabel =
@@ -492,6 +535,7 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
                         type="button"
                         className={cn(
                           'w-full rounded-lg border border-border/70 bg-muted/10 px-4 py-3 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none',
+                          filePriority === 'none' ? 'opacity-65' : '',
                         )}
                         onClick={() => onWatchFile(torrent.id, targetFileIndex)}
                       >
@@ -504,18 +548,14 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
                                   {ordinal}
                                 </span>
                                 <span className="truncate text-sm font-medium">{displayName}</span>
-                                {file.priority && file.priority !== 'normal' && (
-                                  <span className={cn(
+                                <span
+                                  className={cn(
                                     'ml-1.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none',
-                                    file.priority === 'high' || file.priority === 'now'
-                                      ? 'bg-primary/20 text-primary'
-                                      : file.priority === 'low'
-                                        ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                                        : ''
-                                  )}>
-                                    {file.priority}
-                                  </span>
-                                )}
+                                    filePriorityBadgeClass(filePriority),
+                                  )}
+                                >
+                                  {filePriority}
+                                </span>
                               </div>
                               <div className="mt-1 text-xs text-muted-foreground">{formatBytes(file.length)}</div>
                             </div>

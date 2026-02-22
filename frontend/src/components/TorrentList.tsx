@@ -18,7 +18,16 @@ import type {
   WatchPosition,
 } from '../types';
 import { cn } from '../lib/cn';
-import { formatBytes, formatDate, formatPercent, formatSpeed, formatTime, normalizeProgress } from '../utils';
+import {
+  countFilePriorities,
+  filePriorityOrder,
+  formatBytes,
+  formatDate,
+  formatPercent,
+  formatSpeed,
+  formatTime,
+  getTorrentProgress,
+} from '../utils';
 import PieceBar from './PieceBar';
 import TagInput from './TagInput';
 import { Badge } from './ui/badge';
@@ -180,11 +189,13 @@ const TorrentList: React.FC<TorrentListProps> = ({
   const renderTile = (torrent: TorrentRecord, options?: { currentPriority?: boolean }) => {
     const isCurrentPriority = options?.currentPriority ?? false;
     const state = activeStateMap.get(torrent.id);
-    const progress = state?.progress ?? normalizeProgress(torrent);
+    const progress = getTorrentProgress(state, torrent);
     const doneBytes = torrent.doneBytes;
     const status = state?.status ?? torrent.status;
     const transferPhase = state?.transferPhase;
     const verificationProgress = Math.max(0, Math.min(1, state?.verificationProgress ?? 0));
+    const effectiveFiles = state?.files ?? torrent.files ?? [];
+    const priorityCounts = countFilePriorities(effectiveFiles);
 
     const totalBytes = torrent.totalBytes ?? 0;
     const fileCount = torrent.files?.length ?? 0;
@@ -371,7 +382,12 @@ const TorrentList: React.FC<TorrentListProps> = ({
           ) : null}
           {isCurrentPriority ? (
             <span className="rounded-full border border-border/70 bg-muted/20 px-2 py-0.5">
-              Neighbors {prioritizeActiveFileOnly ? 'none' : 'low'}
+              Focus mode {prioritizeActiveFileOnly ? 'ON' : 'OFF'} ({prioritizeActiveFileOnly ? 'neighbors -> none' : 'neighbors -> low'})
+            </span>
+          ) : null}
+          {isCurrentPriority && effectiveFiles.length > 0 ? (
+            <span className="rounded-full border border-border/70 bg-muted/20 px-2 py-0.5">
+              Priorities {filePriorityOrder.map((priority) => `${priority}:${priorityCounts[priority]}`).join(' ')}
             </span>
           ) : null}
           <span className="rounded-full border border-border/70 bg-muted/20 px-2 py-0.5">

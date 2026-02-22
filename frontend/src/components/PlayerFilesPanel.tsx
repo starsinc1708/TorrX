@@ -1,9 +1,29 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { File, FileImage, FileMusic, FileVideo } from 'lucide-react';
 
-import type { FileRef, MediaOrganization, MediaOrganizationItem, SessionState } from '../types';
+import type {
+  FilePriority,
+  FileRef,
+  MediaOrganization,
+  MediaOrganizationItem,
+  SessionState,
+} from '../types';
 import { cn } from '../lib/cn';
-import { decodePieceBitfield, formatBytes, formatPercent, formatSpeed, isAudioFile, isImageFile, isVideoFile } from '../utils';
+import {
+  countFilePriorities,
+  createEmptyPriorityCounts,
+  decodePieceBitfield,
+  filePriorityOrder,
+  formatBytes,
+  formatPercent,
+  formatSpeed,
+  getFileProgress,
+  isAudioFile,
+  isImageFile,
+  isProgressComplete,
+  isVideoFile,
+  normalizeFilePriority,
+} from '../utils';
 
 import PieceBar from './PieceBar';
 
@@ -11,9 +31,23 @@ type PlayerFilesPanelProps = {
   files: FileRef[];
   selectedFileIndex: number | null;
   sessionState: SessionState | null;
+  prioritizeActiveFileOnly?: boolean;
   mediaOrganization?: MediaOrganization;
   onSelectFile: (index: number) => void;
   className?: string;
+};
+
+const filePriorityBadgeClass = (priority: FilePriority): string => {
+  if (priority === 'now' || priority === 'high') {
+    return 'border border-primary/35 bg-primary/20 text-primary';
+  }
+  if (priority === 'normal') {
+    return 'border border-emerald-500/35 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400';
+  }
+  if (priority === 'low') {
+    return 'border border-amber-500/35 bg-amber-500/15 text-amber-700 dark:text-amber-400';
+  }
+  return 'border border-border/70 bg-muted/40 text-muted-foreground';
 };
 
 const fileIcon = (file: FileRef) => {
@@ -57,7 +91,7 @@ const getMoviePartNumber = (item: MediaOrganizationItem | undefined, fallback: n
 };
 
 function PiecesBlock({ sessionState }: { sessionState: SessionState }) {
-  const { numPieces, pieceBitfield, downloadSpeed, transferPhase, verificationProgress } = sessionState;
+  const { numPieces, pieceBitfield, downloadSpeed, transferPhase, verificationProgress, progress } = sessionState;
 
   const downloadedPieces = useMemo(() => {
     if (!pieceBitfield || !numPieces) return 0;
@@ -65,8 +99,9 @@ function PiecesBlock({ sessionState }: { sessionState: SessionState }) {
     return pieces.filter(Boolean).length;
   }, [pieceBitfield, numPieces]);
 
-  const progressPercent = numPieces ? (downloadedPieces / numPieces) * 100 : 0;
-  const isComplete = progressPercent >= 100;
+  const progressValue = Math.max(0, Math.min(1, progress ?? 0));
+  const progressPercent = progressValue * 100;
+  const isComplete = isProgressComplete(progressValue);
 
   return (
     <div className="rounded-xl border border-border/70 bg-muted/10 p-3">
@@ -155,7 +190,7 @@ function FilePiecesBlock({
       if (piece) completedFilePieces += 1;
     }
 
-    const pieceProgress = fileForPieces.progress ?? Math.max(0, Math.min(1, completedFilePieces / totalFilePieces));
+    const pieceProgress = getFileProgress(fileForPieces);
 
     return {
       fileLabel: fileBaseName(selectedFile.path),
@@ -196,6 +231,7 @@ export default function PlayerFilesPanel({
   files,
   selectedFileIndex,
   sessionState,
+  prioritizeActiveFileOnly = true,
   mediaOrganization,
   onSelectFile,
   className,
@@ -219,6 +255,34 @@ export default function PlayerFilesPanel({
     files.forEach((file, idx) => map.set(file.index, idx));
     return map;
   }, [files]);
+
+  const prioritySummary = useMemo(() => {
+    const effectiveFiles = files.map((file) => liveFileMap.get(file.index) ?? file);
+    const counts = countFilePriorities(effectiveFiles);
+    const neighborCounts = createEmptyPriorityCounts();
+    let selectedPriority: FilePriority | null = null;
+
+    effectiveFiles.forEach((file) => {
+      const priority = normalizeFilePriority(file.priority);
+      if (selectedFileIndex !== null && file.index === selectedFileIndex) {
+        selectedPriority = priority;
+        return;
+      }
+      neighborCounts[priority] += 1;
+    });
+
+    const mismatchCount = prioritizeActiveFileOnly
+      ? neighborCounts.now + neighborCounts.high + neighborCounts.normal
+      : 0;
+
+    return {
+      counts,
+      neighborCounts,
+      selectedPriority,
+      mismatchCount,
+      hasMismatch: mismatchCount > 0,
+    };
+  }, [files, liveFileMap, prioritizeActiveFileOnly, selectedFileIndex]);
 
   const groupedFiles = useMemo(() => {
     const byIndex = new Map<number, FileRef>();
@@ -391,6 +455,56 @@ export default function PlayerFilesPanel({
         ) : null}
       </div>
 
+      <div className="rounded-xl border border-border/70 bg-muted/10 p-3">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+          Focus priority mode
+        </div>
+        <div className="mt-1.5 text-xs text-muted-foreground">
+          {prioritizeActiveFileOnly ? 'Enabled (neighbors target: none)' : 'Disabled (neighbors target: low)'}
+        </div>
+        {selectedFileIndex !== null ? (
+          <div className="mt-1 text-xs text-muted-foreground">
+            Selected file priority:{' '}
+            <span className="font-medium text-foreground">
+              {prioritySummary.selectedPriority ?? 'normal'}
+            </span>
+          </div>
+        ) : null}
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {filePriorityOrder.map((priority) => (
+            <span
+              key={`files-priority-all-${priority}`}
+              className={cn(
+                'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium',
+                filePriorityBadgeClass(priority),
+              )}
+            >
+              {priority} {prioritySummary.counts[priority]}
+            </span>
+          ))}
+        </div>
+        {selectedFileIndex !== null ? (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {filePriorityOrder.map((priority) => (
+              <span
+                key={`files-priority-neighbors-${priority}`}
+                className={cn(
+                  'inline-flex items-center rounded-full border border-border/70 bg-background/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground',
+                  priority === 'none' ? 'text-foreground' : '',
+                )}
+              >
+                n:{priority} {prioritySummary.neighborCounts[priority]}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {prioritySummary.hasMismatch ? (
+          <div className="mt-2 rounded-md border border-amber-500/35 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400">
+            Focus mode expects neighbors in `none`, but {prioritySummary.mismatchCount} neighbor(s) are above `low`.
+          </div>
+        ) : null}
+      </div>
+
       {sessionState?.numPieces && sessionState.pieceBitfield ? (
         <PiecesBlock sessionState={sessionState} />
       ) : null}
@@ -483,9 +597,8 @@ export default function PlayerFilesPanel({
                   const file = entry.file;
                   const targetFileIndex = entry.targetFileIndex;
                   const live = liveFileMap.get(targetFileIndex) ?? liveFileMap.get(file.index);
-                  const completed = Math.max(live?.bytesCompleted ?? 0, file.bytesCompleted ?? 0);
                   const total = file.length ?? 0;
-                  const fileProg = total > 0 ? completed / total : 0;
+                  const fileProg = getFileProgress(live, file);
                   const active = selectedFileIndex === targetFileIndex;
                   const fallbackTitle = entry.item?.displayName?.trim() || fileBaseName(file.path);
                   const cleanTitle = normalizeTitle(fallbackTitle) || fallbackTitle;
@@ -502,7 +615,7 @@ export default function PlayerFilesPanel({
                       ? `${cleanTitle}${episodeLabel ? ` - ${episodeLabel}` : ''}`
                       : `${cleanTitle}${partLabel ? ` - ${partLabel}` : ''}`;
                   const ordinal = (fileOrder.get(targetFileIndex) ?? fileOrder.get(file.index) ?? 0) + 1;
-                  const filePriority = (live ?? file).priority;
+                  const filePriority = normalizeFilePriority((live ?? file).priority);
 
                   return (
                     <button
@@ -521,6 +634,7 @@ export default function PlayerFilesPanel({
                         active
                           ? 'border-primary/30 bg-primary/10'
                           : 'border-border/70 bg-muted/10 hover:bg-muted/20',
+                        filePriority === 'none' ? 'opacity-65' : '',
                       )}
                       onClick={() => onSelectFile(targetFileIndex)}
                     >
@@ -535,18 +649,14 @@ export default function PlayerFilesPanel({
                                 {ordinal}
                               </span>
                               <span className="truncate text-sm font-semibold">{name}</span>
-                              {filePriority && filePriority !== 'normal' && (
-                                <span className={cn(
+                              <span
+                                className={cn(
                                   'ml-1.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none',
-                                  filePriority === 'high' || filePriority === 'now'
-                                    ? 'bg-primary/20 text-primary'
-                                    : filePriority === 'low'
-                                      ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                                      : ''
-                                )}>
-                                  {filePriority}
-                                </span>
-                              )}
+                                  filePriorityBadgeClass(filePriority),
+                                )}
+                              >
+                                {filePriority}
+                              </span>
                             </div>
                             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                               <span>{formatBytes(total)}</span>

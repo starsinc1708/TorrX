@@ -1052,6 +1052,103 @@ func TestListTorrentStatesMissingStatus(t *testing.T) {
 	}
 }
 
+func TestStateEndpointsExposeCanonicalProgressFields(t *testing.T) {
+	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
+	expected := domain.SessionState{
+		ID:                   "t1",
+		Status:               domain.TorrentActive,
+		TransferPhase:        domain.TransferPhaseVerifying,
+		Progress:             0.78,
+		VerificationProgress: 0.41,
+		Files: []domain.FileRef{
+			{
+				Index:          0,
+				Path:           "video/ep01.mkv",
+				Length:         1000,
+				BytesCompleted: 780,
+				Progress:       0.75,
+				Priority:       "low",
+				PieceStart:     10,
+				PieceEnd:       30,
+			},
+		},
+		NumPieces:     100,
+		PieceBitfield: "AQI=",
+		UpdatedAt:     now,
+	}
+
+	getState := &fakeGetTorrentState{result: expected}
+	listStates := &fakeListTorrentStates{result: []domain.SessionState{expected}}
+	server := NewServer(
+		&fakeCreateTorrent{},
+		WithGetTorrentState(getState),
+		WithListTorrentStates(listStates),
+	)
+
+	singleReq := httptest.NewRequest(http.MethodGet, "/torrents/t1/state", nil)
+	singleW := httptest.NewRecorder()
+	server.ServeHTTP(singleW, singleReq)
+	if singleW.Code != http.StatusOK {
+		t.Fatalf("single state status = %d", singleW.Code)
+	}
+	var single domain.SessionState
+	if err := json.NewDecoder(singleW.Body).Decode(&single); err != nil {
+		t.Fatalf("decode single state: %v", err)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/torrents/state?status=active", nil)
+	listW := httptest.NewRecorder()
+	server.ServeHTTP(listW, listReq)
+	if listW.Code != http.StatusOK {
+		t.Fatalf("list state status = %d", listW.Code)
+	}
+	var listResp torrentStateList
+	if err := json.NewDecoder(listW.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode list states: %v", err)
+	}
+	if listResp.Count != 1 || len(listResp.Items) != 1 {
+		t.Fatalf("list count/items mismatch: count=%d len=%d", listResp.Count, len(listResp.Items))
+	}
+	listItem := listResp.Items[0]
+
+	assertCanonicalState := func(name string, got domain.SessionState) {
+		t.Helper()
+		if got.Progress != expected.Progress {
+			t.Fatalf("%s: progress=%f want=%f", name, got.Progress, expected.Progress)
+		}
+		if got.TransferPhase != expected.TransferPhase {
+			t.Fatalf("%s: transferPhase=%q want=%q", name, got.TransferPhase, expected.TransferPhase)
+		}
+		if got.VerificationProgress != expected.VerificationProgress {
+			t.Fatalf("%s: verificationProgress=%f want=%f", name, got.VerificationProgress, expected.VerificationProgress)
+		}
+		if got.UpdatedAt != expected.UpdatedAt {
+			t.Fatalf("%s: updatedAt=%s want=%s", name, got.UpdatedAt, expected.UpdatedAt)
+		}
+		if len(got.Files) != 1 {
+			t.Fatalf("%s: files len=%d want=1", name, len(got.Files))
+		}
+		file := got.Files[0]
+		wantFile := expected.Files[0]
+		if file.Progress != wantFile.Progress {
+			t.Fatalf("%s: file progress=%f want=%f", name, file.Progress, wantFile.Progress)
+		}
+		if file.Priority != wantFile.Priority {
+			t.Fatalf("%s: file priority=%q want=%q", name, file.Priority, wantFile.Priority)
+		}
+		if file.BytesCompleted != wantFile.BytesCompleted {
+			t.Fatalf("%s: file bytesCompleted=%d want=%d", name, file.BytesCompleted, wantFile.BytesCompleted)
+		}
+		if file.PieceStart != wantFile.PieceStart || file.PieceEnd != wantFile.PieceEnd {
+			t.Fatalf("%s: file piece range=%d..%d want=%d..%d",
+				name, file.PieceStart, file.PieceEnd, wantFile.PieceStart, wantFile.PieceEnd)
+		}
+	}
+
+	assertCanonicalState("single", single)
+	assertCanonicalState("list", listItem)
+}
+
 func TestGetPlayerSettings(t *testing.T) {
 	player := &fakePlayerSettings{current: "t1", prioritizeActiveFileOnly: true}
 	server := NewServer(&fakeCreateTorrent{}, WithPlayerSettings(player))

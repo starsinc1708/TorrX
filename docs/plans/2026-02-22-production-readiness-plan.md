@@ -1,480 +1,195 @@
-# Production Readiness Implementation Plan
+# Production Readiness Implementation Plan (Playback Reliability)
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+**Date:** 2026-02-22  
+**Related design docs:**
+- `docs/plans/2026-02-21-unified-metrics-priority-ux-observability-design.md`
+- `docs/plans/2026-02-22-production-readiness-design.md`
 
-**Goal:** Fix 12 configuration issues to make the LAN home-server deployment stable, reliably deployable, and secure.
+## Goal
 
-**Architecture:** All changes are in `deploy/docker-compose.yml`, `deploy/.env.example`, and `build/frontend.Dockerfile`. No Go or React code is modified.
+Свести к нулю расхождения прогресса и сделать состояние плеера наблюдаемым:
+- backend = единственный источник истины для progress/pieces/file-priority;
+- `prioritizeActiveFileOnly` прозрачно подтверждается в UI;
+- seek/startup/verify имеют метрики, дашборды и алерты.
 
-**Tech Stack:** Docker Compose v2, Traefik v3, YAML configuration.
+## Scope
 
----
+Три потока работ:
+1. Unified Metrics Model (Pieces/File Pieces)
+2. Priority UX Transparency (`prioritizeActiveFileOnly`)
+3. Player Observability (metrics + alerts + dashboards)
 
-## Verification commands (reference)
-
-```bash
-# Validate compose file syntax
-docker compose -f deploy/docker-compose.yml config --quiet
-
-# Check running containers are healthy
-docker compose -f deploy/docker-compose.yml ps
-
-# Inspect bound ports on host
-docker compose -f deploy/docker-compose.yml ps --format json | python -m json.tool
-```
-
----
-
-### Task 1: Pin Docker image versions
-
-**Files:**
-- Modify: `deploy/docker-compose.yml` (lines with `:latest` images)
-
-Images currently using `:latest` and their pinned replacements:
-| Service | Current | Pinned |
-|---------|---------|--------|
-| jaeger | `jaegertracing/all-in-one:latest` | `jaegertracing/all-in-one:1.65.0` |
-| prometheus | `prom/prometheus:latest` | `prom/prometheus:v3.2.1` |
-| grafana | `grafana/grafana:latest` | `grafana/grafana:11.4.0` |
-| jackett | `linuxserver/jackett:latest` | `linuxserver/jackett:v0.22.1612` |
-| flaresolverr | `ghcr.io/flaresolverr/flaresolverr:latest` | `ghcr.io/flaresolverr/flaresolverr:v3.3.21` |
-| prowlarr | `linuxserver/prowlarr:latest` | `linuxserver/prowlarr:1.31.2` |
-
-> **Note:** Verify these are still current stable releases before applying. Check Docker Hub / GitHub releases pages.
-
-**Step 1: Apply version pins**
-
-In `deploy/docker-compose.yml` replace each `:latest` tag:
-```yaml
-# jaeger
-image: jaegertracing/all-in-one:1.65.0
-
-# prometheus
-image: prom/prometheus:v3.2.1
-
-# grafana
-image: grafana/grafana:11.4.0
-
-# jackett
-image: linuxserver/jackett:v0.22.1612
-
-# flaresolverr
-image: ghcr.io/flaresolverr/flaresolverr:v3.3.21
-
-# prowlarr
-image: linuxserver/prowlarr:1.31.2
-```
-
-**Step 2: Validate compose**
-```bash
-docker compose -f deploy/docker-compose.yml config --quiet
-```
-Expected: no output (no errors).
-
-**Step 3: Commit**
-```bash
-git add deploy/docker-compose.yml
-git commit -m "fix(deploy): pin docker image versions to avoid surprise updates"
-```
+Вне scope:
+- редизайн UI и новые пользовательские фичи вне плеера;
+- изменения модели авторизации/безопасности.
 
 ---
 
-### Task 2: Fix NPM registry default
+## Stage 0 - Baseline and Contract Freeze
 
-**Files:**
-- Modify: `build/frontend.Dockerfile`
+### Tasks
+- Зафиксировать текущие API/WS payload для `SessionState` и `FileRef`.
+- Определить canonical поля (backend-owned):
+  - torrent: `progress`, `transferPhase`, `verificationProgress`, `updatedAt`
+  - file: `progress`, `priority`, `bytesCompleted`, `pieceStart`, `pieceEnd`
+- Обновить API docs (`openapi.json`, `api.md`) под canonical-модель.
 
-**Step 1: Find the current ARG**
+### Definition of Done
+- Документирован contract v1 для прогресса и приоритетов.
+- Убраны двусмысленные формулы в документации.
+- Есть список мест во frontend, где есть локальные пересчеты (для удаления на Stage 2).
 
-Look for the line:
-```dockerfile
-ARG NPM_REGISTRY="https://registry.npmmirror.com"
-```
-
-**Step 2: Change to official registry**
-```dockerfile
-ARG NPM_REGISTRY="https://registry.npmjs.org"
-```
-
-**Step 3: Validate the Dockerfile parses**
-```bash
-docker build --no-cache --target deps -f build/frontend.Dockerfile . --dry-run 2>&1 | head -5
-```
-Expected: no syntax errors.
-
-**Step 4: Commit**
-```bash
-git add build/frontend.Dockerfile
-git commit -m "fix(deploy): use official npm registry as default"
-```
+### Frontend Recalculation Hotspots (audit snapshot)
+- `frontend/src/components/TorrentList.tsx:183` - fallback `state?.progress ?? normalizeProgress(torrent)`.
+- `frontend/src/components/TorrentDetails.tsx:126` - fallback `sessionState?.progress ?? normalizeProgress(torrent)`.
+- `frontend/src/components/PlayerFilesPanel.tsx:149` - локальный расчёт `filePieces = pieces.slice(start, end)`.
+- `frontend/src/components/PlayerFilesPanel.tsx:158` - fallback `fileForPieces.progress ?? completedFilePieces/totalFilePieces`.
+- `frontend/src/hooks/useVideoPlayer.ts:256` - fallback `Math.max(liveFile?.bytesCompleted, selectedFile?.bytesCompleted)` для file completion.
 
 ---
 
-### Task 3: Add graceful shutdown and log rotation
+## Stage 1 - Backend Unified Metrics Source of Truth
 
-These two changes both go in `deploy/docker-compose.yml` and are committed together.
+### Tasks
+- В `FileRef` обеспечить обязательную выдачу:
+  - `progress` (piece-based 0..1),
+  - `priority` (`none|low|normal|high|now`).
+- На уровне engine/state унифицировать расчет:
+  - один алгоритм для progress torrent/file,
+  - одинаковая семантика для REST и WS.
+- Добавить contract tests:
+  - одинаковые значения в REST и WS для одного snapshot;
+  - монотонность `verificationProgress` в фазе `verifying`;
+  - отсутствие регрессии progress при рестарте с verify.
 
-**Files:**
-- Modify: `deploy/docker-compose.yml`
-
-**Step 1: Add `stop_grace_period` to torrentstream**
-
-Find the `torrentstream:` service block. Add after `restart: unless-stopped`:
-```yaml
-  torrentstream:
-    ...
-    restart: unless-stopped
-    stop_grace_period: 30s
-```
-
-**Step 2: Add log rotation to all services**
-
-Add a YAML anchor at the top of the `services:` section (right before `traefik:`):
-```yaml
-x-logging: &default-logging
-  driver: json-file
-  options:
-    max-size: "10m"
-    max-file: "3"
-```
-
-Then add `logging: *default-logging` to every service that doesn't already have it:
-`traefik`, `jaeger`, `prometheus`, `grafana`, `jackett`, `flaresolverr`, `prowlarr`, `torrent-search`, `torrentstream`, `redis`, `mongo`, `web-client`.
-
-Example for one service:
-```yaml
-  traefik:
-    image: traefik:v3.2
-    restart: unless-stopped
-    logging: *default-logging
-    command:
-      ...
-```
-
-**Step 3: Validate**
-```bash
-docker compose -f deploy/docker-compose.yml config --quiet
-```
-Expected: no output.
-
-**Step 4: Commit**
-```bash
-git add deploy/docker-compose.yml
-git commit -m "fix(deploy): add graceful shutdown (30s) and log rotation (10m/3 files)"
-```
+### Definition of Done
+- UI получает одинаковые метрики из REST и WS без локальных fallback-формул.
+- Прогресс не "скачет" при переключении источника данных.
+- Все backend тесты и contract tests проходят.
 
 ---
 
-### Task 4: Restrict observability ports to localhost
+## Stage 2 - Priority UX Transparency
 
-**Files:**
-- Modify: `deploy/docker-compose.yml`
+### Tasks
+- UI:
+  - удалить локальные пересчеты `progress` и перейти на backend поля;
+  - отрисовать per-file priority badge/indicator в PlayerFilesPanel и TorrentDetails;
+  - явно показывать состояние режима focus (`prioritizeActiveFileOnly`) и фактические file priorities.
+- Добавить UI/E2E сценарии:
+  - включение/выключение режима;
+  - проверка соседних файлов на `none/low`;
+  - проверка смены active file.
 
-These ports should only be accessible from the host machine itself (e.g. via SSH tunnel), not from other LAN devices.
-
-**Step 1: Apply port bindings**
-
-For each observability service, change the port format from `"PORT:PORT"` to `"127.0.0.1:PORT:PORT"`:
-
-```yaml
-  jaeger:
-    ports:
-      - "127.0.0.1:16686:16686"
-      - "127.0.0.1:4317:4317"
-      - "127.0.0.1:4318:4318"
-      - "127.0.0.1:14269:14269"
-
-  prometheus:
-    ports:
-      - "127.0.0.1:9090:9090"
-
-  grafana:
-    ports:
-      - "127.0.0.1:3000:3000"
-
-  jackett:
-    ports:
-      - "127.0.0.1:9117:9117"
-
-  flaresolverr:
-    ports:
-      - "127.0.0.1:8191:8191"
-
-  prowlarr:
-    ports:
-      - "127.0.0.1:9696:9696"
-```
-
-> **Note:** The main app ports `80` and `443` on Traefik stay on `0.0.0.0` — they need to be reachable from LAN devices.
-
-**Step 2: Validate**
-```bash
-docker compose -f deploy/docker-compose.yml config --quiet
-```
-
-**Step 3: Commit**
-```bash
-git add deploy/docker-compose.yml
-git commit -m "fix(deploy): bind observability ports to 127.0.0.1 only"
-```
+### Definition of Done
+- Пользователь видит не только toggle, но и факт применения приоритета к файлам.
+- В UI нет кода, который пересчитывает progress из pieces локально.
+- E2E подтверждает поведение на focus/unfocus и episode switch.
 
 ---
 
-### Task 5: Remove MongoDB and Redis host port exposure
+## Stage 3 - Player Observability (Prometheus + Grafana + Alerts)
 
-**Files:**
-- Modify: `deploy/docker-compose.yml`
+### Metrics to Add
+- `engine_hls_seek_total{result,mode}`
+- `engine_hls_seek_latency_seconds` (histogram)
+- `engine_hls_ttff_seconds` (time to first frame, histogram)
+- `engine_hls_prebuffer_duration_seconds` (histogram)
+- `engine_verify_duration_seconds` (histogram)
+- `engine_focus_priority_mismatch_total` (counter)
 
-These services live in the `core` network and are not needed on the host. Removing their `ports:` blocks closes them from the host entirely.
+### Tasks
+- Instrumentation in backend lifecycle points:
+  - seek request -> seek ready/error;
+  - loading -> playlist ready (TTFF/prebuffer);
+  - verifying enter -> verifying exit.
+- Recording rules:
+  - seek success rate,
+  - P95 seek latency,
+  - P95 TTFF,
+  - P95 verify duration.
+- Alerting rules:
+  - low seek success rate,
+  - high P95 seek latency,
+  - high P95 TTFF,
+  - long verify duration,
+  - focus priority mismatch spike.
+- Grafana row `Player SLO` with key panels.
 
-**Step 1: Remove ports blocks**
-
-For `redis:` — delete the entire `ports:` block:
-```yaml
-# DELETE these lines:
-    ports:
-      - "6379:6379"
-```
-
-For `mongo:` — delete the entire `ports:` block:
-```yaml
-# DELETE these lines:
-    ports:
-      - "27017:27017"
-```
-
-**Step 2: Validate**
-```bash
-docker compose -f deploy/docker-compose.yml config --quiet
-```
-
-**Step 3: Verify services still connect (dry run)**
-```bash
-docker compose -f deploy/docker-compose.yml config | grep -A5 "redis:\|mongo:"
-```
-Expected: no `ports:` entry under redis or mongo.
-
-**Step 4: Commit**
-```bash
-git add deploy/docker-compose.yml
-git commit -m "fix(deploy): remove host port exposure for mongo and redis"
-```
+### Definition of Done
+- Есть дашборд с SLO-метриками плеера.
+- Алерты срабатывают в тестовых инъекциях деградации.
+- On-call может диагностировать проблему без воспроизведения на клиенте.
 
 ---
 
-### Task 6: Require Grafana password via env
+## Stage 4 - Hardening and Release Gate
 
-**Files:**
-- Modify: `deploy/docker-compose.yml`
-- Modify: `deploy/.env.example`
+### Tasks
+- End-to-end regression set:
+  - delete with files,
+  - seek,
+  - episode select,
+  - resume,
+  - restart + verify.
+- Проверка документации:
+  - `openapi.json` и `api.md` соответствуют фактическим endpoint и payload.
+- Release checklist:
+  - dashboards imported,
+  - alert rules loaded,
+  - smoke on staging.
 
-**Step 1: Remove hardcoded fallback in compose**
-
-Find in the `grafana:` service:
-```yaml
-      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
-      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
-```
-
-Change to (keep user fallback, remove password fallback):
-```yaml
-      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
-      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD}"
-```
-
-**Step 2: Update `.env.example`**
-
-Add a required section at the top of `deploy/.env.example`:
-```bash
-# ============================================================
-# REQUIRED — must be set before running docker compose up
-# ============================================================
-
-# Grafana admin password (no default — must be set explicitly)
-GRAFANA_ADMIN_PASSWORD=changeme
-```
-
-**Step 3: Validate compose**
-```bash
-docker compose -f deploy/docker-compose.yml config --quiet
-```
-
-**Step 4: Commit**
-```bash
-git add deploy/docker-compose.yml deploy/.env.example
-git commit -m "fix(deploy): require grafana admin password via env, remove default"
-```
+### Definition of Done
+- Критичный e2e-набор зеленый.
+- Observability stack показывает стабильные значения на smoke.
+- Решение готово к production rollout.
 
 ---
 
-### Task 7: Add resource limits for Jackett and Prowlarr
+## KPI / Success Criteria
 
-**Files:**
-- Modify: `deploy/docker-compose.yml`
-
-**Step 1: Add limits**
-
-For the `jackett:` service, add after `networks:`:
-```yaml
-    deploy:
-      resources:
-        limits:
-          memory: 512m
-          cpus: "0.5"
-```
-
-For the `prowlarr:` service, add after `networks:`:
-```yaml
-    deploy:
-      resources:
-        limits:
-          memory: 512m
-          cpus: "0.5"
-```
-
-**Step 2: Validate**
-```bash
-docker compose -f deploy/docker-compose.yml config --quiet
-```
-
-**Step 3: Commit**
-```bash
-git add deploy/docker-compose.yml
-git commit -m "fix(deploy): add memory/cpu limits for jackett and prowlarr"
-```
+- Progress mismatch incidents: `0`.
+- Seek success rate (5m window): `>= 99%`.
+- P95 seek latency: `< 5s` (target).
+- P95 TTFF: `< 15s` (target).
+- Verify duration P95 within agreed baseline per content profile.
+- User reports "focus mode not working": заметное снижение после релиза.
 
 ---
 
-### Task 8: Enable disk space guard and session limit
+## Risks and Mitigations
 
-**Files:**
-- Modify: `deploy/docker-compose.yml`
-
-**Step 1: Add env vars to torrentstream**
-
-In the `torrentstream:` service `environment:` block, add:
-```yaml
-      TORRENT_MIN_DISK_SPACE_BYTES: "2147483648"   # 2 GB free minimum
-      TORRENT_MAX_SESSIONS: "5"
-```
-
-**Step 2: Validate**
-```bash
-docker compose -f deploy/docker-compose.yml config --quiet
-```
-
-**Step 3: Confirm the vars are picked up by the engine**
-
-Search for where these env vars are consumed:
-```bash
-grep -r "MIN_DISK_SPACE\|MAX_SESSIONS" services/torrent-engine/internal/app/
-```
-Expected: both are read in `config.go`.
-
-**Step 4: Commit**
-```bash
-git add deploy/docker-compose.yml
-git commit -m "fix(deploy): enable disk space guard (2GB) and max 5 torrent sessions"
-```
+- Риск: разные семантики progress в старых местах backend.
+  - Mitigation: contract tests REST vs WS + единый helper расчета.
+- Риск: UI зависит от старых fallback-формул.
+  - Mitigation: staged migration + feature flag на переход (при необходимости).
+- Риск: шумные алерты.
+  - Mitigation: recording rules + `for` windows + baseline tuning на staging.
 
 ---
 
-### Task 9: Document scheduled backup + use tmpfs for HLS
+## Suggested Delivery Sequence
 
-Two independent fixes; commit separately.
-
-**Files:**
-- Modify: `deploy/.env.example`
-- Modify: `deploy/docker-compose.yml`
-
-**Step 1: Document backup in `.env.example`**
-
-Add to `deploy/.env.example`:
-```bash
-# ============================================================
-# BACKUP (optional but recommended)
-# ============================================================
-# Enable scheduled daily MongoDB backup (runs at 3 AM).
-# Start with: docker compose --profile backup-scheduled up -d
-# Backups are stored in the mongo_backups volume.
-# To run a one-off backup: docker compose --profile backup run --rm mongo-backup
-```
-
-**Step 2: Commit backup docs**
-```bash
-git add deploy/.env.example
-git commit -m "docs(deploy): document how to enable scheduled mongo backup"
-```
-
-**Step 3: Replace hls_cache volume with tmpfs**
-
-In `deploy/docker-compose.yml`, in the `torrentstream:` service:
-
-Remove from `volumes:`:
-```yaml
-      - hls_cache:/hls
-```
-
-Add a `tmpfs:` block:
-```yaml
-    tmpfs:
-      - /hls:size=2147483648,mode=1777
-```
-(2 GB tmpfs; adjust to match server RAM — or use `size=1073741824` for 1 GB.)
-
-In the `volumes:` section at the bottom, remove:
-```yaml
-  hls_cache:
-```
-
-**Step 4: Validate**
-```bash
-docker compose -f deploy/docker-compose.yml config --quiet
-```
-
-**Step 5: Commit HLS tmpfs**
-```bash
-git add deploy/docker-compose.yml
-git commit -m "fix(deploy): mount HLS dir as tmpfs to auto-clean segments on restart"
-```
+1. Stage 0 + Stage 1 (контракт и backend source of truth)
+2. Stage 2 (UI прозрачность приоритета)
+3. Stage 3 (метрики/алерты/дашборды)
+4. Stage 4 (hardening + release gate)
 
 ---
 
-## Final Verification
-
-After all tasks are committed, do a full stack smoke test:
+## Verification Commands (Reference)
 
 ```bash
-# Pull new pinned images
-docker compose -f deploy/docker-compose.yml pull
+# Backend tests
+cd services/torrent-engine
+go test ./...
 
-# Bring up the stack
-docker compose -f deploy/docker-compose.yml up -d
+# Focused API tests
+go test ./internal/api/http -count=1
 
-# Wait ~30s then check all services are healthy
-docker compose -f deploy/docker-compose.yml ps
+# Validate OpenAPI JSON
+cat services/torrent-engine/docs/openapi.json | jq . > /dev/null
 
-# Verify observability ports are NOT reachable from LAN
-# (run this from another machine on the LAN)
-curl -m 3 http://HOST_IP:9090  # should time out / refuse
-
-# Verify main app is reachable
-curl -m 3 http://HOST_IP/      # should return HTML
+# (Optional) check Prometheus rules
+promtool check rules deploy/prometheus/rules/*.yml
 ```
-
-Expected final state: all services show `healthy`, observability ports unreachable from LAN, main app accessible.
-
----
-
-## Summary of commits
-
-1. `fix(deploy): pin docker image versions to avoid surprise updates`
-2. `fix(deploy): use official npm registry as default`
-3. `fix(deploy): add graceful shutdown (30s) and log rotation (10m/3 files)`
-4. `fix(deploy): bind observability ports to 127.0.0.1 only`
-5. `fix(deploy): remove host port exposure for mongo and redis`
-6. `fix(deploy): require grafana admin password via env, remove default`
-7. `fix(deploy): add memory/cpu limits for jackett and prowlarr`
-8. `fix(deploy): enable disk space guard (2GB) and max 5 torrent sessions`
-9. `docs(deploy): document how to enable scheduled mongo backup`
-10. `fix(deploy): mount HLS dir as tmpfs to auto-clean segments on restart`

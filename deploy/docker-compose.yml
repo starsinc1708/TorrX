@@ -120,7 +120,7 @@ services:
       retries: 3
 
   jackett:
-    image: linuxserver/jackett:v0.22.1612
+    image: linuxserver/jackett:v0.24.1113-ls312
     logging: *default-logging
     restart: unless-stopped
     ports:
@@ -146,6 +146,7 @@ services:
     image: ghcr.io/flaresolverr/flaresolverr:v3.3.21
     logging: *default-logging
     restart: unless-stopped
+    shm_size: '2gb'
     env_file:
       - ./.env
     environment:

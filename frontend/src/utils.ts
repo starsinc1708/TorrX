@@ -1,4 +1,4 @@
-import type { TorrentRecord } from './types';
+import type { FilePriority, FileRef, SessionState, TorrentRecord } from './types';
 
 export const formatBytes = (bytes?: number): string => {
   if (bytes === undefined || bytes === null) return '\u2014';
@@ -21,12 +21,59 @@ export const formatDate = (value?: string): string => {
   return date.toLocaleString();
 };
 
-export const normalizeProgress = (record?: TorrentRecord): number => {
-  if (!record) return 0;
-  const total = record.totalBytes ?? 0;
-  const done = record.doneBytes ?? 0;
-  if (total <= 0) return 0;
-  return Math.min(1, Math.max(0, done / total));
+export const clampProgress = (value?: number | null): number => {
+  if (value === undefined || value === null || !Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
+};
+
+export const getTorrentProgress = (
+  state?: SessionState | null,
+  record?: TorrentRecord | null,
+): number => clampProgress(state?.progress ?? record?.progress);
+
+export const getFileProgress = (...candidates: Array<FileRef | null | undefined>): number => {
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate.progress === 'number' && Number.isFinite(candidate.progress)) {
+      return clampProgress(candidate.progress);
+    }
+  }
+  return 0;
+};
+
+export const isProgressComplete = (progress: number): boolean => clampProgress(progress) >= 0.999;
+
+const knownFilePriorities = new Set<FilePriority>(['none', 'low', 'normal', 'high', 'now']);
+
+export const filePriorityOrder: FilePriority[] = ['now', 'high', 'normal', 'low', 'none'];
+
+export const normalizeFilePriority = (priority?: string | null): FilePriority => {
+  if (!priority) return 'normal';
+  const normalized = priority.toLowerCase();
+  if (knownFilePriorities.has(normalized as FilePriority)) {
+    return normalized as FilePriority;
+  }
+  return 'normal';
+};
+
+export type FilePriorityCounts = Record<FilePriority, number>;
+
+export const createEmptyPriorityCounts = (): FilePriorityCounts => ({
+  none: 0,
+  low: 0,
+  normal: 0,
+  high: 0,
+  now: 0,
+});
+
+export const countFilePriorities = (
+  files: Array<Pick<FileRef, 'priority'>>,
+): FilePriorityCounts => {
+  const counts = createEmptyPriorityCounts();
+  files.forEach((file) => {
+    const priority = normalizeFilePriority(file.priority);
+    counts[priority] += 1;
+  });
+  return counts;
 };
 
 export const formatPercent = (value: number): string => `${(value * 100).toFixed(1)}%`;

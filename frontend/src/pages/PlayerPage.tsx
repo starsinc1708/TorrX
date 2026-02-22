@@ -104,7 +104,8 @@ const PlayerPage: React.FC = () => {
     };
   }, [torrentId]);
 
-  const { states: wsStates, health: wsHealth } = useWS();
+  const { states: wsStates, health: wsHealth, playerSettings: wsPlayerSettings } = useWS();
+  const prioritizeActiveFileOnly = wsPlayerSettings?.prioritizeActiveFileOnly ?? true;
   const { sessionState, setAutoRefreshState } = useSessionState(torrentId ?? null, wsStates);
   useEffect(() => {
     if (torrentId) setAutoRefreshState(true);
@@ -730,6 +731,7 @@ const PlayerPage: React.FC = () => {
               files={availableFiles}
               selectedFileIndex={selectedFileIndex}
               sessionState={effectiveSessionState}
+              prioritizeActiveFileOnly={prioritizeActiveFileOnly}
               mediaOrganization={torrent?.mediaOrganization}
               onSelectFile={handleSelectFile}
               className="h-full"

@@ -99,3 +99,59 @@ func TestDeriveTransferPhase(t *testing.T) {
 		})
 	}
 }
+
+func TestNextVerificationPeak(t *testing.T) {
+	tests := []struct {
+		name            string
+		prevPeak        int64
+		stableCompleted int64
+		verified        int64
+		want            int64
+	}{
+		{
+			name:            "increases with verified bytes",
+			prevPeak:        100,
+			stableCompleted: 1000,
+			verified:        220,
+			want:            220,
+		},
+		{
+			name:            "stays monotonic on temporary regression",
+			prevPeak:        220,
+			stableCompleted: 1000,
+			verified:        180,
+			want:            220,
+		},
+		{
+			name:            "clamps above stable completed",
+			prevPeak:        900,
+			stableCompleted: 1000,
+			verified:        1200,
+			want:            1000,
+		},
+		{
+			name:            "clamps negative to zero",
+			prevPeak:        0,
+			stableCompleted: 1000,
+			verified:        -1,
+			want:            0,
+		},
+		{
+			name:            "zero when stable is not positive",
+			prevPeak:        200,
+			stableCompleted: 0,
+			verified:        100,
+			want:            0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := nextVerificationPeak(tc.prevPeak, tc.stableCompleted, tc.verified)
+			if got != tc.want {
+				t.Fatalf("nextVerificationPeak(%d,%d,%d)=%d, want %d",
+					tc.prevPeak, tc.stableCompleted, tc.verified, got, tc.want)
+			}
+		})
+	}
+}

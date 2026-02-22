@@ -35,23 +35,24 @@ type Config struct {
 }
 
 type Engine struct {
-	client        *torrent.Client
-	sessions      map[domain.TorrentID]*torrent.Torrent
-	modes         map[domain.TorrentID]domain.SessionMode
-	mu            sync.RWMutex
-	speedMu       sync.Mutex
-	priorityMu    sync.Mutex
-	speeds        map[domain.TorrentID]speedSample
-	focusedPieces map[domain.TorrentID]focusedPieceRange
-	focusedID     domain.TorrentID               // cached; always consistent with modes
-	peakCompleted map[domain.TorrentID]int64     // high-water mark for BytesCompleted per torrent
-	peakBitfield  map[domain.TorrentID][]byte    // high-water mark for piece completion bitfield
+	client          *torrent.Client
+	sessions        map[domain.TorrentID]*torrent.Torrent
+	modes           map[domain.TorrentID]domain.SessionMode
+	mu              sync.RWMutex
+	speedMu         sync.Mutex
+	priorityMu      sync.Mutex
+	speeds          map[domain.TorrentID]speedSample
+	focusedPieces   map[domain.TorrentID]focusedPieceRange
+	focusedID       domain.TorrentID               // cached; always consistent with modes
+	peakCompleted   map[domain.TorrentID]int64     // high-water mark for BytesCompleted per torrent
+	peakBitfield    map[domain.TorrentID][]byte    // high-water mark for piece completion bitfield
 	lastAccess      map[domain.TorrentID]time.Time // LRU tracking for session eviction
 	rateLimits      map[domain.TorrentID]int64     // per-torrent download rate limit (bytes/sec); 0 = unlimited
 	verifyStartedAt map[domain.TorrentID]time.Time // tracks when verifying started per torrent
-	maxSessions   int
-	idleTimeout   time.Duration
-	reaperCancel  context.CancelFunc
+	verifyPeakBytes map[domain.TorrentID]int64     // monotonic high-water mark for verified bytes in current verify phase
+	maxSessions     int
+	idleTimeout     time.Duration
+	reaperCancel    context.CancelFunc
 }
 
 func New(cfg Config) (*Engine, error) {
@@ -76,6 +77,7 @@ func New(cfg Config) (*Engine, error) {
 		lastAccess:      make(map[domain.TorrentID]time.Time),
 		rateLimits:      make(map[domain.TorrentID]int64),
 		verifyStartedAt: make(map[domain.TorrentID]time.Time),
+		verifyPeakBytes: make(map[domain.TorrentID]int64),
 		maxSessions:     cfg.MaxSessions,
 		idleTimeout:     cfg.IdleTimeout,
 	}
@@ -101,6 +103,7 @@ func NewWithClient(client *torrent.Client) *Engine {
 		lastAccess:      make(map[domain.TorrentID]time.Time),
 		rateLimits:      make(map[domain.TorrentID]int64),
 		verifyStartedAt: make(map[domain.TorrentID]time.Time),
+		verifyPeakBytes: make(map[domain.TorrentID]int64),
 	}
 }
 
@@ -324,6 +327,7 @@ func (e *Engine) waitForInfo(t *torrent.Torrent, id domain.TorrentID) {
 			delete(e.lastAccess, id)
 			delete(e.rateLimits, id)
 			delete(e.verifyStartedAt, id)
+			delete(e.verifyPeakBytes, id)
 		}
 		e.mu.Unlock()
 		e.forgetSpeed(id)
@@ -480,6 +484,8 @@ func (e *Engine) GetSessionState(ctx context.Context, id domain.TorrentID) (doma
 
 	numPieces, bitfield := pieceBitfield(t)
 
+	var stableBitfield []byte
+
 	// Apply piece bitfield high-water mark: once a piece is confirmed complete,
 	// keep it marked complete even during post-restart re-verification (while
 	// anacrolix is rehashing pieces from disk and PieceState.Complete temporarily
@@ -498,6 +504,7 @@ func (e *Engine) GetSessionState(ctx context.Context, id domain.TorrentID) (doma
 			}
 			e.peakBitfield[id] = peak
 			bitfield = base64.StdEncoding.EncodeToString(peak)
+			stableBitfield = append([]byte(nil), peak...)
 			e.mu.Unlock()
 		}
 	}
@@ -507,7 +514,24 @@ func (e *Engine) GetSessionState(ctx context.Context, id domain.TorrentID) (doma
 	mode = e.modes[id]
 	e.mu.RUnlock()
 
-	transferPhase, verificationProgress := deriveTransferPhase(status, mode, completed, rawCompleted)
+	effectiveVerified := rawCompleted
+	e.mu.Lock()
+	if status == domain.TorrentActive &&
+		mode != domain.ModeStopped &&
+		mode != domain.ModeCompleted &&
+		completed > 0 &&
+		rawCompleted >= 0 &&
+		rawCompleted < completed {
+		prevPeak := e.verifyPeakBytes[id]
+		peak := nextVerificationPeak(prevPeak, completed, rawCompleted)
+		e.verifyPeakBytes[id] = peak
+		effectiveVerified = peak
+	} else {
+		delete(e.verifyPeakBytes, id)
+	}
+	e.mu.Unlock()
+
+	transferPhase, verificationProgress := deriveTransferPhase(status, mode, completed, effectiveVerified)
 
 	// Track verification phase duration for metrics.
 	e.mu.Lock()
@@ -533,7 +557,7 @@ func (e *Engine) GetSessionState(ctx context.Context, id domain.TorrentID) (doma
 		Peers:                stats.ActivePeers,
 		DownloadSpeed:        downloadSpeed,
 		UploadSpeed:          uploadSpeed,
-		Files:                mapFiles(t),
+		Files:                mapFiles(t, stableBitfield),
 		NumPieces:            numPieces,
 		PieceBitfield:        bitfield,
 		UpdatedAt:            time.Now().UTC(),
@@ -835,6 +859,7 @@ func (e *Engine) dropTorrent(id domain.TorrentID, t *torrent.Torrent) error {
 	delete(e.lastAccess, id)
 	delete(e.rateLimits, id)
 	delete(e.verifyStartedAt, id)
+	delete(e.verifyPeakBytes, id)
 	wasFocused := e.focusedID == id
 	if wasFocused {
 		e.focusedID = ""
@@ -911,7 +936,7 @@ func mapPriorityString(p torrent.PiecePriority) string {
 	}
 }
 
-func mapFiles(t *torrent.Torrent) (mapped []domain.FileRef) {
+func mapFiles(t *torrent.Torrent, stableBitfield ...[]byte) (mapped []domain.FileRef) {
 	if !torrentInfoReady(t) {
 		return nil
 	}
@@ -927,13 +952,17 @@ func mapFiles(t *torrent.Torrent) (mapped []domain.FileRef) {
 
 	files := t.Files()
 	mapped = make([]domain.FileRef, 0, len(files))
+	var completedMask []byte
+	if len(stableBitfield) > 0 {
+		completedMask = stableBitfield[0]
+	}
 	for i, f := range files {
 		start := f.BeginPieceIndex()
 		end := f.EndPieceIndex()
 		total := end - start
 		completed := 0
 		for p := start; p < end; p++ {
-			if t.PieceState(p).Complete {
+			if pieceComplete(t, p, completedMask) {
 				completed++
 			}
 		}
@@ -954,6 +983,25 @@ func mapFiles(t *torrent.Torrent) (mapped []domain.FileRef) {
 		})
 	}
 	return mapped
+}
+
+func pieceComplete(t *torrent.Torrent, pieceIndex int, completedMask []byte) bool {
+	if len(completedMask) > 0 {
+		return bitfieldHasPiece(completedMask, pieceIndex)
+	}
+	return t.PieceState(pieceIndex).Complete
+}
+
+func bitfieldHasPiece(mask []byte, pieceIndex int) bool {
+	if pieceIndex < 0 {
+		return false
+	}
+	byteIndex := pieceIndex / 8
+	if byteIndex >= len(mask) {
+		return false
+	}
+	bit := uint(7 - (pieceIndex % 8))
+	return (mask[byteIndex] & (1 << bit)) != 0
 }
 
 func torrentInfoReady(t *torrent.Torrent) bool {
@@ -1064,6 +1112,7 @@ func (e *Engine) evictIdleSessionLocked() (*torrent.Torrent, domain.TorrentID, e
 	delete(e.lastAccess, evictID)
 	delete(e.rateLimits, evictID)
 	delete(e.verifyStartedAt, evictID)
+	delete(e.verifyPeakBytes, evictID)
 	if e.focusedID == evictID {
 		e.focusedID = ""
 	}

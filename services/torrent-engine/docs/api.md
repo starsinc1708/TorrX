@@ -46,6 +46,21 @@ Common `error.code` values:
   - `downloading` - normal data download.
   - `verifying` - post-restart piece re-verification is in progress; `verificationProgress` reports 0..1 progress against previously known completed data.
 
+## Canonical Progress Contract (v1)
+- Backend is the single source of truth for progress values in both REST and WS payloads.
+- UI must display backend values directly and must not recompute progress from piece bitfields or local fallback formulas.
+- Canonical torrent fields (`SessionState`):
+  - `progress` (`0..1`) - canonical backend torrent progress.
+  - `transferPhase` (`downloading|verifying`) - current data-plane phase.
+  - `verificationProgress` (`0..1`) - meaningful when `transferPhase=verifying`.
+  - `updatedAt` - snapshot timestamp.
+- Canonical file fields (`FileRef`, from `SessionState.files` and `TorrentRecord.files`):
+  - `bytesCompleted` - completed bytes for file in current backend snapshot.
+  - `progress` (`0..1`) - canonical backend file progress.
+  - `priority` (`none|low|normal|high|now`) - effective backend piece priority for file.
+  - `pieceStart` / `pieceEnd` - piece range metadata for visualization only.
+- `pieceBitfield` and `numPieces` are visualization/debug fields and must not replace canonical `progress` fields.
+
 ## Player Settings
 - `GET /settings/player`
 - `PATCH /settings/player` (also `PUT`)
@@ -126,7 +141,17 @@ If probing fails (e.g. metadata not available yet), API returns `200` with empty
 
 ## WebSocket
 - `GET /ws` (upgrade)
-  - server pushes typed updates: torrent states/list snapshots, player settings, and health updates.
+  - server pushes typed updates via envelope:
+```json
+{
+  "type": "states | torrents | player_settings | health",
+  "data": {}
+}
+```
+  - `type=states`: `SessionState[]` (canonical progress stream).
+  - `type=torrents`: torrent summary list.
+  - `type=player_settings`: player settings snapshot.
+  - `type=health`: player health snapshot.
 
 ## Notes
 - `TorrentRecord.Source` is persisted internally for session restore and not exposed in API JSON.

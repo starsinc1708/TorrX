@@ -156,6 +156,7 @@ const CatalogPage: React.FC = () => {
         <TorrentDetails
           torrent={selectedTorrent}
           sessionState={effectiveSessionState}
+          prioritizeActiveFileOnly={prioritizeActiveFileOnly}
           onBack={handleBack}
           onStart={handleStart}
           onStop={handleStop}
