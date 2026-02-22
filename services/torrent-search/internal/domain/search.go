@@ -69,6 +69,7 @@ type SearchRankingProfile struct {
 	PreferredAudio     []string `json:"preferredAudio,omitempty"`
 	PreferredSubtitles []string `json:"preferredSubtitles,omitempty"`
 	TargetSizeBytes    int64    `json:"targetSizeBytes,omitempty"`
+	PreferredQuality   string   `json:"preferredQuality,omitempty"`
 }
 
 type SearchEnrichment struct {

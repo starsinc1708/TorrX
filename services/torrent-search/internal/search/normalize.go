@@ -594,6 +594,7 @@ func relevanceScoreFromMeta(queryMeta, itemMeta titleMeta, profile domain.Search
 	seedComponent := math.Log1p(math.Max(float64(item.Seeders), 0))*3 + math.Log1p(math.Max(float64(item.Leechers), 0))*1.5
 	score += profile.SeedersWeight * seedComponent
 	score += profile.QualityWeight * qualityComponent
+	score += preferredQualityBonus(profile.PreferredQuality, enrichment.Quality)
 	score += profile.LanguageWeight * languagePreferenceScore(profile, enrichment)
 	score += profile.SizeWeight * sizePreferenceScore(profile, enrichment, item.SizeBytes)
 
@@ -711,6 +712,47 @@ func sourceTypeScore(sourceType string) float64 {
 		return 0
 	default:
 		return 2
+	}
+}
+
+// qualityTiers maps a quality label to a tier index.
+// Higher tier = higher resolution.
+var qualityTiers = map[string]int{
+	"360p":  0,
+	"480p":  1,
+	"720p":  2,
+	"1080p": 3,
+	"4K":    4,
+}
+
+// preferredQualityBonus returns a score adjustment based on how close actual
+// quality is to the user's preferred quality target.
+// Returns 0 when target is empty (no preference) or either quality is unknown.
+func preferredQualityBonus(target, actual string) float64 {
+	if target == "" {
+		return 0
+	}
+	targetTier, ok := qualityTiers[target]
+	if !ok {
+		return 0
+	}
+	actualTier, ok := qualityTiers[actual]
+	if !ok {
+		return 0
+	}
+	dist := targetTier - actualTier
+	if dist < 0 {
+		dist = -dist
+	}
+	switch dist {
+	case 0:
+		return 20
+	case 1:
+		return 8
+	case 2:
+		return 0
+	default:
+		return -10
 	}
 }
 

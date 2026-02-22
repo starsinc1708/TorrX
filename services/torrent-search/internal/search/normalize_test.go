@@ -865,3 +865,43 @@ func TestCompareTime(t *testing.T) {
 		t.Fatal("later should be greater than earlier")
 	}
 }
+
+func TestPreferredQualityBonus(t *testing.T) {
+	cases := []struct {
+		target   string
+		actual   string
+		expected float64
+	}{
+		// No preference → always 0
+		{"", "1080p", 0},
+		{"", "", 0},
+		// Exact match → +20
+		{"1080p", "1080p", 20},
+		{"4K", "4K", 20},
+		{"720p", "720p", 20},
+		// Distance 1 → +8
+		{"1080p", "4K", 8},
+		{"1080p", "720p", 8},
+		{"4K", "1080p", 8},
+		{"720p", "480p", 8},
+		// Distance 2 → 0
+		{"1080p", "480p", 0},
+		{"4K", "720p", 0},
+		// Distance 3+ → -10
+		{"1080p", "360p", -10},
+		{"4K", "480p", -10},
+		{"4K", "360p", -10},
+		// Unknown actual → 0
+		{"1080p", "", 0},
+		{"1080p", "Unknown", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.target+"/"+tc.actual, func(t *testing.T) {
+			got := preferredQualityBonus(tc.target, tc.actual)
+			if got != tc.expected {
+				t.Errorf("preferredQualityBonus(%q, %q) = %v, want %v",
+					tc.target, tc.actual, got, tc.expected)
+			}
+		})
+	}
+}
