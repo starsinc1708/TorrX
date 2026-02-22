@@ -60,7 +60,9 @@ func TestHealth_ReturnsOK(t *testing.T) {
 		t.Errorf("expected Content-Type application/json, got %q", ct)
 	}
 	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode health response: %v", err)
+	}
 	if resp["status"] != "ok" {
 		t.Errorf("expected status=ok, got %v", resp["status"])
 	}

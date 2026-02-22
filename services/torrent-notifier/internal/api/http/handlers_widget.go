@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"time"
 )
 
 type engineItem struct {
@@ -32,9 +31,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWidget(w http.ResponseWriter, r *http.Request) {
-	client := &http.Client{Timeout: 5 * time.Second}
 	url := strings.TrimRight(s.engineURL, "/") + "/torrents"
-	resp, err := client.Get(url)
+	resp, err := s.client.Get(url)
 	if err != nil {
 		log.Printf("widget: GET /torrents error: %v", err)
 		http.Error(w, "upstream error", http.StatusBadGateway)

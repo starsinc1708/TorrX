@@ -2,6 +2,7 @@ package apihttp
 
 import (
 	"net/http"
+	"time"
 
 	mongorepo "torrentstream/notifier/internal/repository/mongo"
 )
@@ -10,6 +11,7 @@ import (
 type Server struct {
 	engineURL string
 	repo      *mongorepo.SettingsRepository
+	client    *http.Client
 	mux       *http.ServeMux
 }
 
@@ -18,6 +20,7 @@ func NewServer(engineURL string, repo *mongorepo.SettingsRepository) *Server {
 	s := &Server{
 		engineURL: engineURL,
 		repo:      repo,
+		client:    &http.Client{Timeout: 5 * time.Second},
 		mux:       http.NewServeMux(),
 	}
 	s.routes()
