@@ -283,8 +283,6 @@ services:
     logging: *default-logging
     restart: unless-stopped
     command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
@@ -300,8 +298,6 @@ services:
     logging: *default-logging
     restart: unless-stopped
     command: ["mongod", "--wiredTigerCacheSizeGB", "0.25"]
-    ports:
-      - "27017:27017"
     volumes:
       - mongo_data:/data/db
     networks:
