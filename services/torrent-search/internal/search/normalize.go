@@ -717,13 +717,43 @@ func sourceTypeScore(sourceType string) float64 {
 
 // qualityTiers maps a quality label to a tier index.
 // Higher tier = higher resolution.
-// Aliases for the same resolution tier are grouped together.
 var qualityTiers = map[string]int{
 	"360p":  0,
 	"480p":  1,
 	"720p":  2, "HD": 2,
 	"1080p": 3, "FHD": 3,
-	"4K":    4, "2160p": 4, "UHD": 4,
+	"4K": 4, "2160p": 4, "UHD": 4,
+}
+
+// qualityTierSubstrings maps lowercase substrings found in compound quality
+// strings (e.g. "2160p bluray h.265") to their tier index.
+var qualityTierSubstrings = []struct {
+	sub  string
+	tier int
+}{
+	{"2160", 4},
+	{"4k", 4},
+	{"uhd", 4},
+	{"1080", 3},
+	{"fhd", 3},
+	{"720", 2},
+	{"480", 1},
+	{"360", 0},
+}
+
+// qualityTierOf resolves a quality string (exact or compound) to a tier.
+// Returns (tier, true) on success, (0, false) if unrecognised.
+func qualityTierOf(q string) (int, bool) {
+	if tier, ok := qualityTiers[q]; ok {
+		return tier, true
+	}
+	low := strings.ToLower(q)
+	for _, entry := range qualityTierSubstrings {
+		if strings.Contains(low, entry.sub) {
+			return entry.tier, true
+		}
+	}
+	return 0, false
 }
 
 // preferredQualityBonus returns a score adjustment based on how close actual
@@ -733,11 +763,11 @@ func preferredQualityBonus(target, actual string) float64 {
 	if target == "" {
 		return 0
 	}
-	targetTier, ok := qualityTiers[target]
+	targetTier, ok := qualityTierOf(target)
 	if !ok {
 		return 0
 	}
-	actualTier, ok := qualityTiers[actual]
+	actualTier, ok := qualityTierOf(actual)
 	if !ok {
 		return 0
 	}

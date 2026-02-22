@@ -899,6 +899,12 @@ func TestPreferredQualityBonus(t *testing.T) {
 		// Unknown actual → 0
 		{"1080p", "", 0},
 		{"1080p", "Unknown", 0},
+		// Compound actual quality strings (real enrichment.Quality format)
+		{"1080p", "1080p WEB-DL H.264", 20},
+		{"1080p", "2160p BluRay H.265", 8},
+		{"4K", "2160p BluRay H.265", 20},
+		{"720p", "1080p HDR10", 8},
+		{"480p", "1080p WEB-DL", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.target+"/"+tc.actual, func(t *testing.T) {
