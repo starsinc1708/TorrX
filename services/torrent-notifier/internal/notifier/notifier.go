@@ -3,6 +3,7 @@ package notifier
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -34,7 +35,6 @@ func (n *Notifier) NotifyMediaServer(ctx context.Context, cfg domain.MediaServer
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("X-Emby-Token", cfg.APIKey)
-	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := n.client.Do(req)
 	if err != nil {
@@ -42,7 +42,10 @@ func (n *Notifier) NotifyMediaServer(ctx context.Context, cfg domain.MediaServer
 		log.Printf("notifier: POST %s failed: %v", url, err)
 		return nil
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(io.Discard, resp.Body) //nolint:errcheck
+		resp.Body.Close()
+	}()
 	if resp.StatusCode >= 400 {
 		log.Printf("notifier: POST %s returned %d", url, resp.StatusCode)
 	}
@@ -65,7 +68,10 @@ func (n *Notifier) TestConnection(ctx context.Context, cfg domain.MediaServerCon
 	if err != nil {
 		return err.Error()
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(io.Discard, resp.Body) //nolint:errcheck
+		resp.Body.Close()
+	}()
 	if resp.StatusCode == http.StatusUnauthorized {
 		return "invalid API key"
 	}
