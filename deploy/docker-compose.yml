@@ -255,6 +255,8 @@ services:
       MONGO_COLLECTION: "torrents"
       TORRENT_DATA_DIR: "/data"
       HLS_DIR: "/hls"
+      TORRENT_MIN_DISK_SPACE_BYTES: "2147483648"
+      TORRENT_MAX_SESSIONS: "5"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
       OTEL_SERVICE_NAME: "torrent-engine"
     volumes:
