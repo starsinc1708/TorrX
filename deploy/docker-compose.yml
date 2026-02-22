@@ -1,6 +1,13 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   traefik:
     image: traefik:v3.2
+    logging: *default-logging
     restart: unless-stopped
     command:
       - "--providers.file.filename=/etc/traefik/dynamic.yml"
@@ -37,6 +44,7 @@ services:
 
   jaeger:
     image: jaegertracing/all-in-one:1.65.0
+    logging: *default-logging
     restart: unless-stopped
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
@@ -61,6 +69,7 @@ services:
 
   prometheus:
     image: prom/prometheus:v3.2.1
+    logging: *default-logging
     restart: unless-stopped
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -87,6 +96,7 @@ services:
 
   grafana:
     image: grafana/grafana:11.4.0
+    logging: *default-logging
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
@@ -111,6 +121,7 @@ services:
 
   jackett:
     image: linuxserver/jackett:v0.22.1612
+    logging: *default-logging
     restart: unless-stopped
     ports:
       - "9117:9117"
@@ -128,6 +139,7 @@ services:
 
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:v3.3.21
+    logging: *default-logging
     restart: unless-stopped
     env_file:
       - ./.env
@@ -152,6 +164,7 @@ services:
 
   prowlarr:
     image: linuxserver/prowlarr:1.31.2
+    logging: *default-logging
     restart: unless-stopped
     ports:
       - "9696:9696"
@@ -175,6 +188,7 @@ services:
     build:
       context: ../services/torrent-search
       dockerfile: ../../build/torrent-search.Dockerfile
+    logging: *default-logging
     restart: unless-stopped
     env_file:
       - ./.env
@@ -217,7 +231,9 @@ services:
     build:
       context: ../services/torrent-engine
       dockerfile: ../../build/torrent-engine.Dockerfile
+    logging: *default-logging
     restart: unless-stopped
+    stop_grace_period: 30s
     ports:
       - "8080:8080"
     environment:
@@ -264,6 +280,7 @@ services:
 
   redis:
     image: redis:7.2.7-alpine
+    logging: *default-logging
     restart: unless-stopped
     command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
@@ -280,6 +297,7 @@ services:
 
   mongo:
     image: mongo:7.0.14
+    logging: *default-logging
     restart: unless-stopped
     command: ["mongod", "--wiredTigerCacheSizeGB", "0.25"]
     ports:
@@ -304,6 +322,7 @@ services:
       dockerfile: build/frontend.Dockerfile
       args:
         NPM_REGISTRY: "https://registry.npmmirror.com"
+    logging: *default-logging
     restart: unless-stopped
     depends_on:
       torrentstream:
@@ -320,6 +339,7 @@ services:
 
   mongo-backup:
     image: mongo:7.0.14
+    logging: *default-logging
     profiles: [backup]
     command: ["/scripts/mongo-backup.sh"]
     volumes:
@@ -335,6 +355,7 @@ services:
 
   mongo-backup-scheduled:
     image: mongo:7.0.14
+    logging: *default-logging
     profiles: [backup-scheduled]
     entrypoint: ["/bin/bash", "-c"]
     command:
