@@ -36,7 +36,7 @@ services:
       retries: 3
 
   jaeger:
-    image: jaegertracing/all-in-one:latest
+    image: jaegertracing/all-in-one:1.65.0
     restart: unless-stopped
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
@@ -60,7 +60,7 @@ services:
       retries: 3
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.2.1
     restart: unless-stopped
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -86,7 +86,7 @@ services:
       retries: 3
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.4.0
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
@@ -110,7 +110,7 @@ services:
       retries: 3
 
   jackett:
-    image: linuxserver/jackett:latest
+    image: linuxserver/jackett:v0.22.1612
     restart: unless-stopped
     ports:
       - "9117:9117"
@@ -127,7 +127,7 @@ services:
       retries: 3
 
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
+    image: ghcr.io/flaresolverr/flaresolverr:v3.3.21
     restart: unless-stopped
     env_file:
       - ./.env
@@ -151,7 +151,7 @@ services:
       retries: 3
 
   prowlarr:
-    image: linuxserver/prowlarr:latest
+    image: linuxserver/prowlarr:1.31.2
     restart: unless-stopped
     ports:
       - "9696:9696"
@@ -263,7 +263,7 @@ services:
       start_period: 30s
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.2.7-alpine
     restart: unless-stopped
     command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
@@ -279,7 +279,7 @@ services:
       retries: 3
 
   mongo:
-    image: mongo:7
+    image: mongo:7.0.14
     restart: unless-stopped
     command: ["mongod", "--wiredTigerCacheSizeGB", "0.25"]
     ports:
@@ -319,7 +319,7 @@ services:
       retries: 3
 
   mongo-backup:
-    image: mongo:7
+    image: mongo:7.0.14
     profiles: [backup]
     command: ["/scripts/mongo-backup.sh"]
     volumes:
@@ -334,7 +334,7 @@ services:
       - mongo
 
   mongo-backup-scheduled:
-    image: mongo:7
+    image: mongo:7.0.14
     profiles: [backup-scheduled]
     entrypoint: ["/bin/bash", "-c"]
     command:
