@@ -2,6 +2,7 @@ package qbt_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -173,5 +174,45 @@ func TestQBT_TorrentsDelete_ForwardsDELETE(t *testing.T) {
 	}
 	if gotPath != "/torrents/abc123" {
 		t.Errorf("expected /torrents/abc123, got %s", gotPath)
+	}
+}
+
+func TestQBT_TorrentsInfo_AllStatusMappings(t *testing.T) {
+	cases := []struct {
+		engineStatus string
+		wantState    string
+	}{
+		{"active", "downloading"},
+		{"completed", "uploading"},
+		{"stopped", "pausedDL"},
+		{"pending", "checkingDL"},
+		{"error", "error"},
+		{"unknown_x", "unknown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.engineStatus, func(t *testing.T) {
+			resp := fmt.Sprintf(`{"items":[{"id":"abc","name":"T","status":%q,"progress":0,"doneBytes":0,"totalBytes":0,"createdAt":"2024-01-01T00:00:00Z","updatedAt":"2024-01-01T00:00:00Z"}],"count":1}`, tc.engineStatus)
+			engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(resp))
+			}))
+			defer engine.Close()
+
+			h := qbt.NewHandler(engine.URL)
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodGet, "/api/v2/torrents/info", nil)
+			h.ServeHTTP(w, r)
+
+			var items []map[string]interface{}
+			if err := json.Unmarshal(w.Body.Bytes(), &items); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(items) != 1 {
+				t.Fatalf("expected 1 item, got %d", len(items))
+			}
+			if items[0]["state"] != tc.wantState {
+				t.Errorf("status %q: expected state=%q, got %v", tc.engineStatus, tc.wantState, items[0]["state"])
+			}
+		})
 	}
 }

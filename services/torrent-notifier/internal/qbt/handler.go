@@ -104,6 +104,11 @@ func (h *Handler) handleTorrentsInfo(w http.ResponseWriter, r *http.Request) {
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 	}()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("qbt: GET /torrents returned %d", resp.StatusCode)
+		http.Error(w, "upstream error", http.StatusBadGateway)
+		return
+	}
 
 	var list engineListResp
 	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
@@ -129,13 +134,16 @@ func (h *Handler) handleTorrentsInfo(w http.ResponseWriter, r *http.Request) {
 			Category:   "",
 			AddedOn:    t.CreatedAt.Unix(),
 		}
+		// CompletionOn approximates from CreatedAt; engine does not expose a completion timestamp.
 		if t.Status == "completed" {
 			qt.CompletionOn = t.CreatedAt.Unix()
 		}
 		out = append(out, qt)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	if err := json.NewEncoder(w).Encode(out); err != nil {
+		log.Printf("qbt: encode torrents: %v", err)
+	}
 }
 
 func (h *Handler) handleTorrentsAdd(w http.ResponseWriter, r *http.Request) {
@@ -165,6 +173,11 @@ func (h *Handler) handleTorrentsAdd(w http.ResponseWriter, r *http.Request) {
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 	}()
+	if resp.StatusCode >= 300 {
+		log.Printf("qbt: POST /torrents returned %d", resp.StatusCode)
+		http.Error(w, "upstream error", http.StatusBadGateway)
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprint(w, "Ok.")
 }
