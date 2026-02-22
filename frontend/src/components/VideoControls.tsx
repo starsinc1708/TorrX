@@ -357,16 +357,13 @@ export const VideoControls: React.FC<VideoControlsProps> = React.memo(({
         )}
 
         <button
-          className={cn(
-            ctrlBtnClassName,
-            showStats ? 'text-primary' : '',
-          )}
+          className={cn(ctrlBtnClassName, showStats && 'text-primary')}
           onClick={onToggleStats}
           title="Stats overlay (Alt+D)"
           aria-label="Toggle stats overlay"
           aria-pressed={showStats}
         >
-          <BarChart2 size={16} />
+          <BarChart2 size={18} />
         </button>
         <button className={ctrlBtnClassName} onClick={takeScreenshot} title="Screenshot (S)">
           <Camera size={18} />
