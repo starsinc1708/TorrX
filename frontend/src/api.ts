@@ -308,13 +308,36 @@ export const searchTorrentsStream = (
   source.addEventListener('bootstrap', handlePhase as EventListener);
   source.addEventListener('done', handleDone as EventListener);
   source.addEventListener('error', handleError as EventListener);
+  let disconnectTimer: ReturnType<typeof setTimeout> | null = null;
   source.onerror = () => {
     if (closed) return;
-    handlers.onError?.('search stream disconnected');
-    closeStream();
+    // EventSource.CONNECTING means the browser is auto-reconnecting.
+    // Only report a fatal error when the connection is truly closed or
+    // reconnection takes too long (15 s).
+    if (source.readyState === EventSource.CLOSED) {
+      handlers.onError?.('search stream disconnected');
+      closeStream();
+      return;
+    }
+    if (!disconnectTimer) {
+      disconnectTimer = setTimeout(() => {
+        if (!closed && source.readyState !== EventSource.OPEN) {
+          handlers.onError?.('search stream disconnected');
+          closeStream();
+        }
+        disconnectTimer = null;
+      }, 15_000);
+    }
+  };
+  source.onopen = () => {
+    if (disconnectTimer) {
+      clearTimeout(disconnectTimer);
+      disconnectTimer = null;
+    }
   };
 
   return () => {
+    if (disconnectTimer) clearTimeout(disconnectTimer);
     source.removeEventListener('phase', handlePhase as EventListener);
     source.removeEventListener('update', handlePhase as EventListener);
     source.removeEventListener('bootstrap', handlePhase as EventListener);
@@ -605,12 +628,19 @@ export const getPlayerHealth = async (): Promise<PlayerHealth> => {
 };
 
 export const updatePlayerSettings = async (
-  input: { currentTorrentId: string | null },
+  input: { currentTorrentId?: string | null; prioritizeActiveFileOnly?: boolean },
 ): Promise<PlayerSettings> => {
+  const payload: Record<string, unknown> = {};
+  if (input.currentTorrentId !== undefined) {
+    payload.currentTorrentId = input.currentTorrentId ?? '';
+  }
+  if (input.prioritizeActiveFileOnly !== undefined) {
+    payload.prioritizeActiveFileOnly = input.prioritizeActiveFileOnly;
+  }
   const response = await fetch(buildUrl('/settings/player'), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ currentTorrentId: input.currentTorrentId ?? '' }),
+    body: JSON.stringify(payload),
   });
   return handleResponse(response);
 };

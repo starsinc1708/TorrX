@@ -30,6 +30,7 @@ const CatalogPage: React.FC = () => {
     selectedBulkIds,
     errorMessage,
     currentTorrentId,
+    prioritizeActiveFileOnly,
     setStatusFilter,
     setSearchQuery,
     setTagsQuery,
@@ -168,6 +169,7 @@ const CatalogPage: React.FC = () => {
           activeStateMap={activeStateMap}
           watchHistoryByTorrent={watchHistoryByTorrent}
           currentTorrentId={currentTorrentId}
+          prioritizeActiveFileOnly={prioritizeActiveFileOnly}
           allTags={allTags}
           statusFilter={statusFilter}
           searchQuery={searchQuery}

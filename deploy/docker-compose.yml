@@ -139,6 +139,11 @@ services:
       - "8191:8191"
     networks:
       - edge
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8191/ || exit 1"]
       interval: 15s
@@ -197,6 +202,11 @@ services:
     networks:
       - edge
       - core
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
     healthcheck:
       test: ["CMD-SHELL", "wget --spider --quiet http://localhost:8090/health || exit 1"]
       interval: 10s
@@ -271,12 +281,17 @@ services:
   mongo:
     image: mongo:7
     restart: unless-stopped
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.25"]
     ports:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
     networks:
       - core
+    deploy:
+      resources:
+        limits:
+          memory: 1g
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.runCommand('ping').ok", "--quiet"]
       interval: 10s

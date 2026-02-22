@@ -492,7 +492,6 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
                         type="button"
                         className={cn(
                           'w-full rounded-lg border border-border/70 bg-muted/10 px-4 py-3 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none',
-                          file.priority === 'none' && 'opacity-50',
                         )}
                         onClick={() => onWatchFile(torrent.id, targetFileIndex)}
                       >
@@ -512,9 +511,7 @@ const TorrentDetails: React.FC<TorrentDetailsProps> = ({
                                       ? 'bg-primary/20 text-primary'
                                       : file.priority === 'low'
                                         ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                                        : file.priority === 'none'
-                                          ? 'bg-muted text-muted-foreground'
-                                          : ''
+                                        : ''
                                   )}>
                                     {file.priority}
                                   </span>

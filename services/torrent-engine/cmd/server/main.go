@@ -129,6 +129,12 @@ func main() {
 	} else if ok {
 		currentTorrentID = id
 	}
+	prioritizeActiveFileOnly := true
+	if enabled, ok, err := playerSettingsRepo.GetPrioritizeActiveFileOnly(ctx); err != nil {
+		logger.Warn("player priority settings load failed", slog.String("error", err.Error()))
+	} else if ok {
+		prioritizeActiveFileOnly = enabled
+	}
 
 	engine, err := anacrolix.New(anacrolix.Config{
 		DataDir:     cfg.TorrentDataDir,
@@ -169,7 +175,8 @@ func main() {
 	stateUC := usecase.GetTorrentState{Engine: engine}
 	listStateUC := usecase.ListActiveTorrentStates{Engine: engine}
 	mediaProbe := ffprobe.New(cfg.FFProbePath)
-	playerSettings := player.NewPlayerSettingsManager(engine, playerSettingsRepo, currentTorrentID)
+	playerSettings := player.NewPlayerSettingsManager(engine, playerSettingsRepo, currentTorrentID, prioritizeActiveFileOnly)
+	streamUC.PlayerSettings = playerSettings
 
 	hlsCfg := apihttp.HLSConfig{
 		FFMPEGPath:      cfg.FFMPEGPath,

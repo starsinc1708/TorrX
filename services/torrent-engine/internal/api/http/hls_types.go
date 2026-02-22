@@ -1,6 +1,7 @@
 package apihttp
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -411,10 +412,11 @@ func parseM3U8Segments(playlistPath string) ([]m3u8Segment, error) {
 
 // remuxEntry tracks a background FFmpeg remux (MKV → MP4 codec copy).
 type remuxEntry struct {
-	path    string        // absolute path to the output .mp4
-	ready   chan struct{} // closed when remux is complete (check err)
+	path    string             // absolute path to the output .mp4
+	ready   chan struct{}      // closed when remux is complete (check err)
 	err     error
 	started time.Time
+	cancel  context.CancelFunc // cancels the FFmpeg process
 }
 
 // remuxCacheKey returns a unique key for the remux cache.

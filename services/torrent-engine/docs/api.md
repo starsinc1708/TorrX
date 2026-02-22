@@ -27,19 +27,42 @@ Common `error.code` values:
 ## Torrent Control
 - `POST /torrents`
 - `GET /torrents`
+  - query: `status`, `view`, `search`, `tags`, `sortBy`, `sortOrder`, `limit`, `offset`
 - `GET /torrents/{id}`
 - `POST /torrents/{id}/start`
 - `POST /torrents/{id}/stop`
 - `DELETE /torrents/{id}?deleteFiles=true|false`
+- `POST /torrents/{id}/focus`
+- `POST /torrents/unfocus`
+- `PUT /torrents/{id}/tags`
+- `POST /torrents/bulk/start`
+- `POST /torrents/bulk/stop`
+- `POST /torrents/bulk/delete`
 
 ## Session State
 - `GET /torrents/{id}/state`
 - `GET /torrents/state?status=active`
+- `SessionState.transferPhase`:
+  - `downloading` - normal data download.
+  - `verifying` - post-restart piece re-verification is in progress; `verificationProgress` reports 0..1 progress against previously known completed data.
+
+## Player Settings
+- `GET /settings/player`
+- `PATCH /settings/player` (also `PUT`)
+- `prioritizeActiveFileOnly`:
+  - `true` - during playback, neighboring files are set to `none` priority.
+  - `false` - neighboring files are kept at `low` priority.
+
+## Encoding/HLS Settings
+- `GET /settings/encoding`
+- `PATCH /settings/encoding` (also `PUT`)
+- `GET /settings/hls`
+- `PATCH /settings/hls` (also `PUT`)
 
 ## Storage Settings
 - `GET /settings/storage`
   - returns storage limits and data directory usage snapshot.
-- `PATCH /settings/storage`
+- `PATCH /settings/storage` (also `PUT`)
   - body (partial update supported):
 ```json
 {
@@ -91,6 +114,19 @@ If probing fails (e.g. metadata not available yet), API returns `200` with empty
 - `GET /torrents?view=full` and `GET /torrents/{id}` include optional `mediaOrganization`:
   - `contentType`: `series | movie | mixed | unknown`
   - `groups`: grouped files (seasons, movies, other) with stable file references (`fileIndex`, `filePath`)
+
+## Watch History
+- `GET /watch-history?limit={n}`
+- `GET /watch-history/{torrentId}/{fileIndex}`
+- `PUT /watch-history/{torrentId}/{fileIndex}`
+
+## Player Health
+- `GET /internal/health/player`
+  - returns current player/focus/active-session/HLS health snapshot.
+
+## WebSocket
+- `GET /ws` (upgrade)
+  - server pushes typed updates: torrent states/list snapshots, player settings, and health updates.
 
 ## Notes
 - `TorrentRecord.Source` is persisted internally for session restore and not exposed in API JSON.

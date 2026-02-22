@@ -164,8 +164,8 @@ type fakeStreamRepo struct {
 	getErr error
 }
 
-func (r *fakeStreamRepo) Create(context.Context, domain.TorrentRecord) error                 { return nil }
-func (r *fakeStreamRepo) Update(context.Context, domain.TorrentRecord) error                 { return nil }
+func (r *fakeStreamRepo) Create(context.Context, domain.TorrentRecord) error { return nil }
+func (r *fakeStreamRepo) Update(context.Context, domain.TorrentRecord) error { return nil }
 func (r *fakeStreamRepo) UpdateProgress(context.Context, domain.TorrentID, domain.ProgressUpdate) error {
 	return nil
 }
@@ -178,8 +178,16 @@ func (r *fakeStreamRepo) List(context.Context, domain.TorrentFilter) ([]domain.T
 func (r *fakeStreamRepo) GetMany(context.Context, []domain.TorrentID) ([]domain.TorrentRecord, error) {
 	return nil, nil
 }
-func (r *fakeStreamRepo) Delete(context.Context, domain.TorrentID) error          { return nil }
+func (r *fakeStreamRepo) Delete(context.Context, domain.TorrentID) error               { return nil }
 func (r *fakeStreamRepo) UpdateTags(context.Context, domain.TorrentID, []string) error { return nil }
+
+type fakeStreamPrioritySettings struct {
+	activeFileOnly bool
+}
+
+func (f *fakeStreamPrioritySettings) PrioritizeActiveFileOnly() bool {
+	return f.activeFileOnly
+}
 
 func hasPriorityCall(s *fakeStreamSession, fileIndex int, prio domain.Priority) bool {
 	for i, file := range s.callFiles {
@@ -456,6 +464,67 @@ func TestExecuteRawEnforcesActiveFileOnly(t *testing.T) {
 	}
 }
 
+func TestStreamTorrentAllowsLowPriorityNeighborsWhenActiveFileOnlyDisabled(t *testing.T) {
+	reader := &fakeStreamReader{}
+	session := &fakeStreamSession{
+		files: []domain.FileRef{
+			{Index: 0, Path: "s01e01.mkv", Length: 100 << 20},
+			{Index: 1, Path: "s01e02.mkv", Length: 120 << 20},
+			{Index: 2, Path: "s01e03.mkv", Length: 130 << 20},
+		},
+		reader: reader,
+	}
+	engine := &fakeStreamEngine{session: session}
+	uc := StreamTorrent{
+		Engine:         engine,
+		ReadaheadBytes: 2 << 20,
+		PlayerSettings: &fakeStreamPrioritySettings{activeFileOnly: false},
+	}
+
+	_, err := uc.Execute(context.Background(), "t1", 1)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if !hasPriorityCall(session, 1, domain.PriorityNormal) {
+		t.Fatalf("expected PriorityNormal call for active file index=1")
+	}
+	if !hasPriorityCall(session, 0, domain.PriorityLow) {
+		t.Fatalf("expected PriorityLow call for non-active file index=0")
+	}
+	if !hasPriorityCall(session, 2, domain.PriorityLow) {
+		t.Fatalf("expected PriorityLow call for non-active file index=2")
+	}
+}
+
+func TestExecuteRawAllowsLowPriorityNeighborsWhenActiveFileOnlyDisabled(t *testing.T) {
+	reader := &fakeStreamReader{}
+	session := &fakeStreamSession{
+		files: []domain.FileRef{
+			{Index: 0, Path: "movie-part1.mkv", Length: 700 << 20},
+			{Index: 1, Path: "movie-part2.mkv", Length: 650 << 20},
+		},
+		reader: reader,
+	}
+	engine := &fakeStreamEngine{session: session}
+	uc := StreamTorrent{
+		Engine:         engine,
+		PlayerSettings: &fakeStreamPrioritySettings{activeFileOnly: false},
+	}
+
+	_, err := uc.ExecuteRaw(context.Background(), "t1", 0)
+	if err != nil {
+		t.Fatalf("ExecuteRaw: %v", err)
+	}
+
+	if !hasPriorityCall(session, 0, domain.PriorityNormal) {
+		t.Fatalf("expected PriorityNormal call for active file index=0")
+	}
+	if !hasPriorityCall(session, 1, domain.PriorityLow) {
+		t.Fatalf("expected PriorityLow call for non-active file index=1")
+	}
+}
+
 func TestExecuteRawNilEngine(t *testing.T) {
 	uc := StreamTorrent{}
 	_, err := uc.ExecuteRaw(context.Background(), "t1", 0)
@@ -576,12 +645,12 @@ func TestStreamPriorityWindowCases(t *testing.T) {
 		fileLength int64
 		want       int64
 	}{
-		{"default readahead", 0, 100, defaultStreamReadahead * priorityWindowMultiplier},              // 16MB×4=64MB
-		{"small readahead", 2 << 20, 100, minPriorityWindowBytes},                                    // 2MB×4=8MB→clamped to 32MB
-		{"large readahead", 128 << 20, 100, maxPriorityWindowBytes},                                  // 128MB×4=512MB→clamped to 256MB
-		{"1pct scaling", 16 << 20, 50 << 30, maxPriorityWindowBytes},                                 // 50GB file, 1% = 500MB, clamped to 256MB
-		{"1pct within bounds", 16 << 20, 10 << 30, 10 << 30 / 100},                                  // 10GB → 1% = ~107MB
-		{"negative readahead", -1, 100, defaultStreamReadahead * priorityWindowMultiplier},            // fallback to default: 16MB×4=64MB
+		{"default readahead", 0, 100, defaultStreamReadahead * priorityWindowMultiplier},   // 16MB×4=64MB
+		{"small readahead", 2 << 20, 100, minPriorityWindowBytes},                          // 2MB×4=8MB→clamped to 32MB
+		{"large readahead", 128 << 20, 100, maxPriorityWindowBytes},                        // 128MB×4=512MB→clamped to 256MB
+		{"1pct scaling", 16 << 20, 50 << 30, maxPriorityWindowBytes},                       // 50GB file, 1% = 500MB, clamped to 256MB
+		{"1pct within bounds", 16 << 20, 10 << 30, 10 << 30 / 100},                         // 10GB → 1% = ~107MB
+		{"negative readahead", -1, 100, defaultStreamReadahead * priorityWindowMultiplier}, // fallback to default: 16MB×4=64MB
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

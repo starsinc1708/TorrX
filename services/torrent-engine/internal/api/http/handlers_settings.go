@@ -12,11 +12,13 @@ import (
 )
 
 type playerSettingsResponse struct {
-	CurrentTorrentID domain.TorrentID `json:"currentTorrentId,omitempty"`
+	CurrentTorrentID         domain.TorrentID `json:"currentTorrentId,omitempty"`
+	PrioritizeActiveFileOnly bool             `json:"prioritizeActiveFileOnly"`
 }
 
 type updatePlayerSettingsRequest struct {
-	CurrentTorrentID *string `json:"currentTorrentId"`
+	CurrentTorrentID         *string `json:"currentTorrentId"`
+	PrioritizeActiveFileOnly *bool   `json:"prioritizeActiveFileOnly"`
 }
 
 func (s *Server) handlePlayerSettings(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +123,10 @@ func (s *Server) handleGetPlayerSettings(w http.ResponseWriter, _ *http.Request)
 		writeError(w, http.StatusNotImplemented, "not_configured", "player settings are not configured")
 		return
 	}
-	writeJSON(w, http.StatusOK, playerSettingsResponse{CurrentTorrentID: s.player.CurrentTorrentID()})
+	writeJSON(w, http.StatusOK, playerSettingsResponse{
+		CurrentTorrentID:         s.player.CurrentTorrentID(),
+		PrioritizeActiveFileOnly: s.player.PrioritizeActiveFileOnly(),
+	})
 }
 
 func (s *Server) handleUpdatePlayerSettings(w http.ResponseWriter, r *http.Request) {
@@ -137,18 +142,30 @@ func (s *Server) handleUpdatePlayerSettings(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json")
 		return
 	}
-	if body.CurrentTorrentID == nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "currentTorrentId is required")
+	if body.CurrentTorrentID == nil && body.PrioritizeActiveFileOnly == nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "at least one player setting is required")
 		return
 	}
 
-	id := domain.TorrentID(strings.TrimSpace(*body.CurrentTorrentID))
-	if err := s.setCurrentTorrentID(r.Context(), id); err != nil {
-		writeDomainError(w, err)
-		return
+	if body.CurrentTorrentID != nil {
+		id := domain.TorrentID(strings.TrimSpace(*body.CurrentTorrentID))
+		if err := s.setCurrentTorrentID(r.Context(), id); err != nil {
+			writeDomainError(w, err)
+			return
+		}
 	}
 
-	writeJSON(w, http.StatusOK, playerSettingsResponse{CurrentTorrentID: s.player.CurrentTorrentID()})
+	if body.PrioritizeActiveFileOnly != nil {
+		if err := s.player.SetPrioritizeActiveFileOnly(*body.PrioritizeActiveFileOnly); err != nil {
+			writeDomainError(w, err)
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, playerSettingsResponse{
+		CurrentTorrentID:         s.player.CurrentTorrentID(),
+		PrioritizeActiveFileOnly: s.player.PrioritizeActiveFileOnly(),
+	})
 	s.BroadcastPlayerSettings()
 }
 

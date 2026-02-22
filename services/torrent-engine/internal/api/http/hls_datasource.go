@@ -44,5 +44,28 @@ func dataSourceFilePath(ds MediaDataSource) string {
 	}
 }
 
+// headerPrefixReader prepends saved container header bytes to a seeked reader.
+// When seeking in pipe sources, FFmpeg needs the container header (EBML/MKV,
+// MP4 ftyp/moov, etc.) to identify the format and codecs. This reader returns
+// the cached header first, then streams data from the seeked reader position.
+type headerPrefixReader struct {
+	header []byte
+	pos    int
+	source io.ReadCloser
+}
+
+func (r *headerPrefixReader) Read(p []byte) (int, error) {
+	if r.pos < len(r.header) {
+		n := copy(p, r.header[r.pos:])
+		r.pos += n
+		return n, nil
+	}
+	return r.source.Read(p)
+}
+
+func (r *headerPrefixReader) Close() error {
+	return r.source.Close()
+}
+
 // Ensure all implementations satisfy the interface.
 var _ MediaDataSource = (*directFileSource)(nil)

@@ -6,6 +6,7 @@ import {
   getFlareSolverrSettings,
   getEncodingSettings,
   getHLSSettings,
+  getPlayerSettings,
   getStorageSettings,
   getSearchProviderRuntimeConfigs,
   isApiError,
@@ -13,6 +14,7 @@ import {
   updateSearchProviderRuntimeConfig,
   updateEncodingSettings,
   updateHLSSettings,
+  updatePlayerSettings,
   updateStorageSettings,
 } from '../api';
 import { useToast } from '../app/providers/ToastProvider';
@@ -27,6 +29,7 @@ import { Switch } from '../components/ui/switch';
 import type {
   EncodingSettings,
   HLSSettings,
+  PlayerSettings,
   FlareSolverrProviderStatus,
   SearchProviderInfo,
   SearchProviderRuntimeConfig,
@@ -90,6 +93,10 @@ const SettingsPage: React.FC = () => {
   const [hlsError, setHlsError] = useState<string | null>(null);
   const [hlsForm, setHlsForm] = useState({ ramBufSizeMB: '', prebufferMB: '', windowBeforeMB: '', windowAfterMB: '', segmentDuration: 4 });
   const [hlsMaxBuffer, setHlsMaxBuffer] = useState(() => Number(localStorage.getItem('hlsMaxBufferLength')) || 60);
+  const [playerSettings, setPlayerSettings] = useState<PlayerSettings | null>(null);
+  const [playerLoading, setPlayerLoading] = useState(false);
+  const [playerSaving, setPlayerSaving] = useState(false);
+  const [playerError, setPlayerError] = useState<string | null>(null);
 
   // Storage
   const [storageSettings, setStorageSettings] = useState<StorageSettings | null>(null);
@@ -150,6 +157,23 @@ const SettingsPage: React.FC = () => {
       else if (error instanceof Error) setHlsError(error.message);
     } finally {
       setHlsLoading(false);
+    }
+  }, []);
+
+  const loadPlayerSettings = useCallback(async () => {
+    setPlayerLoading(true);
+    try {
+      const settings = await getPlayerSettings();
+      setPlayerSettings({
+        currentTorrentId: settings.currentTorrentId ?? '',
+        prioritizeActiveFileOnly: settings.prioritizeActiveFileOnly ?? true,
+      });
+      setPlayerError(null);
+    } catch (error) {
+      if (isApiError(error)) setPlayerError(`${error.code ?? 'error'}: ${error.message}`);
+      else if (error instanceof Error) setPlayerError(error.message);
+    } finally {
+      setPlayerLoading(false);
     }
   }, []);
 
@@ -238,11 +262,12 @@ const SettingsPage: React.FC = () => {
   useEffect(() => {
     loadEncoding();
     loadHLSSettings();
+    loadPlayerSettings();
     loadStorage();
     loadSearchProviders();
     loadRuntimeConfigs();
     loadFlareSolverrSettings();
-  }, [loadEncoding, loadHLSSettings, loadStorage, loadSearchProviders, loadRuntimeConfigs, loadFlareSolverrSettings]);
+  }, [loadEncoding, loadHLSSettings, loadPlayerSettings, loadStorage, loadSearchProviders, loadRuntimeConfigs, loadFlareSolverrSettings]);
 
   const flareConfiguredCount = flareSolverrProviders.filter((item) => item.configured).length;
 
@@ -291,6 +316,23 @@ const SettingsPage: React.FC = () => {
       else if (error instanceof Error) setHlsError(error.message);
     } finally {
       setHlsSaving(false);
+    }
+  };
+
+  const handleToggleActiveFileOnlyPriority = async (enabled: boolean) => {
+    setPlayerSaving(true);
+    try {
+      const updated = await updatePlayerSettings({ prioritizeActiveFileOnly: enabled });
+      setPlayerSettings((prev) => ({
+        currentTorrentId: updated.currentTorrentId ?? prev?.currentTorrentId ?? '',
+        prioritizeActiveFileOnly: updated.prioritizeActiveFileOnly ?? enabled,
+      }));
+      setPlayerError(null);
+    } catch (error) {
+      if (isApiError(error)) setPlayerError(`${error.code ?? 'error'}: ${error.message}`);
+      else if (error instanceof Error) setPlayerError(error.message);
+    } finally {
+      setPlayerSaving(false);
     }
   };
 
@@ -863,6 +905,10 @@ const SettingsPage: React.FC = () => {
               <RefreshCw className={cn('h-4 w-4', hlsLoading ? 'animate-spin' : '')} />
               Streaming
             </Button>
+            <Button variant="outline" size="sm" onClick={() => void loadPlayerSettings()} disabled={playerLoading}>
+              <RefreshCw className={cn('h-4 w-4', playerLoading ? 'animate-spin' : '')} />
+              Player
+            </Button>
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -1043,6 +1089,45 @@ const SettingsPage: React.FC = () => {
               </div>
             ) : null}
           </div>
+          </div>
+
+          <div className="border-t border-border/70 pt-5">
+            <div className="space-y-3">
+              <div className="text-sm font-semibold">Playback priorities</div>
+              {playerLoading ? <div className="text-sm text-muted-foreground">Loading...</div> : null}
+
+              {!playerLoading && playerSettings ? (
+                <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-3">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className="text-sm font-medium">Only active file</div>
+                      <div className="text-xs text-muted-foreground">
+                        When enabled, neighboring files are deprioritized during playback.
+                      </div>
+                    </div>
+                    <Switch
+                      checked={playerSettings.prioritizeActiveFileOnly ?? true}
+                      onCheckedChange={(checked) => {
+                        void handleToggleActiveFileOnlyPriority(checked);
+                      }}
+                      disabled={playerSaving}
+                    />
+                  </div>
+                  <div className="mt-3 text-xs text-muted-foreground">
+                    Neighbor files priority:{' '}
+                    <span className="font-semibold text-foreground">
+                      {(playerSettings.prioritizeActiveFileOnly ?? true) ? 'none' : 'low'}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+
+              {playerError ? (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
+                  {playerError}
+                </div>
+              ) : null}
+            </div>
           </div>
 
           <div className="border-t border-border/70 pt-5">

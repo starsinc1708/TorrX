@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"os"
@@ -518,7 +519,11 @@ func (m *StreamJobManager) newStreamDataSource(result usecase.StreamResult, job 
 				// while piece verification is still in progress). If the file on disk
 				// already has the full expected length, treat it as complete and stream
 				// directly from disk to avoid RAM-buffer stalls/timeouts.
-				if !fileComplete && result.File.Length > 0 && info.Size() >= result.File.Length {
+				// Only apply this fallback when BytesCompleted is zero (verification
+				// not yet started). When BytesCompleted > 0 but < Length, the file is
+				// genuinely incomplete — torrent files are pre-allocated to full size
+				// on disk so info.Size() is unreliable for partial downloads.
+				if !fileComplete && result.File.Length > 0 && result.File.BytesCompleted == 0 && info.Size() >= result.File.Length {
 					fileComplete = true
 					m.logger.Info("stream using on-disk size to detect complete file",
 						slog.String("path", candidatePath),
@@ -542,9 +547,80 @@ func (m *StreamJobManager) newStreamDataSource(result usecase.StreamResult, job 
 	if bufSize <= 0 {
 		bufSize = defaultRAMBufSize
 	}
-	ramBuf := NewRAMBuffer(result.Reader, int(bufSize), m.logger)
+
+	// For seek operations, skip ahead in the reader to avoid reading through
+	// gigabytes of data from byte 0. FFmpeg with -ss and pipe:0 must linearly
+	// read all preceding bytes, which stalls on undownloaded pieces.
+	var source io.ReadCloser = result.Reader
+	if job.seekSeconds > 0 && result.File.Length > 0 {
+		if seeked := m.seekPipeReader(result.Reader, result.File, job.seekSeconds, subtitleSourcePath); seeked != nil {
+			source = seeked
+		}
+	}
+
+	ramBuf := NewRAMBuffer(source, int(bufSize), m.logger)
 	job.ramBuf = ramBuf
 	return &streamPipeSource{buf: ramBuf}, subtitleSourcePath
+}
+
+const (
+	pipeSeekHeaderSize  = 256 << 10 // 256KB — enough for MKV EBML/Segment/Tracks header
+	pipeSeekMarginBytes = 2 << 20   // 2MB before estimated offset for keyframe alignment
+)
+
+// seekPipeReader reads the container header from the reader, then seeks it to
+// the estimated byte offset for the target time. Returns a headerPrefixReader
+// that feeds [header | data-from-offset] to FFmpeg, or nil if seeking is not
+// possible (missing duration, offset too small, seek error).
+func (m *StreamJobManager) seekPipeReader(reader ports.StreamReader, file domain.FileRef, seekSec float64, filePath string) io.ReadCloser {
+	if filePath == "" && m.dataDir != "" {
+		if p, err := resolveDataFilePath(m.dataDir, file.Path); err == nil {
+			filePath = p
+		}
+	}
+	if filePath == "" {
+		return nil
+	}
+
+	_, _, dur := m.getVideoResolutionWithDuration(filePath)
+	if dur <= 0 {
+		return nil
+	}
+
+	offset := estimateByteOffset(seekSec, dur, file.Length)
+	if offset <= int64(pipeSeekHeaderSize)+int64(pipeSeekMarginBytes) {
+		return nil // too close to start, no benefit from seeking
+	}
+
+	// Read container header so FFmpeg can identify the format and codecs.
+	header := make([]byte, pipeSeekHeaderSize)
+	n, err := io.ReadFull(reader, header)
+	if n == 0 {
+		// Failed to read any header bytes — reset and fall back.
+		_, _ = reader.Seek(0, io.SeekStart)
+		return nil
+	}
+	_ = err // partial read (ErrUnexpectedEOF) is fine for header
+	header = header[:n]
+
+	seekTarget := offset - int64(pipeSeekMarginBytes)
+	if seekTarget < int64(n) {
+		seekTarget = int64(n)
+	}
+	if _, err := reader.Seek(seekTarget, io.SeekStart); err != nil {
+		// Seek not supported or failed — reset to beginning.
+		_, _ = reader.Seek(0, io.SeekStart)
+		return nil
+	}
+
+	m.logger.Info("pipe source seeked for faster startup",
+		slog.Float64("seekSeconds", seekSec),
+		slog.Int64("seekByte", seekTarget),
+		slog.Int("headerBytes", n),
+		slog.Int64("fileLength", file.Length),
+	)
+
+	return &headerPrefixReader{header: header, source: reader}
 }
 
 // ---- Encoding settings (implements app.EncodingSettingsEngine) ---------------
@@ -908,18 +984,20 @@ func (m *StreamJobManager) triggerRemux(id domain.TorrentID, fileIndex int, inpu
 		return
 	}
 	outPath := m.getRemuxPath(id, fileIndex)
+	ctx, cancel := context.WithCancel(context.Background())
 	entry := &remuxEntry{
 		path:    outPath,
 		ready:   make(chan struct{}),
 		started: time.Now(),
+		cancel:  cancel,
 	}
 	m.remuxCache[key] = entry
 	m.remuxCacheMu.Unlock()
 
-	go m.runRemux(entry, inputPath, key)
+	go m.runRemux(ctx, entry, inputPath, key)
 }
 
-func (m *StreamJobManager) runRemux(entry *remuxEntry, inputPath, cacheKey string) {
+func (m *StreamJobManager) runRemux(ctx context.Context, entry *remuxEntry, inputPath, cacheKey string) {
 	defer close(entry.ready)
 
 	outDir := filepath.Dir(entry.path)
@@ -951,7 +1029,7 @@ func (m *StreamJobManager) runRemux(entry *remuxEntry, inputPath, cacheKey strin
 	)
 
 	start := time.Now()
-	cmd := exec.Command(m.ffmpegPath, args...)
+	cmd := exec.CommandContext(ctx, m.ffmpegPath, args...)
 	var stderrBuf strings.Builder
 	cmd.Stderr = &stderrBuf
 
@@ -1220,6 +1298,14 @@ func (m *StreamJobManager) shutdown() {
 		delete(m.jobs, key)
 	}
 	m.mu.Unlock()
+
+	m.remuxCacheMu.Lock()
+	for _, entry := range m.remuxCache {
+		if entry.cancel != nil {
+			entry.cancel()
+		}
+	}
+	m.remuxCacheMu.Unlock()
 
 	m.codecCacheMu.Lock()
 	if m.codecCacheSaveTimer != nil {

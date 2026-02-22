@@ -682,6 +682,11 @@ func (s *Service) SearchStream(ctx context.Context, request domain.SearchRequest
 
 	prepared, err := s.prepareSearch(request, providerNames)
 	if err != nil {
+		ch <- domain.SearchResponse{
+			Query: request.Query,
+			Final: true,
+			Error: err.Error(),
+		}
 		close(ch)
 		return ch
 	}

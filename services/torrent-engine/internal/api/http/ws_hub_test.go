@@ -489,7 +489,7 @@ func TestHandleWS_BroadcastTorrents(t *testing.T) {
 }
 
 func TestHandleWS_BroadcastPlayerSettings(t *testing.T) {
-	player := &fakeWSPlayerCtrl{torrentID: "active-torrent"}
+	player := &fakeWSPlayerCtrl{torrentID: "active-torrent", prioritizeActiveFileOnly: true}
 	s := NewServer(nil, WithPlayerSettings(player))
 	srv := httptest.NewServer(s)
 	defer srv.Close()
@@ -510,6 +510,9 @@ func TestHandleWS_BroadcastPlayerSettings(t *testing.T) {
 	}
 	if got := dataMap["currentTorrentId"]; got != "active-torrent" {
 		t.Fatalf("currentTorrentId = %v, want active-torrent", got)
+	}
+	if got := dataMap["prioritizeActiveFileOnly"]; got != true {
+		t.Fatalf("prioritizeActiveFileOnly = %v, want true", got)
 	}
 }
 
@@ -772,7 +775,8 @@ func (f *fakeWSRepo) UpdateTags(_ context.Context, id domain.TorrentID, tags []s
 }
 
 type fakeWSPlayerCtrl struct {
-	torrentID domain.TorrentID
+	torrentID                domain.TorrentID
+	prioritizeActiveFileOnly bool
 }
 
 func (f *fakeWSPlayerCtrl) CurrentTorrentID() domain.TorrentID {
@@ -780,5 +784,14 @@ func (f *fakeWSPlayerCtrl) CurrentTorrentID() domain.TorrentID {
 }
 func (f *fakeWSPlayerCtrl) SetCurrentTorrentID(id domain.TorrentID) error {
 	f.torrentID = id
+	return nil
+}
+
+func (f *fakeWSPlayerCtrl) PrioritizeActiveFileOnly() bool {
+	return f.prioritizeActiveFileOnly
+}
+
+func (f *fakeWSPlayerCtrl) SetPrioritizeActiveFileOnly(enabled bool) error {
+	f.prioritizeActiveFileOnly = enabled
 	return nil
 }

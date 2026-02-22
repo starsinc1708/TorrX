@@ -117,9 +117,12 @@ func (f *fakeListTorrentStates) Execute(ctx context.Context) ([]domain.SessionSt
 }
 
 type fakePlayerSettings struct {
-	current   domain.TorrentID
-	setCalled int
-	setErr    error
+	current                  domain.TorrentID
+	setCalled                int
+	setErr                   error
+	prioritizeActiveFileOnly bool
+	setPriorityCalled        int
+	setPriorityErr           error
 }
 
 func (f *fakePlayerSettings) CurrentTorrentID() domain.TorrentID {
@@ -132,6 +135,19 @@ func (f *fakePlayerSettings) SetCurrentTorrentID(id domain.TorrentID) error {
 		return f.setErr
 	}
 	f.current = id
+	return nil
+}
+
+func (f *fakePlayerSettings) PrioritizeActiveFileOnly() bool {
+	return f.prioritizeActiveFileOnly
+}
+
+func (f *fakePlayerSettings) SetPrioritizeActiveFileOnly(enabled bool) error {
+	f.setPriorityCalled++
+	if f.setPriorityErr != nil {
+		return f.setPriorityErr
+	}
+	f.prioritizeActiveFileOnly = enabled
 	return nil
 }
 
@@ -299,6 +315,31 @@ func TestOpenAPI(t *testing.T) {
 	}
 	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
 		t.Fatalf("content-type = %s", ct)
+	}
+
+	var spec struct {
+		Paths map[string]json.RawMessage `json:"paths"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &spec); err != nil {
+		t.Fatalf("decode openapi: %v", err)
+	}
+
+	required := []string{
+		"/torrents/{id}/focus",
+		"/torrents/unfocus",
+		"/torrents/bulk/start",
+		"/torrents/bulk/stop",
+		"/torrents/bulk/delete",
+		"/torrents/{id}/tags",
+		"/settings/player",
+		"/watch-history/{torrentId}/{fileIndex}",
+		"/internal/health/player",
+		"/ws",
+	}
+	for _, path := range required {
+		if _, ok := spec.Paths[path]; !ok {
+			t.Fatalf("openapi missing path %s", path)
+		}
 	}
 }
 
@@ -1012,7 +1053,7 @@ func TestListTorrentStatesMissingStatus(t *testing.T) {
 }
 
 func TestGetPlayerSettings(t *testing.T) {
-	player := &fakePlayerSettings{current: "t1"}
+	player := &fakePlayerSettings{current: "t1", prioritizeActiveFileOnly: true}
 	server := NewServer(&fakeCreateTorrent{}, WithPlayerSettings(player))
 
 	req := httptest.NewRequest(http.MethodGet, "/settings/player", nil)
@@ -1023,13 +1064,17 @@ func TestGetPlayerSettings(t *testing.T) {
 		t.Fatalf("status = %d", w.Code)
 	}
 	var resp struct {
-		CurrentTorrentID string `json:"currentTorrentId"`
+		CurrentTorrentID         string `json:"currentTorrentId"`
+		PrioritizeActiveFileOnly bool   `json:"prioritizeActiveFileOnly"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if resp.CurrentTorrentID != "t1" {
 		t.Fatalf("unexpected current torrent: %q", resp.CurrentTorrentID)
+	}
+	if !resp.PrioritizeActiveFileOnly {
+		t.Fatalf("expected prioritizeActiveFileOnly=true")
 	}
 }
 
@@ -1047,6 +1092,26 @@ func TestUpdatePlayerSettings(t *testing.T) {
 	}
 	if player.setCalled != 1 || player.current != "t2" {
 		t.Fatalf("player settings not updated: called=%d current=%q", player.setCalled, player.current)
+	}
+}
+
+func TestUpdatePlayerSettingsPriorityMode(t *testing.T) {
+	player := &fakePlayerSettings{}
+	server := NewServer(&fakeCreateTorrent{}, WithPlayerSettings(player))
+
+	req := httptest.NewRequest(http.MethodPatch, "/settings/player", bytes.NewBufferString(`{"prioritizeActiveFileOnly":false}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if player.setPriorityCalled != 1 {
+		t.Fatalf("priority setting call count = %d, want 1", player.setPriorityCalled)
+	}
+	if player.prioritizeActiveFileOnly {
+		t.Fatalf("expected prioritizeActiveFileOnly=false")
 	}
 }
 

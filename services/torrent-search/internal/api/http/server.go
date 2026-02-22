@@ -141,6 +141,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "query is required")
+		return
+	}
 	if len(query) > maxQueryLength {
 		writeError(w, http.StatusBadRequest, "invalid_request", "query too long (max 500 characters)")
 		return
@@ -243,6 +247,10 @@ func (s *Server) handleSearchStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "query is required")
+		return
+	}
 	if len(query) > maxQueryLength {
 		writeError(w, http.StatusBadRequest, "invalid_request", "query too long (max 500 characters)")
 		return
@@ -300,6 +308,13 @@ func (s *Server) handleSearchStream(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return // Client disconnected
 		default:
+		}
+		if response.Error != "" {
+			_ = writeSSEEvent(w, flusher, "error", map[string]any{
+				"message": response.Error,
+			})
+			_ = writeSSEEvent(w, flusher, "done", map[string]any{"final": true})
+			return
 		}
 		response.Phase = "update"
 		if err := writeSSEEvent(w, flusher, "update", response); err != nil {

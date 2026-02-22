@@ -1,6 +1,7 @@
 package apihttp
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -708,7 +709,7 @@ func TestRunRemuxMkdirError(t *testing.T) {
 		started: time.Now(),
 	}
 
-	mgr.runRemux(entry, "/fake/input.mkv", "t1/0")
+	mgr.runRemux(context.Background(), entry, "/fake/input.mkv", "t1/0")
 
 	<-entry.ready
 	if entry.err == nil {
@@ -737,7 +738,7 @@ func TestRunRemuxFFmpegNotFound(t *testing.T) {
 	cacheKey := "t1/0"
 	mgr.remuxCache[cacheKey] = entry
 
-	mgr.runRemux(entry, "/fake/input.mkv", cacheKey)
+	mgr.runRemux(context.Background(), entry, "/fake/input.mkv", cacheKey)
 
 	<-entry.ready
 	if entry.err == nil {

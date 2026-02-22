@@ -14,7 +14,7 @@ func TestMapPriorityString(t *testing.T) {
 		input    torrent.PiecePriority
 		expected string
 	}{
-		{"None", torrent.PiecePriorityNone, "none"},
+		{"None", torrent.PiecePriorityNone, ""},
 		{"Normal", torrent.PiecePriorityNormal, "normal"},
 		{"High", torrent.PiecePriorityHigh, "high"},
 		{"Readahead", torrent.PiecePriorityReadahead, "normal"},

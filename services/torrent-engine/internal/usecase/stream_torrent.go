@@ -44,10 +44,15 @@ type StreamResult struct {
 	ConsumptionRate func() float64 // returns EMA consumer read rate in bytes/sec; nil if unavailable
 }
 
+type StreamPrioritySettings interface {
+	PrioritizeActiveFileOnly() bool
+}
+
 type StreamTorrent struct {
 	Engine         ports.Engine
 	Repo           ports.TorrentRepository
 	ReadaheadBytes int64
+	PlayerSettings StreamPrioritySettings
 
 	readersOnce sync.Once
 	readers     *readerRegistry
@@ -102,10 +107,7 @@ func (uc *StreamTorrent) Execute(ctx context.Context, id domain.TorrentID, fileI
 		return StreamResult{}, ErrInvalidFileIndex
 	}
 
-	// During playback, keep network budget on the selected file only.
-	// Non-selected files are fully deprioritized; the active file remains
-	// downloadable and then receives finer-grained window priorities below.
-	enforceActiveFileOnly(session, file)
+	applyFilePriorityPolicy(session, file, uc.prioritizeActiveFileOnly())
 
 	readahead := uc.ReadaheadBytes
 	if readahead <= 0 {
@@ -195,8 +197,7 @@ func (uc *StreamTorrent) ExecuteRaw(ctx context.Context, id domain.TorrentID, fi
 		return StreamResult{}, ErrInvalidFileIndex
 	}
 
-	// Mirror Execute behavior for HLS/FSM path: download only the selected file.
-	enforceActiveFileOnly(session, file)
+	applyFilePriorityPolicy(session, file, uc.prioritizeActiveFileOnly())
 
 	reader, err := session.NewReader(file)
 	if err != nil {
@@ -215,12 +216,24 @@ func (uc *StreamTorrent) ExecuteRaw(ctx context.Context, id domain.TorrentID, fi
 	}, nil
 }
 
-// enforceActiveFileOnly deprioritizes all non-selected files in the torrent
-// and keeps the selected file at least PriorityNormal.
-func enforceActiveFileOnly(session ports.Session, activeFile domain.FileRef) {
+func (uc *StreamTorrent) prioritizeActiveFileOnly() bool {
+	if uc.PlayerSettings == nil {
+		return true
+	}
+	return uc.PlayerSettings.PrioritizeActiveFileOnly()
+}
+
+// applyFilePriorityPolicy adjusts priorities for non-selected files in the
+// torrent while ensuring the selected file stays at least PriorityNormal.
+func applyFilePriorityPolicy(session ports.Session, activeFile domain.FileRef, activeFileOnly bool) {
 	files := session.Files()
 	if len(files) <= 1 {
 		return
+	}
+
+	nonActivePriority := domain.PriorityLow
+	if activeFileOnly {
+		nonActivePriority = domain.PriorityNone
 	}
 
 	for _, file := range files {
@@ -230,7 +243,7 @@ func enforceActiveFileOnly(session ports.Session, activeFile domain.FileRef) {
 		if file.Index == activeFile.Index {
 			continue
 		}
-		session.SetPiecePriority(file, domain.Range{Off: 0, Length: file.Length}, domain.PriorityNone)
+		session.SetPiecePriority(file, domain.Range{Off: 0, Length: file.Length}, nonActivePriority)
 	}
 
 	if activeFile.Length > 0 {

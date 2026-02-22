@@ -16,9 +16,10 @@ import (
 const playerSettingsID = "player"
 
 type playerSettingsDoc struct {
-	ID               string `bson:"_id"`
-	CurrentTorrentID string `bson:"currentTorrentId"`
-	UpdatedAt        int64  `bson:"updatedAt"`
+	ID                       string `bson:"_id"`
+	CurrentTorrentID         string `bson:"currentTorrentId"`
+	PrioritizeActiveFileOnly *bool  `bson:"prioritizeActiveFileOnly,omitempty"`
+	UpdatedAt                int64  `bson:"updatedAt"`
 }
 
 type PlayerSettingsRepository struct {
@@ -50,6 +51,37 @@ func (r *PlayerSettingsRepository) SetCurrentTorrentID(ctx context.Context, id d
 		"$set": bson.M{
 			"currentTorrentId": strings.TrimSpace(string(id)),
 			"updatedAt":        time.Now().Unix(),
+		},
+	}
+	_, err := r.collection.UpdateOne(
+		ctx,
+		bson.M{"_id": playerSettingsID},
+		update,
+		options.Update().SetUpsert(true),
+	)
+	return err
+}
+
+func (r *PlayerSettingsRepository) GetPrioritizeActiveFileOnly(ctx context.Context) (bool, bool, error) {
+	var doc playerSettingsDoc
+	err := r.collection.FindOne(ctx, bson.M{"_id": playerSettingsID}).Decode(&doc)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return false, false, nil
+		}
+		return false, false, err
+	}
+	if doc.PrioritizeActiveFileOnly == nil {
+		return false, false, nil
+	}
+	return *doc.PrioritizeActiveFileOnly, true, nil
+}
+
+func (r *PlayerSettingsRepository) SetPrioritizeActiveFileOnly(ctx context.Context, enabled bool) error {
+	update := bson.M{
+		"$set": bson.M{
+			"prioritizeActiveFileOnly": enabled,
+			"updatedAt":                time.Now().Unix(),
 		},
 	}
 	_, err := r.collection.UpdateOne(

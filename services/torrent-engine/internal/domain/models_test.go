@@ -89,11 +89,26 @@ func TestTorrentFilterJSONTags(t *testing.T) {
 func TestSessionStateJSONTags(t *testing.T) {
 	expectJSONTag(t, SessionState{}, "ID", "id")
 	expectJSONTag(t, SessionState{}, "Status", "status")
+	expectJSONTag(t, SessionState{}, "Mode", "mode,omitempty")
+	expectJSONTag(t, SessionState{}, "TransferPhase", "transferPhase,omitempty")
 	expectJSONTag(t, SessionState{}, "Progress", "progress")
+	expectJSONTag(t, SessionState{}, "VerificationProgress", "verificationProgress,omitempty")
 	expectJSONTag(t, SessionState{}, "Peers", "peers")
 	expectJSONTag(t, SessionState{}, "DownloadSpeed", "downloadSpeed")
 	expectJSONTag(t, SessionState{}, "UploadSpeed", "uploadSpeed")
+	expectJSONTag(t, SessionState{}, "Files", "files,omitempty")
+	expectJSONTag(t, SessionState{}, "NumPieces", "numPieces,omitempty")
+	expectJSONTag(t, SessionState{}, "PieceBitfield", "pieceBitfield,omitempty")
 	expectJSONTag(t, SessionState{}, "UpdatedAt", "updatedAt")
+}
+
+func TestTransferPhaseConstants(t *testing.T) {
+	if TransferPhaseDownloading != "downloading" {
+		t.Fatalf("TransferPhaseDownloading = %q", TransferPhaseDownloading)
+	}
+	if TransferPhaseVerifying != "verifying" {
+		t.Fatalf("TransferPhaseVerifying = %q", TransferPhaseVerifying)
+	}
 }
 
 func TestCanTransition(t *testing.T) {

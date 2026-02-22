@@ -60,6 +60,7 @@ export function useTorrents() {
   const [creating, setCreating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [currentTorrentId, setCurrentTorrentId] = useState<string | null>(null);
+  const [prioritizeActiveFileOnly, setPrioritizeActiveFileOnly] = useState(true);
   const playerSettingsRequestRef = useRef(0);
   const actionInFlightRef = useRef(false);
   const refreshInFlightRef = useRef(false);
@@ -181,6 +182,7 @@ export function useTorrents() {
         .then((settings) => {
           if (playerSettingsRequestRef.current !== requestID) return;
           setCurrentTorrentId(settings.currentTorrentId ?? null);
+          setPrioritizeActiveFileOnly(settings.prioritizeActiveFileOnly ?? true);
         })
         .catch(() => {});
 
@@ -236,6 +238,7 @@ export function useTorrents() {
   useEffect(() => {
     if (!wsPlayerSettings) return;
     setCurrentTorrentId(wsPlayerSettings.currentTorrentId ?? null);
+    setPrioritizeActiveFileOnly(wsPlayerSettings.prioritizeActiveFileOnly ?? true);
   }, [wsPlayerSettings]);
 
   const handleCreate = useCallback(
@@ -489,6 +492,7 @@ export function useTorrents() {
     creating,
     errorMessage,
     currentTorrentId,
+    prioritizeActiveFileOnly,
     setStatusFilter,
     setSearchQuery,
     setTagsQuery,

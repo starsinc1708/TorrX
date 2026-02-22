@@ -68,6 +68,8 @@ type HLSSettingsController interface {
 type PlayerSettingsController interface {
 	CurrentTorrentID() domain.TorrentID
 	SetCurrentTorrentID(id domain.TorrentID) error
+	PrioritizeActiveFileOnly() bool
+	SetPrioritizeActiveFileOnly(enabled bool) error
 }
 
 type StorageSettingsController interface {
@@ -118,6 +120,8 @@ type Server struct {
 	logger          *slog.Logger
 	handler         http.Handler
 	wsHub           *wsHub
+	cleanupCancel   context.CancelFunc
+	cleanupDone     chan struct{}
 	mediaCacheMu    sync.RWMutex
 	mediaProbeCache map[mediaProbeCacheKey]mediaProbeCacheEntry
 }
@@ -331,7 +335,10 @@ func (s *Server) BroadcastPlayerSettings() {
 	if s.wsHub == nil || s.player == nil {
 		return
 	}
-	s.wsHub.Broadcast("player_settings", playerSettingsResponse{CurrentTorrentID: s.player.CurrentTorrentID()})
+	s.wsHub.Broadcast("player_settings", playerSettingsResponse{
+		CurrentTorrentID:         s.player.CurrentTorrentID(),
+		PrioritizeActiveFileOnly: s.player.PrioritizeActiveFileOnly(),
+	})
 }
 
 // BroadcastHealth broadcasts the current player health status to all
@@ -370,6 +377,7 @@ func NewServer(create CreateTorrentUseCase, opts ...ServerOption) *Server {
 		}
 		s.hls = newStreamJobManager(s.streamTorrent, s.engine, cfg, s.logger)
 	}
+	s.startOrphanCleanupLoop()
 
 	s.wsHub = newWSHub(s.logger)
 	go s.wsHub.run()
@@ -427,9 +435,66 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }
 
+const orphanCleanupInterval = 30 * time.Minute
+
+func (s *Server) startOrphanCleanupLoop() {
+	if s.hls == nil || s.repo == nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cleanupCancel = cancel
+	s.cleanupDone = make(chan struct{})
+
+	go func() {
+		defer close(s.cleanupDone)
+		s.runOrphanCleanup(ctx)
+
+		ticker := time.NewTicker(orphanCleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.runOrphanCleanup(ctx)
+			}
+		}
+	}()
+}
+
+func (s *Server) runOrphanCleanup(parent context.Context) {
+	if s.hls == nil || s.repo == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
+	defer cancel()
+
+	records, err := s.repo.List(ctx, domain.TorrentFilter{})
+	if err != nil {
+		s.logger.Debug("orphan cleanup skipped: failed to list torrents", slog.String("error", err.Error()))
+		return
+	}
+
+	valid := make(map[domain.TorrentID]struct{}, len(records))
+	for _, record := range records {
+		valid[record.ID] = struct{}{}
+	}
+
+	if err := s.hls.CleanupOrphanArtifacts(valid); err != nil {
+		s.logger.Warn("orphan cleanup failed", slog.String("error", err.Error()))
+	}
+}
+
 // Close gracefully shuts down the HLS manager (cancelling all FFmpeg jobs)
 // and the WebSocket hub, disconnecting all clients.
 func (s *Server) Close() {
+	if s.cleanupCancel != nil {
+		s.cleanupCancel()
+	}
+	if s.cleanupDone != nil {
+		<-s.cleanupDone
+	}
 	if s.hls != nil {
 		s.hls.shutdown()
 	}

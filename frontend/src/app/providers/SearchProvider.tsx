@@ -209,8 +209,25 @@ export function SearchProvider({ children }: { children: React.ReactNode }) {
       }
     };
     void loadProviders();
+    const interval = setInterval(() => {
+      void listSearchProviders()
+        .then((list) => {
+          if (cancelled) return;
+          setProviders((prev) => {
+            const changed =
+              prev.length !== list.length ||
+              prev.some((p, i) => p.name !== list[i]?.name || p.enabled !== list[i]?.enabled);
+            if (!changed) return prev;
+            const configured = list.filter((p) => p.enabled).map((p) => p.name);
+            setEnabledProviders(resolveEnabledSearchProviders(configured));
+            return list;
+          });
+        })
+        .catch(() => {});
+    }, 30_000);
     return () => {
       cancelled = true;
+      clearInterval(interval);
       stopStream();
     };
   }, [stopStream]);

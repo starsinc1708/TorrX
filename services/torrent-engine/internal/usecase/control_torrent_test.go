@@ -311,6 +311,74 @@ func TestDeleteTorrentRemovesFiles(t *testing.T) {
 	}
 }
 
+func TestDeleteTorrentRemovesEmptyParentDirectories(t *testing.T) {
+	dir := t.TempDir()
+	rel := filepath.Join("series", "season1", "episode1.mkv")
+	filePath := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte("data"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	repo := &fakeControlRepo{
+		get: domain.TorrentRecord{
+			ID:    "t1",
+			Files: []domain.FileRef{{Index: 0, Path: filepath.ToSlash(rel), Length: 4}},
+		},
+	}
+	uc := DeleteTorrent{Engine: &fakeControlEngine{}, Repo: repo, DataDir: dir}
+
+	if err := uc.Execute(context.Background(), "t1", true); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	seasonDir := filepath.Join(dir, "series", "season1")
+	if _, err := os.Stat(seasonDir); !os.IsNotExist(err) {
+		t.Fatalf("season directory should be removed when empty")
+	}
+	seriesDir := filepath.Join(dir, "series")
+	if _, err := os.Stat(seriesDir); !os.IsNotExist(err) {
+		t.Fatalf("series directory should be removed when empty")
+	}
+}
+
+func TestDeleteTorrentKeepsNonEmptyParentDirectories(t *testing.T) {
+	dir := t.TempDir()
+	rel := filepath.Join("series", "season1", "episode1.mkv")
+	filePath := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte("data"), 0o644); err != nil {
+		t.Fatalf("write episode: %v", err)
+	}
+	keepPath := filepath.Join(dir, "series", "season1", "keep.txt")
+	if err := os.WriteFile(keepPath, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write keep file: %v", err)
+	}
+
+	repo := &fakeControlRepo{
+		get: domain.TorrentRecord{
+			ID:    "t1",
+			Files: []domain.FileRef{{Index: 0, Path: filepath.ToSlash(rel), Length: 4}},
+		},
+	}
+	uc := DeleteTorrent{Engine: &fakeControlEngine{}, Repo: repo, DataDir: dir}
+
+	if err := uc.Execute(context.Background(), "t1", true); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if _, err := os.Stat(keepPath); err != nil {
+		t.Fatalf("keep file must stay: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "series", "season1")); err != nil {
+		t.Fatalf("non-empty parent directory must stay: %v", err)
+	}
+}
+
 func TestDeleteTorrentKeepFiles(t *testing.T) {
 	dir := t.TempDir()
 	rel := "video.mp4"

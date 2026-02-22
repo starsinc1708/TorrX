@@ -23,8 +23,37 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "enum": ["summary", "full"],
+              "enum": ["summary", "full", "compact"],
               "default": "summary"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "description": "Comma-separated tag filter, e.g. movie,anime",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": ["name", "createdAt", "updatedAt", "totalBytes", "progress"],
+              "default": "updatedAt"
+            }
+          },
+          {
+            "name": "sortOrder",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": ["asc", "desc"],
+              "default": "desc"
             }
           },
           {
@@ -584,6 +613,242 @@
         }
       }
     },
+    "/torrents/{id}/focus": {
+      "post": {
+        "summary": "Focus torrent for active playback",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "204": { "description": "Focused" },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "501": {
+            "description": "Not configured",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/torrents/unfocus": {
+      "post": {
+        "summary": "Clear focused torrent",
+        "responses": {
+          "204": { "description": "Unfocused" },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "501": {
+            "description": "Not configured",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/torrents/bulk/start": {
+      "post": {
+        "summary": "Start multiple torrents",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/BulkActionRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bulk action result",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/BulkActionResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "500": {
+            "description": "Not configured",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/torrents/bulk/stop": {
+      "post": {
+        "summary": "Stop multiple torrents",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/BulkActionRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bulk action result",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/BulkActionResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "500": {
+            "description": "Not configured",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/torrents/bulk/delete": {
+      "post": {
+        "summary": "Delete multiple torrents",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/BulkActionRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bulk action result",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/BulkActionResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "500": {
+            "description": "Not configured",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/torrents/{id}/tags": {
+      "put": {
+        "summary": "Replace torrent tags",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TagsUpdateRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TorrentRecord" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "500": {
+            "description": "Repository error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
     "/torrents/{id}/hls/{fileIndex}/seek": {
       "post": {
         "summary": "Seek HLS stream",
@@ -659,6 +924,18 @@
           "400": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
           "500": { "description": "Update failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
         }
+      },
+      "put": {
+        "summary": "Update encoding settings",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EncodingSettings" } } }
+        },
+        "responses": {
+          "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EncodingSettings" } } } },
+          "400": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "Update failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
       }
     },
     "/settings/hls": {
@@ -670,6 +947,18 @@
         }
       },
       "patch": {
+        "summary": "Update HLS settings",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HLSSettings" } } }
+        },
+        "responses": {
+          "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HLSSettings" } } } },
+          "400": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "Update failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      },
+      "put": {
         "summary": "Update HLS settings",
         "requestBody": {
           "required": true,
@@ -701,6 +990,18 @@
           "400": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
           "404": { "description": "Torrent not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
         }
+      },
+      "put": {
+        "summary": "Update player settings",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlayerSettingsPatch" } } }
+        },
+        "responses": {
+          "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlayerSettings" } } } },
+          "400": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "Torrent not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
       }
     },
     "/settings/storage": {
@@ -712,6 +1013,18 @@
         }
       },
       "patch": {
+        "summary": "Update storage settings",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StorageSettingsPatch" } } }
+        },
+        "responses": {
+          "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StorageSettingsView" } } } },
+          "400": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "Update failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      },
+      "put": {
         "summary": "Update storage settings",
         "requestBody": {
           "required": true,
@@ -907,7 +1220,10 @@
         "properties": {
           "id": { "type": "string" },
           "status": { "type": "string" },
+          "mode": { "type": "string", "enum": ["idle", "downloading", "stopped", "focused", "paused", "completed"] },
+          "transferPhase": { "type": "string", "enum": ["downloading", "verifying"] },
           "progress": { "type": "number", "format": "double" },
+          "verificationProgress": { "type": "number", "format": "double" },
           "peers": { "type": "integer" },
           "downloadSpeed": { "type": "integer", "format": "int64" },
           "uploadSpeed": { "type": "integer", "format": "int64" },
@@ -973,15 +1289,57 @@
       "PlayerSettings": {
         "type": "object",
         "properties": {
-          "currentTorrentId": { "type": "string" }
+          "currentTorrentId": { "type": "string" },
+          "prioritizeActiveFileOnly": { "type": "boolean" }
         }
       },
       "PlayerSettingsPatch": {
         "type": "object",
         "properties": {
-          "currentTorrentId": { "type": "string" }
+          "currentTorrentId": { "type": "string" },
+          "prioritizeActiveFileOnly": { "type": "boolean" }
+        }
+      },
+      "BulkActionRequest": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "maxItems": 100
+          },
+          "deleteFiles": { "type": "boolean", "default": false }
         },
-        "required": ["currentTorrentId"]
+        "required": ["ids"]
+      },
+      "BulkActionItem": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "ok": { "type": "boolean" },
+          "error": { "type": "string" }
+        },
+        "required": ["id", "ok"]
+      },
+      "BulkActionResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/BulkActionItem" }
+          }
+        },
+        "required": ["items"]
+      },
+      "TagsUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "tags": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
       },
       "StorageUsage": {
         "type": "object",

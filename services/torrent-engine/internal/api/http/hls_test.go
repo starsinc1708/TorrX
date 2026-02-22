@@ -1192,6 +1192,68 @@ func TestStreamJobManagerHealthSnapshot(t *testing.T) {
 	}
 }
 
+func TestStreamJobManagerPurgeTorrentRemovesRemuxArtifacts(t *testing.T) {
+	baseDir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mgr := newStreamJobManager(nil, nil, HLSConfig{BaseDir: baseDir}, logger)
+
+	if err := os.MkdirAll(filepath.Join(baseDir, "t1", "0"), 0o755); err != nil {
+		t.Fatalf("mkdir hls dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(baseDir, "remux", "t1"), 0o755); err != nil {
+		t.Fatalf("mkdir remux dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(baseDir, "remux", "t1", "0.mp4"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write remux: %v", err)
+	}
+
+	mgr.PurgeTorrent("t1")
+
+	if _, err := os.Stat(filepath.Join(baseDir, "t1")); !os.IsNotExist(err) {
+		t.Fatalf("torrent hls dir should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(baseDir, "remux", "t1")); !os.IsNotExist(err) {
+		t.Fatalf("torrent remux dir should be removed")
+	}
+}
+
+func TestStreamJobManagerCleanupOrphanArtifacts(t *testing.T) {
+	baseDir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mgr := newStreamJobManager(nil, nil, HLSConfig{BaseDir: baseDir}, logger)
+
+	for _, dir := range []string{
+		filepath.Join(baseDir, "keep"),
+		filepath.Join(baseDir, "orphan"),
+		filepath.Join(baseDir, "remux", "keep"),
+		filepath.Join(baseDir, "remux", "orphan"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+
+	valid := map[domain.TorrentID]struct{}{
+		"keep": {},
+	}
+	if err := mgr.CleanupOrphanArtifacts(valid); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(baseDir, "keep")); err != nil {
+		t.Fatalf("keep dir must stay: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(baseDir, "orphan")); !os.IsNotExist(err) {
+		t.Fatalf("orphan dir should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(baseDir, "remux", "keep")); err != nil {
+		t.Fatalf("keep remux dir must stay: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(baseDir, "remux", "orphan")); !os.IsNotExist(err) {
+		t.Fatalf("orphan remux dir should be removed")
+	}
+}
+
 func TestStreamJobManagerShutdown(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mgr := newStreamJobManager(nil, nil, HLSConfig{}, logger)
@@ -1234,11 +1296,24 @@ func TestStreamJobManagerChooseSeekMode(t *testing.T) {
 		t.Fatalf("nil job → %s, want hard", mode)
 	}
 
-	// Small distance → soft seek.
+	// No FFmpeg process yet -> hard seek.
 	job := &StreamJob{seekSeconds: 10.0}
+	mode = mgr.chooseSeekMode(key, job, 12.0, 4)
+	if mode != SeekModeHard {
+		t.Fatalf("no ffmpeg -> %s, want hard", mode)
+	}
+
+	// Small forward distance with active FFmpeg -> soft seek.
+	job.ffmpeg = &FFmpegProcess{}
 	mode = mgr.chooseSeekMode(key, job, 12.0, 4)
 	if mode != SeekModeSoft {
 		t.Fatalf("small distance → %s, want soft", mode)
+	}
+
+	// Target before current job timeline -> hard seek.
+	mode = mgr.chooseSeekMode(key, job, 9.0, 4)
+	if mode != SeekModeHard {
+		t.Fatalf("backward before job start -> %s, want hard", mode)
 	}
 
 	// Large distance → hard seek.

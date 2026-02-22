@@ -521,7 +521,6 @@ export default function PlayerFilesPanel({
                         active
                           ? 'border-primary/30 bg-primary/10'
                           : 'border-border/70 bg-muted/10 hover:bg-muted/20',
-                        filePriority === 'none' && 'opacity-50',
                       )}
                       onClick={() => onSelectFile(targetFileIndex)}
                     >
@@ -543,9 +542,7 @@ export default function PlayerFilesPanel({
                                     ? 'bg-primary/20 text-primary'
                                     : filePriority === 'low'
                                       ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                                      : filePriority === 'none'
-                                        ? 'bg-muted text-muted-foreground'
-                                        : ''
+                                      : ''
                                 )}>
                                   {filePriority}
                                 </span>

@@ -16,22 +16,31 @@ type PlayerSettingsEngine interface {
 type PlayerSettingsStore interface {
 	GetCurrentTorrentID(ctx context.Context) (domain.TorrentID, bool, error)
 	SetCurrentTorrentID(ctx context.Context, id domain.TorrentID) error
+	GetPrioritizeActiveFileOnly(ctx context.Context) (bool, bool, error)
+	SetPrioritizeActiveFileOnly(ctx context.Context, enabled bool) error
 }
 
 type PlayerSettingsManager struct {
-	engine    PlayerSettingsEngine
-	store     PlayerSettingsStore
-	timeout   time.Duration
-	mu        sync.RWMutex
-	currentID domain.TorrentID
+	engine                   PlayerSettingsEngine
+	store                    PlayerSettingsStore
+	timeout                  time.Duration
+	mu                       sync.RWMutex
+	currentID                domain.TorrentID
+	prioritizeActiveFileOnly bool
 }
 
-func NewPlayerSettingsManager(engine PlayerSettingsEngine, store PlayerSettingsStore, currentID domain.TorrentID) *PlayerSettingsManager {
+func NewPlayerSettingsManager(
+	engine PlayerSettingsEngine,
+	store PlayerSettingsStore,
+	currentID domain.TorrentID,
+	prioritizeActiveFileOnly bool,
+) *PlayerSettingsManager {
 	return &PlayerSettingsManager{
-		engine:    engine,
-		store:     store,
-		timeout:   5 * time.Second,
-		currentID: currentID,
+		engine:                   engine,
+		store:                    store,
+		timeout:                  5 * time.Second,
+		currentID:                currentID,
+		prioritizeActiveFileOnly: prioritizeActiveFileOnly,
 	}
 }
 
@@ -39,6 +48,12 @@ func (m *PlayerSettingsManager) CurrentTorrentID() domain.TorrentID {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.currentID
+}
+
+func (m *PlayerSettingsManager) PrioritizeActiveFileOnly() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.prioritizeActiveFileOnly
 }
 
 func (m *PlayerSettingsManager) SetCurrentTorrentID(id domain.TorrentID) error {
@@ -60,6 +75,22 @@ func (m *PlayerSettingsManager) SetCurrentTorrentID(id domain.TorrentID) error {
 
 	m.mu.Lock()
 	m.currentID = id
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *PlayerSettingsManager) SetPrioritizeActiveFileOnly(enabled bool) error {
+	if m.store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
+		defer cancel()
+
+		if err := m.store.SetPrioritizeActiveFileOnly(ctx, enabled); err != nil {
+			return err
+		}
+	}
+
+	m.mu.Lock()
+	m.prioritizeActiveFileOnly = enabled
 	m.mu.Unlock()
 	return nil
 }

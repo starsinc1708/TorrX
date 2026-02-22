@@ -896,7 +896,7 @@ func pieceBitfield(t *torrent.Torrent) (numPieces int, encoded string) {
 func mapPriorityString(p torrent.PiecePriority) string {
 	switch p {
 	case torrent.PiecePriorityNone:
-		return "none"
+		return ""
 	case torrent.PiecePriorityNormal, torrent.PiecePriorityReadahead:
 		return "normal"
 	case torrent.PiecePriorityHigh:

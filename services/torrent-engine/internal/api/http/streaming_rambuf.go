@@ -26,13 +26,14 @@ type RAMBuffer struct {
 	wPos   int
 	count  int
 
-	mu     sync.Mutex
-	dataCh chan struct{}
-	srcErr error
-	closed bool
-	ctx    context.Context
-	cancel context.CancelFunc
-	logger *slog.Logger
+	mu      sync.Mutex
+	dataCh  chan struct{} // signals Read() that data is available
+	spaceCh chan struct{} // signals fillLoop() that space is available
+	srcErr  error
+	closed  bool
+	ctx     context.Context
+	cancel  context.CancelFunc
+	logger  *slog.Logger
 }
 
 // NewRAMBuffer creates a ring buffer that continuously fills from source.
@@ -42,13 +43,14 @@ func NewRAMBuffer(source io.ReadCloser, size int, logger *slog.Logger) *RAMBuffe
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &RAMBuffer{
-		source: source,
-		buf:    make([]byte, size),
-		size:   size,
-		dataCh: make(chan struct{}, 1),
-		ctx:    ctx,
-		cancel: cancel,
-		logger: logger,
+		source:  source,
+		buf:     make([]byte, size),
+		size:    size,
+		dataCh:  make(chan struct{}, 1),
+		spaceCh: make(chan struct{}, 1),
+		ctx:     ctx,
+		cancel:  cancel,
+		logger:  logger,
 	}
 	go b.fillLoop()
 	return b
@@ -57,6 +59,13 @@ func NewRAMBuffer(source io.ReadCloser, size int, logger *slog.Logger) *RAMBuffe
 func (b *RAMBuffer) signal() {
 	select {
 	case b.dataCh <- struct{}{}:
+	default:
+	}
+}
+
+func (b *RAMBuffer) signalSpace() {
+	select {
+	case b.spaceCh <- struct{}{}:
 	default:
 	}
 }
@@ -73,6 +82,10 @@ func (b *RAMBuffer) fillLoop() {
 	backoff := initialBackoff
 	var stallSince time.Time
 
+	// pending holds leftover data from a previous source.Read that could not
+	// fit into the ring buffer. We drain it before reading more from source.
+	var pending []byte
+
 	for {
 		select {
 		case <-b.ctx.Done():
@@ -80,11 +93,40 @@ func (b *RAMBuffer) fillLoop() {
 		default:
 		}
 
+		// If we have leftover data from a previous read, try to write it
+		// before reading more from the source.
+		if len(pending) > 0 {
+			b.mu.Lock()
+			written := b.writeToRing(pending)
+			if written > 0 {
+				b.signal()
+				pending = pending[written:]
+			}
+			full := b.count >= b.size
+			b.mu.Unlock()
+
+			if len(pending) > 0 && full {
+				// Buffer still full — wait for consumer to free space.
+				select {
+				case <-b.spaceCh:
+				case <-b.ctx.Done():
+					return
+				}
+			}
+			continue
+		}
+
 		n, err := b.source.Read(tmp)
 		if n > 0 {
 			b.mu.Lock()
-			b.writeToRing(tmp[:n])
-			b.signal()
+			written := b.writeToRing(tmp[:n])
+			if written > 0 {
+				b.signal()
+			}
+			if written < n {
+				// Could not fit all data — save remainder.
+				pending = append(pending[:0], tmp[written:n]...)
+			}
 			b.mu.Unlock()
 			backoff = initialBackoff
 			stallSince = time.Time{}
@@ -149,6 +191,7 @@ func (b *RAMBuffer) Read(p []byte) (int, error) {
 	if b.count > 0 {
 		n := b.readFromRing(p)
 		b.mu.Unlock()
+		b.signalSpace()
 		return n, nil
 	}
 	for b.count == 0 && b.srcErr == nil && !b.closed {
@@ -171,6 +214,7 @@ func (b *RAMBuffer) Read(p []byte) (int, error) {
 	}
 	n := b.readFromRing(p)
 	b.mu.Unlock()
+	b.signalSpace()
 	return n, nil
 }
 
@@ -209,6 +253,7 @@ func (b *RAMBuffer) Clear() {
 	b.count = 0
 	b.srcErr = nil
 	b.mu.Unlock()
+	b.signalSpace()
 }
 
 // Close stops the fill loop and closes the underlying source.

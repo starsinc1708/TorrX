@@ -210,6 +210,7 @@ type SearchResponse struct {
 	Phase      string           `json:"phase,omitempty"`
 	Provider   string           `json:"provider,omitempty"`
 	Final      bool             `json:"final"`
+	Error      string           `json:"error,omitempty"`
 }
 
 func NormalizeSortBy(raw string) SearchSortBy {
