@@ -5,11 +5,24 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const proxyTarget = env.VITE_API_PROXY_TARGET || 'http://localhost:8080';
   const searchProxyTarget = env.VITE_SEARCH_PROXY_TARGET || 'http://localhost:8090';
+  const notifierProxyTarget = env.VITE_NOTIFIER_PROXY_TARGET || 'http://localhost:8070';
 
   return {
     plugins: [react()],
     server: {
       proxy: {
+        '/settings/integrations': {
+          target: notifierProxyTarget,
+          changeOrigin: true,
+        },
+        '/api/v2': {
+          target: notifierProxyTarget,
+          changeOrigin: true,
+        },
+        '/widget': {
+          target: notifierProxyTarget,
+          changeOrigin: true,
+        },
         '/torrents': {
           target: proxyTarget,
           changeOrigin: true,

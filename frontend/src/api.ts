@@ -31,6 +31,28 @@ import type {
   StorageSettings,
 } from './types';
 
+export interface MediaServerConfig {
+  enabled: boolean;
+  url: string;
+  apiKey: string;
+}
+
+export interface QBTConfig {
+  enabled: boolean;
+}
+
+export interface IntegrationSettings {
+  jellyfin: MediaServerConfig;
+  emby: MediaServerConfig;
+  qbt: QBTConfig;
+  updatedAt?: number;
+}
+
+export interface TestConnectionResult {
+  ok: boolean;
+  error?: string;
+}
+
 const rawBase = (import.meta as any).env?.VITE_API_BASE_URL ?? '';
 const API_BASE = typeof rawBase === 'string' ? rawBase.replace(/\/$/, '') : '';
 
@@ -716,6 +738,44 @@ export const focusTorrent = async (id: string): Promise<void> => {
 
 export const unfocusTorrents = async (): Promise<void> => {
   const response = await fetch(buildUrl('/torrents/unfocus'), { method: 'POST' });
+  return handleResponse(response);
+};
+
+export const getIntegrationSettings = async (): Promise<IntegrationSettings> => {
+  const response = await fetch(buildUrl('/settings/integrations'));
+  return handleResponse(response);
+};
+
+export const updateIntegrationSettings = async (
+  settings: IntegrationSettings,
+): Promise<IntegrationSettings> => {
+  const response = await fetch(buildUrl('/settings/integrations'), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+  return handleResponse(response);
+};
+
+export const testJellyfinConnection = async (
+  settings: IntegrationSettings,
+): Promise<TestConnectionResult> => {
+  const response = await fetch(buildUrl('/settings/integrations/test-jellyfin'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+  return handleResponse(response);
+};
+
+export const testEmbyConnection = async (
+  settings: IntegrationSettings,
+): Promise<TestConnectionResult> => {
+  const response = await fetch(buildUrl('/settings/integrations/test-emby'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
   return handleResponse(response);
 };
 
