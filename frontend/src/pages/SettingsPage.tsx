@@ -1,22 +1,27 @@
 ﻿import React, { useCallback, useEffect, useState } from 'react';
-import { Check, KeyRound, Palette, RefreshCw } from 'lucide-react';
+import { Check, KeyRound, Link2, Palette, RefreshCw } from 'lucide-react';
 import {
   autodetectSearchProviderRuntimeConfig,
   applyFlareSolverrSettings,
   getFlareSolverrSettings,
   getEncodingSettings,
   getHLSSettings,
+  getIntegrationSettings,
   getPlayerSettings,
   getStorageSettings,
   getSearchProviderRuntimeConfigs,
   isApiError,
   listSearchProviders,
+  testEmbyConnection,
+  testJellyfinConnection,
   updateSearchProviderRuntimeConfig,
   updateEncodingSettings,
   updateHLSSettings,
+  updateIntegrationSettings,
   updatePlayerSettings,
   updateStorageSettings,
 } from '../api';
+import type { IntegrationSettings } from '../api';
 import { useToast } from '../app/providers/ToastProvider';
 import { useThemeAccent } from '../app/providers/ThemeAccentProvider';
 import { ACCENT_PRESETS } from '../lib/design-system';
@@ -124,6 +129,17 @@ const SettingsPage: React.FC = () => {
   const [flareSolverrLoading, setFlareSolverrLoading] = useState(false);
   const [flareSolverrApplyingTarget, setFlareSolverrApplyingTarget] = useState<FlareApplyTarget | null>(null);
   const [flareSolverrError, setFlareSolverrError] = useState<string | null>(null);
+
+  // Integrations
+  const [integrationSettings, setIntegrationSettings] = useState<IntegrationSettings>({
+    jellyfin: { enabled: false, url: '', apiKey: '' },
+    emby: { enabled: false, url: '', apiKey: '' },
+    qbt: { enabled: true },
+  });
+  const [integrationLoading, setIntegrationLoading] = useState(false);
+  const [integrationSaving, setIntegrationSaving] = useState(false);
+  const [jellyfinTestStatus, setJellyfinTestStatus] = useState<string | null>(null);
+  const [embyTestStatus, setEmbyTestStatus] = useState<string | null>(null);
 
   const loadEncoding = useCallback(async () => {
     setEncodingLoading(true);
@@ -259,6 +275,18 @@ const SettingsPage: React.FC = () => {
     }
   }, []);
 
+  const loadIntegrationSettings = useCallback(async () => {
+    setIntegrationLoading(true);
+    try {
+      const settings = await getIntegrationSettings();
+      setIntegrationSettings(settings);
+    } catch {
+      // silently ignore — notifier service may not be running yet
+    } finally {
+      setIntegrationLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadEncoding();
     loadHLSSettings();
@@ -268,6 +296,10 @@ const SettingsPage: React.FC = () => {
     loadRuntimeConfigs();
     loadFlareSolverrSettings();
   }, [loadEncoding, loadHLSSettings, loadPlayerSettings, loadStorage, loadSearchProviders, loadRuntimeConfigs, loadFlareSolverrSettings]);
+
+  useEffect(() => {
+    void loadIntegrationSettings();
+  }, [loadIntegrationSettings]);
 
   const flareConfiguredCount = flareSolverrProviders.filter((item) => item.configured).length;
 
@@ -529,6 +561,43 @@ const SettingsPage: React.FC = () => {
       });
     } finally {
       setFlareSolverrApplyingTarget(null);
+    }
+  };
+
+  const handleSaveIntegrations = async () => {
+    setIntegrationSaving(true);
+    try {
+      const saved = await updateIntegrationSettings(integrationSettings);
+      setIntegrationSettings(saved);
+      toast({ title: 'Integration settings saved', variant: 'success' });
+    } catch (error) {
+      toast({
+        title: 'Failed to save integration settings',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'danger',
+      });
+    } finally {
+      setIntegrationSaving(false);
+    }
+  };
+
+  const handleTestJellyfin = async () => {
+    setJellyfinTestStatus(null);
+    try {
+      const result = await testJellyfinConnection(integrationSettings);
+      setJellyfinTestStatus(result.ok ? 'Connected' : (result.error ?? 'Failed'));
+    } catch {
+      setJellyfinTestStatus('Request failed');
+    }
+  };
+
+  const handleTestEmby = async () => {
+    setEmbyTestStatus(null);
+    try {
+      const result = await testEmbyConnection(integrationSettings);
+      setEmbyTestStatus(result.ok ? 'Connected' : (result.error ?? 'Failed'));
+    } catch {
+      setEmbyTestStatus('Request failed');
     }
   };
 
@@ -1177,6 +1246,183 @@ const SettingsPage: React.FC = () => {
               ) : null}
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Integrations */}
+      <Card className="order-last lg:col-span-2">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Link2 className="h-4 w-4 text-primary" />
+            Integrations
+          </CardTitle>
+          <CardDescription>
+            Notify Jellyfin/Emby on download completion. Connect Sonarr/Radarr via qBittorrent API.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {integrationLoading ? (
+            <div className="text-sm text-muted-foreground">Loading…</div>
+          ) : (
+            <>
+              {/* Jellyfin */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold">Jellyfin</div>
+                  <Switch
+                    checked={integrationSettings.jellyfin.enabled}
+                    onCheckedChange={(checked) =>
+                      setIntegrationSettings((s) => ({
+                        ...s,
+                        jellyfin: { ...s.jellyfin, enabled: checked },
+                      }))
+                    }
+                  />
+                </div>
+                {integrationSettings.jellyfin.enabled && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground">Server URL</div>
+                      <Input
+                        type="url"
+                        placeholder="http://jellyfin:8096"
+                        value={integrationSettings.jellyfin.url}
+                        onChange={(e) =>
+                          setIntegrationSettings((s) => ({
+                            ...s,
+                            jellyfin: { ...s.jellyfin, url: e.target.value },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground">API Key</div>
+                      <Input
+                        type="password"
+                        placeholder="Jellyfin API key"
+                        value={integrationSettings.jellyfin.apiKey}
+                        onChange={(e) =>
+                          setIntegrationSettings((s) => ({
+                            ...s,
+                            jellyfin: { ...s.jellyfin, apiKey: e.target.value },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="flex items-center gap-3 sm:col-span-2">
+                      <Button variant="outline" size="sm" onClick={() => void handleTestJellyfin()}>
+                        Test connection
+                      </Button>
+                      {jellyfinTestStatus !== null && (
+                        <span className={cn(
+                          'text-xs',
+                          jellyfinTestStatus === 'Connected' ? 'text-green-600 dark:text-green-400' : 'text-destructive',
+                        )}>
+                          {jellyfinTestStatus === 'Connected' ? '✓ ' : '✗ '}
+                          {jellyfinTestStatus}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t border-border/70" />
+
+              {/* Emby */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold">Emby</div>
+                  <Switch
+                    checked={integrationSettings.emby.enabled}
+                    onCheckedChange={(checked) =>
+                      setIntegrationSettings((s) => ({
+                        ...s,
+                        emby: { ...s.emby, enabled: checked },
+                      }))
+                    }
+                  />
+                </div>
+                {integrationSettings.emby.enabled && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground">Server URL</div>
+                      <Input
+                        type="url"
+                        placeholder="http://emby:8096"
+                        value={integrationSettings.emby.url}
+                        onChange={(e) =>
+                          setIntegrationSettings((s) => ({
+                            ...s,
+                            emby: { ...s.emby, url: e.target.value },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground">API Key</div>
+                      <Input
+                        type="password"
+                        placeholder="Emby API key"
+                        value={integrationSettings.emby.apiKey}
+                        onChange={(e) =>
+                          setIntegrationSettings((s) => ({
+                            ...s,
+                            emby: { ...s.emby, apiKey: e.target.value },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="flex items-center gap-3 sm:col-span-2">
+                      <Button variant="outline" size="sm" onClick={() => void handleTestEmby()}>
+                        Test connection
+                      </Button>
+                      {embyTestStatus !== null && (
+                        <span className={cn(
+                          'text-xs',
+                          embyTestStatus === 'Connected' ? 'text-green-600 dark:text-green-400' : 'text-destructive',
+                        )}>
+                          {embyTestStatus === 'Connected' ? '✓ ' : '✗ '}
+                          {embyTestStatus}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t border-border/70" />
+
+              {/* Sonarr / Radarr */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold">Download Client (Sonarr / Radarr)</div>
+                  <Switch
+                    checked={integrationSettings.qbt.enabled}
+                    onCheckedChange={(checked) =>
+                      setIntegrationSettings((s) => ({ ...s, qbt: { enabled: checked } }))
+                    }
+                  />
+                </div>
+                {integrationSettings.qbt.enabled && (
+                  <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-3 text-sm space-y-1">
+                    <div>Connect Sonarr or Radarr using the <span className="font-semibold">qBittorrent</span> download client type:</div>
+                    <ul className="list-disc list-inside text-muted-foreground space-y-0.5">
+                      <li>Host: <code className="font-mono text-foreground">{window.location.hostname}</code></li>
+                      <li>Port: <code className="font-mono text-foreground">8070</code></li>
+                      <li>Password: <em>leave empty</em></li>
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <Button onClick={() => void handleSaveIntegrations()} disabled={integrationSaving}>
+                  {integrationSaving ? 'Saving…' : 'Save'}
+                </Button>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>
