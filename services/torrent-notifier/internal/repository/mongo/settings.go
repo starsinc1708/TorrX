@@ -2,6 +2,7 @@ package mongorepo
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -27,7 +28,7 @@ func (r *SettingsRepository) Get(ctx context.Context) (domain.IntegrationSetting
 		domain.IntegrationSettings `bson:",inline"`
 	}
 	err := r.col.FindOne(ctx, bson.M{"_id": docID}).Decode(&doc)
-	if err == mongo.ErrNoDocuments {
+	if errors.Is(err, mongo.ErrNoDocuments) {
 		return domain.IntegrationSettings{}, nil
 	}
 	if err != nil {
@@ -38,11 +39,15 @@ func (r *SettingsRepository) Get(ctx context.Context) (domain.IntegrationSetting
 
 // Upsert saves settings, setting UpdatedAt to now.
 func (r *SettingsRepository) Upsert(ctx context.Context, s domain.IntegrationSettings) error {
-	s.UpdatedAt = time.Now().UnixMilli()
 	_, err := r.col.UpdateOne(
 		ctx,
 		bson.M{"_id": docID},
-		bson.M{"$set": s},
+		bson.M{"$set": bson.M{
+			"jellyfin":  s.Jellyfin,
+			"emby":      s.Emby,
+			"qbt":       s.QBT,
+			"updatedAt": time.Now().UnixMilli(),
+		}},
 		options.Update().SetUpsert(true),
 	)
 	return err
