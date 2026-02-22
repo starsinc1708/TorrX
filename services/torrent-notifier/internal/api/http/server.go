@@ -1,22 +1,29 @@
 package apihttp
 
 import (
+	"context"
 	"net/http"
 	"time"
 
-	mongorepo "torrentstream/notifier/internal/repository/mongo"
+	"torrentstream/notifier/internal/domain"
 )
+
+// settingsRepository is the storage port used by the settings handlers.
+type settingsRepository interface {
+	Get(ctx context.Context) (domain.IntegrationSettings, error)
+	Upsert(ctx context.Context, s domain.IntegrationSettings) error
+}
 
 // Server holds all HTTP handlers for the notifier service.
 type Server struct {
 	engineURL string
-	repo      *mongorepo.SettingsRepository
+	repo      settingsRepository
 	client    *http.Client
 	mux       *http.ServeMux
 }
 
 // NewServer creates the HTTP server. repo may be nil in tests.
-func NewServer(engineURL string, repo *mongorepo.SettingsRepository) *Server {
+func NewServer(engineURL string, repo settingsRepository) *Server {
 	s := &Server{
 		engineURL: engineURL,
 		repo:      repo,
