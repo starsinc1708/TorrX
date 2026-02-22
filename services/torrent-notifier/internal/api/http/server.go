@@ -25,11 +25,11 @@ func NewServer(engineURL string, repo *mongorepo.SettingsRepository) *Server {
 }
 
 func (s *Server) routes() {
-	s.mux.HandleFunc("/health", s.handleHealth)
-	s.mux.HandleFunc("/widget", s.handleWidget)
-	s.mux.HandleFunc("/settings/integrations", s.handleIntegrationSettings)
-	s.mux.HandleFunc("/settings/integrations/test-jellyfin", s.handleTestJellyfin)
-	s.mux.HandleFunc("/settings/integrations/test-emby", s.handleTestEmby)
+	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("GET /widget", s.handleWidget)
+	s.mux.HandleFunc("/settings/integrations", s.handleIntegrationSettings)      // GET+PATCH handled inside
+	s.mux.HandleFunc("POST /settings/integrations/test-jellyfin", s.handleTestJellyfin)
+	s.mux.HandleFunc("POST /settings/integrations/test-emby", s.handleTestEmby)
 }
 
 // MountQBT mounts the qBittorrent API compatibility routes.

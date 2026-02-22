@@ -40,6 +40,9 @@ func TestWidget_CountsByStatus(t *testing.T) {
 	if resp["completed"].(float64) != 1 {
 		t.Errorf("expected completed=1, got %v", resp["completed"])
 	}
+	if resp["stopped"].(float64) != 1 {
+		t.Errorf("expected stopped=1, got %v", resp["stopped"])
+	}
 	if resp["total"].(float64) != 3 {
 		t.Errorf("expected total=3, got %v", resp["total"])
 	}
@@ -52,6 +55,9 @@ func TestHealth_ReturnsOK(t *testing.T) {
 	srv.ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected Content-Type application/json, got %q", ct)
 	}
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
