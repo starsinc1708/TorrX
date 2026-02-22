@@ -131,6 +131,11 @@ services:
       - ./data/jackett:/config
     networks:
       - edge
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:9117/health || exit 1"]
       interval: 15s
@@ -178,6 +183,11 @@ services:
         condition: service_healthy
     networks:
       - edge
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
     healthcheck:
       test: ["CMD-SHELL", "wget --spider --quiet http://localhost:9696/ping || exit 1"]
       interval: 15s
