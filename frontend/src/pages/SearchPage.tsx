@@ -41,6 +41,15 @@ import type {
 import { formatBytes } from '../utils';
 
 const SearchPage: React.FC = () => {
+  const RANKING_PRESETS = {
+    balanced:    { freshnessWeight: 1,   seedersWeight: 2, qualityWeight: 2, languageWeight: 1, sizeWeight: 0.5 },
+    bestQuality: { freshnessWeight: 0.5, seedersWeight: 2, qualityWeight: 5, languageWeight: 2, sizeWeight: 0   },
+    mostSeeded:  { freshnessWeight: 0.5, seedersWeight: 5, qualityWeight: 1, languageWeight: 1, sizeWeight: 0   },
+    compact:     { freshnessWeight: 0.5, seedersWeight: 2, qualityWeight: 1, languageWeight: 1, sizeWeight: 5   },
+  } as const;
+
+  type PresetKey = keyof typeof RANKING_PRESETS;
+
   const search = useSearch();
   const { toast } = useToast();
 
@@ -106,12 +115,24 @@ const SearchPage: React.FC = () => {
     return new Set<string>();
   }, []);
 
-  const updateWeight = useCallback(
-    (
-      field: 'freshnessWeight' | 'seedersWeight' | 'qualityWeight' | 'languageWeight' | 'sizeWeight',
-      value: number,
-    ) => {
-      setProfile((prev) => ({ ...prev, [field]: value }));
+  const activePreset = useMemo((): PresetKey | null => {
+    for (const [key, preset] of Object.entries(RANKING_PRESETS) as [PresetKey, (typeof RANKING_PRESETS)[PresetKey]][]) {
+      if (
+        profile.freshnessWeight === preset.freshnessWeight &&
+        profile.seedersWeight   === preset.seedersWeight   &&
+        profile.qualityWeight   === preset.qualityWeight   &&
+        profile.languageWeight  === preset.languageWeight  &&
+        profile.sizeWeight      === preset.sizeWeight
+      ) {
+        return key;
+      }
+    }
+    return null;
+  }, [profile]);
+
+  const applyPreset = useCallback(
+    (key: PresetKey) => {
+      setProfile((prev) => ({ ...prev, ...RANKING_PRESETS[key] }));
     },
     [setProfile],
   );
@@ -608,31 +629,50 @@ const SearchPage: React.FC = () => {
               <div className="text-xs text-muted-foreground">Tune scoring by freshness, quality, language and size.</div>
             </div>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {([
-                ['freshnessWeight', 'Freshness'] as const,
-                ['seedersWeight', 'Seeders'] as const,
-                ['qualityWeight', 'Quality'] as const,
-                ['languageWeight', 'Language'] as const,
-                ['sizeWeight', 'Size'] as const,
-              ]).map(([field, label]) => (
-                <div key={field} className="rounded-xl border border-border/70 bg-background/40 p-3">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-medium">{label}</span>
-                    <span className="font-mono text-xs text-muted-foreground">{profile[field].toFixed(2)}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={5}
-                    step={0.25}
-                    value={profile[field]}
-                    onChange={(event) => updateWeight(field, Number(event.target.value))}
-                    className="mt-2 w-full accent-[hsl(var(--primary))]"
-                  />
-                </div>
-              ))}
+            <div className="mt-4 space-y-3">
+              {/* Preset buttons */}
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    ['balanced',    'Balanced'],
+                    ['bestQuality', 'Best Quality'],
+                    ['mostSeeded',  'Most Seeded'],
+                    ['compact',     'Compact'],
+                  ] as [PresetKey, string][]
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => applyPreset(key)}
+                    className={cn(
+                      'rounded-lg border px-3 py-1.5 text-sm transition-colors',
+                      activePreset === key
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-background/40 text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
 
+              {/* Quality target */}
+              <div className="flex items-center gap-3">
+                <span className="shrink-0 text-sm text-muted-foreground">Quality target</span>
+                <select
+                  value={profile.preferredQuality ?? ''}
+                  onChange={(e) => setProfile((prev) => ({ ...prev, preferredQuality: e.target.value }))}
+                  className="ts-select ts-dropdown-trigger rounded-lg px-2 py-1 text-sm"
+                >
+                  <option value="">Auto</option>
+                  <option value="4K">4K</option>
+                  <option value="1080p">1080p</option>
+                  <option value="720p">720p</option>
+                  <option value="480p">480p</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <div className="rounded-xl border border-border/70 bg-background/40 p-3">
                 <div className="text-sm font-medium">Target size (GB)</div>
                 <Input
