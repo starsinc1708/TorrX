@@ -21,6 +21,7 @@ import { Button } from './ui/button';
 import { VideoTimeline } from './VideoTimeline';
 import { VideoOverlays } from './VideoOverlays';
 import { VideoControls } from './VideoControls';
+import { VideoStatsOverlay } from './VideoStatsOverlay';
 
 interface VideoPlayerProps {
   videoRef: React.RefObject<HTMLVideoElement>;
@@ -181,6 +182,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [seekStatusText, setSeekStatusText] = useState('');
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimePlaybackStatus>('idle');
   const [runtimeStatusText, setRuntimeStatusText] = useState('');
+  const [showStats, setShowStats] = useState(
+    () => localStorage.getItem('showStatsOverlay') === '1',
+  );
+  const toggleStats = useCallback(() => {
+    setShowStats((prev) => {
+      const next = !prev;
+      localStorage.setItem('showStatsOverlay', next ? '1' : '0');
+      return next;
+    });
+  }, []);
   const progressRef = useRef<HTMLDivElement>(null);
   const { timelinePreview, updateTimelinePreview, handleSeekLeave } = useTimelinePreview({
     streamUrl,
@@ -1346,6 +1357,19 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     onHandled: resetHideTimer,
   });
 
+  // Alt+D — toggle stats overlay (debug shortcut)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.altKey && e.code === 'KeyD') {
+        e.preventDefault();
+        toggleStats();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [toggleStats]);
+
   // Cache mediaDuration so the display doesn't fluctuate while HLS is still generating.
   useEffect(() => {
     if (mediaDuration > 0) setStableDuration(mediaDuration);
@@ -1539,6 +1563,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       playing={playing}
                       togglePlay={togglePlay}
                     />
+                    <VideoStatsOverlay
+                      hlsRef={hlsRef}
+                      videoRef={videoRef}
+                      visible={showStats}
+                      onClose={toggleStats}
+                    />
                   </div>
 
                   <div
@@ -1601,6 +1631,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       toggleFullscreen={toggleFullscreen}
                       isFullscreen={isFullscreen}
                       streamUrl={streamUrl}
+                      showStats={showStats}
+                      onToggleStats={toggleStats}
                     />
                   </div>
 
