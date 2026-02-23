@@ -39,7 +39,14 @@ func (s *Server) handleWatchHistory(w http.ResponseWriter, r *http.Request) {
 		limit = 20
 	}
 
-	positions, err := s.watchHistory.ListRecent(r.Context(), limit)
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+
+	var positions []domain.WatchPosition
+	if status == "incomplete" {
+		positions, err = s.watchHistory.ListIncomplete(r.Context(), limit)
+	} else {
+		positions, err = s.watchHistory.ListRecent(r.Context(), limit)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to list watch history")
 		return

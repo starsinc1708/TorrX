@@ -98,6 +98,41 @@ func (r *WatchHistoryRepository) ListRecent(ctx context.Context, limit int) ([]d
 	return positions, nil
 }
 
+func (r *WatchHistoryRepository) ListIncomplete(ctx context.Context, limit int) ([]domain.WatchPosition, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+
+	filter := bson.M{
+		"position": bson.M{"$gte": 10},
+		"duration": bson.M{"$gt": 0},
+		"$expr": bson.M{
+			"$lt": bson.A{"$position", bson.M{"$subtract": bson.A{"$duration", 15}}},
+		},
+	}
+
+	opts := options.Find().
+		SetSort(bson.D{{Key: "updatedAt", Value: -1}}).
+		SetLimit(int64(limit))
+
+	cursor, err := r.collection.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var docs []watchPositionDoc
+	if err := cursor.All(ctx, &docs); err != nil {
+		return nil, err
+	}
+
+	positions := make([]domain.WatchPosition, 0, len(docs))
+	for _, doc := range docs {
+		positions = append(positions, watchDocToPosition(doc))
+	}
+	return positions, nil
+}
+
 func watchDocToPosition(doc watchPositionDoc) domain.WatchPosition {
 	var progress float64
 	if doc.Duration > 0 {

@@ -53,6 +53,7 @@ type WatchHistoryStore interface {
 	Upsert(ctx context.Context, wp domain.WatchPosition) error
 	Get(ctx context.Context, torrentID domain.TorrentID, fileIndex int) (domain.WatchPosition, error)
 	ListRecent(ctx context.Context, limit int) ([]domain.WatchPosition, error)
+	ListIncomplete(ctx context.Context, limit int) ([]domain.WatchPosition, error)
 }
 
 type EncodingSettingsController interface {

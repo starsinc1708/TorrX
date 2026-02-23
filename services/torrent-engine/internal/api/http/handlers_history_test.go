@@ -67,6 +67,26 @@ func (f *fakeWatchHistoryStore) ListRecent(_ context.Context, limit int) ([]doma
 	return result, nil
 }
 
+func (f *fakeWatchHistoryStore) ListIncomplete(_ context.Context, limit int) ([]domain.WatchPosition, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	result := make([]domain.WatchPosition, 0)
+	for _, p := range f.positions {
+		if p.Duration <= 0 || p.Position < 10 {
+			continue
+		}
+		if p.Position >= p.Duration-15 {
+			continue
+		}
+		result = append(result, p)
+	}
+	if limit > 0 && limit < len(result) {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
 // ---- helpers ----
 
 func makeHistoryServer(store WatchHistoryStore) *Server {

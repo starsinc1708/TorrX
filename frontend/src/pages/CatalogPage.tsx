@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle } from 'lucide-react';
+import { ContinueWatching } from '../components/ContinueWatching';
 import TorrentDetails from '../components/TorrentDetails';
 import TorrentList from '../components/TorrentList';
 import { Alert } from '../components/ui/alert';
@@ -151,6 +152,8 @@ const CatalogPage: React.FC = () => {
           </div>
         </Alert>
       ) : null}
+
+      {!showDetails && <ContinueWatching />}
 
       {showDetails && selectedTorrent ? (
         <TorrentDetails

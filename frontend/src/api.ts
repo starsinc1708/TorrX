@@ -633,6 +633,15 @@ export const getWatchHistory = async (limit = 20): Promise<WatchPosition[]> => {
   return handleResponse(response);
 };
 
+export const getIncompleteWatchHistory = async (limit = 10): Promise<WatchPosition[]> => {
+  const response = await deduplicatedFetch(
+    buildUrl(`/watch-history?status=incomplete&limit=${limit}`),
+    undefined,
+    POLL_REQUEST_TIMEOUT_MS,
+  );
+  return handleResponse(response);
+};
+
 export const getEncodingSettings = async (): Promise<EncodingSettings> => {
   const response = await fetch(buildUrl('/settings/encoding'));
   return handleResponse(response);
