@@ -29,6 +29,8 @@ import type {
   SearchSortBy,
   SearchSortOrder,
   StorageSettings,
+  SubtitleSettings,
+  SubtitleSearchResponse,
 } from './types';
 
 export interface MediaServerConfig {
@@ -709,6 +711,48 @@ export const updateStorageSettings = async (
     body: JSON.stringify(input),
   });
   return handleResponse(response);
+};
+
+export const getSubtitleSettings = async (): Promise<SubtitleSettings> => {
+  const response = await deduplicatedFetch(buildUrl('/settings/subtitles'));
+  return handleResponse(response);
+};
+
+export const updateSubtitleSettings = async (
+  settings: Partial<SubtitleSettings>,
+): Promise<SubtitleSettings> => {
+  const response = await fetch(buildUrl('/settings/subtitles'), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+  return handleResponse(response);
+};
+
+export const searchSubtitles = async (
+  query: string,
+  lang?: string[],
+): Promise<SubtitleSearchResponse> => {
+  const params = new URLSearchParams();
+  params.set('query', query);
+  if (lang && lang.length > 0) params.set('lang', lang.join(','));
+  const response = await deduplicatedFetch(
+    buildUrl(`/torrents/subtitles/search?${params}`),
+  );
+  return handleResponse(response);
+};
+
+export const downloadSubtitle = async (
+  fileId: number,
+): Promise<string> => {
+  const response = await fetch(buildUrl('/torrents/subtitles/download'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileId }),
+  });
+  if (!response.ok) throw new Error('Failed to download subtitle');
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
 };
 
 export const hlsSeek = async (
