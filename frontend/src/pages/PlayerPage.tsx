@@ -293,7 +293,6 @@ const PlayerPage: React.FC = () => {
       const response = await searchSubtitles({
         torrentId,
         fileIndex: selectedFileIndex ?? undefined,
-        query: torrent.name ?? '',
         lang: settings.languages,
       });
       setSubtitleSearchResults(response.results);

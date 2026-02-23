@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"torrentstream/internal/app"
 	"torrentstream/internal/domain"
@@ -21,6 +22,8 @@ var srtTimestampRe = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}),(\d{3})`)
 
 // srtSequenceRe matches lines that are purely numeric (SRT sequence numbers).
 var srtSequenceRe = regexp.MustCompile(`^\d+$`)
+
+var subtitleProxyClient = &http.Client{Timeout: 30 * time.Second}
 
 func (s *Server) handleSubtitleSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -216,13 +219,19 @@ func (s *Server) handleSubtitleDownload(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadGateway, "fetch_failed", "subtitle fetch failed")
 		return
 	}
-	resp, err := http.DefaultClient.Do(dlReq)
+	resp, err := subtitleProxyClient.Do(dlReq)
 	if err != nil {
 		slog.Error("subtitle fetch failed", "error", err)
 		writeError(w, http.StatusBadGateway, "fetch_failed", "subtitle fetch failed")
 		return
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		slog.Error("subtitle fetch non-200", "status", resp.StatusCode)
+		writeError(w, http.StatusBadGateway, "fetch_failed", "subtitle fetch failed")
+		return
+	}
 
 	// Limit body to 5MB to prevent memory issues.
 	limited := io.LimitReader(resp.Body, 5<<20)
@@ -243,5 +252,8 @@ func (s *Server) handleSubtitleDownload(w http.ResponseWriter, r *http.Request) 
 		// Replace SRT timestamp commas with VTT periods.
 		line = srtTimestampRe.ReplaceAllString(line, "${1}.${2}")
 		w.Write([]byte(line + "\n"))
+	}
+	if err := scanner.Err(); err != nil {
+		slog.Error("subtitle stream read error", "error", err)
 	}
 }
