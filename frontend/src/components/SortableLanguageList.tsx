@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -85,6 +85,19 @@ interface SortableLanguageListProps {
 
 export function SortableLanguageList({ languages, onChange, disabled }: SortableLanguageListProps) {
   const [showDropdown, setShowDropdown] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showDropdown) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showDropdown]);
+
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -123,7 +136,7 @@ export function SortableLanguageList({ languages, onChange, disabled }: Sortable
           </div>
         </SortableContext>
       </DndContext>
-      <div className="relative">
+      <div className="relative" ref={dropdownRef}>
         <Button
           type="button"
           variant="outline"

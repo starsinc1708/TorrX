@@ -249,6 +249,92 @@ func TestListWatchHistory_StoreError(t *testing.T) {
 	}
 }
 
+// ---- Tests: GET /watch-history?status=incomplete ----
+
+func TestListWatchHistory_IncompleteFilter(t *testing.T) {
+	store := newFakeWatchHistoryStore()
+	// incomplete: position>=10, duration>0, position < duration-15
+	store.positions["a:0"] = domain.WatchPosition{
+		TorrentID: "a", FileIndex: 0, Position: 120, Duration: 3600,
+	}
+	// too short position (<10) → excluded
+	store.positions["b:0"] = domain.WatchPosition{
+		TorrentID: "b", FileIndex: 0, Position: 5, Duration: 3600,
+	}
+	// near the end (position >= duration-15) → excluded
+	store.positions["c:0"] = domain.WatchPosition{
+		TorrentID: "c", FileIndex: 0, Position: 3590, Duration: 3600,
+	}
+	// zero duration → excluded
+	store.positions["d:0"] = domain.WatchPosition{
+		TorrentID: "d", FileIndex: 0, Position: 100, Duration: 0,
+	}
+	s := makeHistoryServer(store)
+
+	rec := doHistoryRequest(s, http.MethodGet, "/watch-history?status=incomplete", nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var positions []domain.WatchPosition
+	if err := json.NewDecoder(rec.Body).Decode(&positions); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(positions) != 1 {
+		t.Fatalf("expected 1 incomplete position, got %d", len(positions))
+	}
+	if positions[0].TorrentID != "a" {
+		t.Errorf("expected torrentId 'a', got %q", positions[0].TorrentID)
+	}
+}
+
+func TestListWatchHistory_IncompleteEmpty(t *testing.T) {
+	store := newFakeWatchHistoryStore()
+	store.positions["a:0"] = domain.WatchPosition{
+		TorrentID: "a", FileIndex: 0, Position: 3590, Duration: 3600,
+	}
+	s := makeHistoryServer(store)
+
+	rec := doHistoryRequest(s, http.MethodGet, "/watch-history?status=incomplete", nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var positions []domain.WatchPosition
+	if err := json.NewDecoder(rec.Body).Decode(&positions); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(positions) != 0 {
+		t.Fatalf("expected 0 incomplete positions, got %d", len(positions))
+	}
+}
+
+// ---- Tests: detectContentType ----
+
+func TestDetectContentType(t *testing.T) {
+	tests := []struct {
+		filePath string
+		want     string
+	}{
+		{"Movie.2024.1080p.mkv", "movie"},
+		{"Show.S01E05.720p.mkv", "series"},
+		{"show.s2e10.mkv", "series"},
+		{"Season 1/episode.mkv", "series"},
+		{"episode 3.mp4", "series"},
+		{"show.1x05.avi", "series"},
+		{"show.12x01.avi", "series"},
+		{"random_movie.mp4", "movie"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.filePath, func(t *testing.T) {
+			got := detectContentType(tc.filePath)
+			if got != tc.want {
+				t.Errorf("detectContentType(%q) = %q, want %q", tc.filePath, got, tc.want)
+			}
+		})
+	}
+}
+
 // ---- Tests: GET /watch-history/{torrentId}/{fileIndex} ----
 
 func TestGetWatchPosition_Found(t *testing.T) {
