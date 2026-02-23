@@ -51,6 +51,24 @@ type jackettServerConfig struct {
 	ProxyPassword             string `json:"proxy_password"`
 }
 
+func pingFlareSolverr(ctx context.Context, rawURL string) bool {
+	if rawURL == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
 func (s *RuntimeConfigService) GetFlareSolverrSettings(ctx context.Context) (domain.FlareSolverrSettings, error) {
 	defaultURL := normalizeFlareSolverrURL(s.defaultFlareSolverrURL)
 	if defaultURL == "" {
@@ -99,6 +117,7 @@ func (s *RuntimeConfigService) GetFlareSolverrSettings(ctx context.Context) (dom
 	return domain.FlareSolverrSettings{
 		DefaultURL: defaultURL,
 		URL:        selectedURL,
+		Alive:      pingFlareSolverr(ctx, selectedURL),
 		Providers:  items,
 	}, nil
 }

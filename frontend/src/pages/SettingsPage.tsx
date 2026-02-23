@@ -130,6 +130,7 @@ const SettingsPage: React.FC = () => {
   const [flareSolverrDefaultUrl, setFlareSolverrDefaultUrl] = useState('http://flaresolverr:8191/');
   const [flareSolverrUrl, setFlareSolverrUrl] = useState('http://flaresolverr:8191/');
   const [flareSolverrProviders, setFlareSolverrProviders] = useState<FlareSolverrProviderStatus[]>([]);
+  const [flareSolverrAlive, setFlareSolverrAlive] = useState(false);
   const [flareSolverrLoading, setFlareSolverrLoading] = useState(false);
   const [flareSolverrApplyingTarget, setFlareSolverrApplyingTarget] = useState<FlareApplyTarget | null>(null);
   const [flareSolverrError, setFlareSolverrError] = useState<string | null>(null);
@@ -275,6 +276,7 @@ const SettingsPage: React.FC = () => {
       const defaultUrl = settings.defaultUrl?.trim() || 'http://flaresolverr:8191/';
       setFlareSolverrDefaultUrl(defaultUrl);
       setFlareSolverrUrl(settings.url?.trim() || defaultUrl);
+      setFlareSolverrAlive(settings.alive ?? false);
       setFlareSolverrProviders(settings.providers ?? []);
       setFlareSolverrError(null);
     } catch (error) {
@@ -766,8 +768,21 @@ const SettingsPage: React.FC = () => {
         <CardContent className="space-y-3">
           {runtimeLoading ? <div className="text-sm text-muted-foreground">Loading runtime settings...</div> : null}
           <div className="rounded-xl border border-border/70 bg-muted/20 p-4">
-            <div className="space-y-1">
+            <div className="flex items-center gap-2">
               <div className="text-sm font-semibold">FlareSolverr</div>
+              {!flareSolverrLoading && (
+                <div
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium',
+                    flareSolverrAlive
+                      ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-500'
+                      : 'border-red-500/50 bg-red-500/10 text-red-500',
+                  )}
+                >
+                  <span className={cn('inline-block h-1.5 w-1.5 rounded-full', flareSolverrAlive ? 'bg-emerald-500' : 'bg-red-500')} />
+                  {flareSolverrAlive ? 'online' : 'offline'}
+                </div>
+              )}
             </div>
             <div className="mt-3 grid gap-2">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">

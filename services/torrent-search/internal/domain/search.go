@@ -150,6 +150,7 @@ type FlareSolverrProviderStatus struct {
 type FlareSolverrSettings struct {
 	DefaultURL string                       `json:"defaultUrl"`
 	URL        string                       `json:"url,omitempty"`
+	Alive      bool                         `json:"alive"`
 	Providers  []FlareSolverrProviderStatus `json:"providers"`
 }
 

@@ -272,6 +272,7 @@ export interface FlareSolverrProviderStatus {
 export interface FlareSolverrSettings {
   defaultUrl: string;
   url?: string;
+  alive: boolean;
   providers: FlareSolverrProviderStatus[];
 }
 
