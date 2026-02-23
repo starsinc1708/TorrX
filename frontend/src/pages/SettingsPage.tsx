@@ -33,6 +33,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Input } from '../components/ui/input';
 import { Select } from '../components/ui/select';
 import { Switch } from '../components/ui/switch';
+import { SortableLanguageList } from '../components/SortableLanguageList';
 import type {
   EncodingSettings,
   HLSSettings,
@@ -149,7 +150,7 @@ const SettingsPage: React.FC = () => {
   const [subtitleLoading, setSubtitleLoading] = useState(false);
   const [subtitleSaving, setSubtitleSaving] = useState(false);
   const [subtitleError, setSubtitleError] = useState<string | null>(null);
-  const [subtitleLanguagesInput, setSubtitleLanguagesInput] = useState('');
+
 
   const loadEncoding = useCallback(async () => {
     setEncodingLoading(true);
@@ -302,7 +303,6 @@ const SettingsPage: React.FC = () => {
     try {
       const settings = await getSubtitleSettings();
       setSubtitleSettings(settings);
-      setSubtitleLanguagesInput(settings.languages.join(', '));
       setSubtitleError(null);
     } catch (error) {
       if (isApiError(error)) setSubtitleError(`${error.code ?? 'error'}: ${error.message}`);
@@ -632,7 +632,6 @@ const SettingsPage: React.FC = () => {
     try {
       const updated = await updateSubtitleSettings(patch);
       setSubtitleSettings(updated);
-      setSubtitleLanguagesInput(updated.languages.join(', '));
       setSubtitleError(null);
     } catch (error) {
       if (isApiError(error)) setSubtitleError(`${error.code ?? 'error'}: ${error.message}`);
@@ -1378,21 +1377,13 @@ const SettingsPage: React.FC = () => {
 
               <div className="space-y-2">
                 <div className="text-sm font-medium">Languages</div>
-                <Input
-                  value={subtitleLanguagesInput}
-                  onChange={(e) => setSubtitleLanguagesInput(e.target.value)}
-                  onBlur={() => {
-                    const languages = subtitleLanguagesInput
-                      .split(',')
-                      .map((s) => s.trim())
-                      .filter(Boolean);
-                    void handleUpdateSubtitleSettings({ languages });
-                  }}
-                  placeholder="en, ru, es"
+                <SortableLanguageList
+                  languages={subtitleSettings?.languages ?? []}
+                  onChange={(languages) => void handleUpdateSubtitleSettings({ languages })}
                   disabled={subtitleSaving}
                 />
                 <div className="text-xs text-muted-foreground">
-                  Comma-separated language codes. Common: en, ru, es, fr, de, pt, it, zh, ja, ko
+                  Drag to reorder priority. First language is preferred.
                 </div>
               </div>
             </>
