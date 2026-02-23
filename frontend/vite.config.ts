@@ -43,6 +43,10 @@ export default defineConfig(({ mode }) => {
           target: proxyTarget,
           changeOrigin: true,
         },
+        '/settings/subtitles': {
+          target: proxyTarget,
+          changeOrigin: true,
+        },
         '/swagger': {
           target: proxyTarget,
           changeOrigin: true,

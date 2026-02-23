@@ -20,7 +20,7 @@ http:
     api:
       entryPoints:
         - web
-      rule: "PathPrefix(`/torrents`) || PathPrefix(`/settings/storage`) || PathPrefix(`/settings/player`) || PathPrefix(`/settings/encoding`) || PathPrefix(`/settings/hls`) || PathPrefix(`/watch-history`) || PathPrefix(`/swagger`) || PathPrefix(`/internal`) || PathPrefix(`/ws`)"
+      rule: "PathPrefix(`/torrents`) || PathPrefix(`/settings/storage`) || PathPrefix(`/settings/player`) || PathPrefix(`/settings/encoding`) || PathPrefix(`/settings/hls`) || PathPrefix(`/settings/subtitles`) || PathPrefix(`/watch-history`) || PathPrefix(`/swagger`) || PathPrefix(`/internal`) || PathPrefix(`/ws`)"
       service: torrentstream-api
       middlewares:
         - security-headers
@@ -81,7 +81,7 @@ http:
     api-secure:
       entryPoints:
         - websecure
-      rule: "PathPrefix(`/torrents`) || PathPrefix(`/settings/storage`) || PathPrefix(`/settings/player`) || PathPrefix(`/settings/encoding`) || PathPrefix(`/settings/hls`) || PathPrefix(`/watch-history`) || PathPrefix(`/swagger`) || PathPrefix(`/internal`) || PathPrefix(`/ws`)"
+      rule: "PathPrefix(`/torrents`) || PathPrefix(`/settings/storage`) || PathPrefix(`/settings/player`) || PathPrefix(`/settings/encoding`) || PathPrefix(`/settings/hls`) || PathPrefix(`/settings/subtitles`) || PathPrefix(`/watch-history`) || PathPrefix(`/swagger`) || PathPrefix(`/internal`) || PathPrefix(`/ws`)"
       service: torrentstream-api
       middlewares:
         - security-headers
