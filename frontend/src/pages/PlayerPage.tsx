@@ -290,14 +290,19 @@ const PlayerPage: React.FC = () => {
     setSubtitleSearchLoading(true);
     try {
       const settings = await getSubtitleSettings();
-      const response = await searchSubtitles(torrent.name ?? '', settings.languages);
+      const response = await searchSubtitles({
+        torrentId,
+        fileIndex: selectedFileIndex ?? undefined,
+        query: torrent.name ?? '',
+        lang: settings.languages,
+      });
       setSubtitleSearchResults(response.results);
     } catch {
       setSubtitleSearchResults([]);
     } finally {
       setSubtitleSearchLoading(false);
     }
-  }, [torrent]);
+  }, [torrent, torrentId, selectedFileIndex]);
 
   const handleSelectExternalSubtitle = useCallback(async (fileId: number) => {
     try {

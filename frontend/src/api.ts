@@ -730,12 +730,18 @@ export const updateSubtitleSettings = async (
 };
 
 export const searchSubtitles = async (
-  query: string,
-  lang?: string[],
+  options: {
+    query?: string;
+    torrentId?: string;
+    fileIndex?: number;
+    lang?: string[];
+  },
 ): Promise<SubtitleSearchResponse> => {
   const params = new URLSearchParams();
-  params.set('query', query);
-  if (lang && lang.length > 0) params.set('lang', lang.join(','));
+  if (options.query) params.set('query', options.query);
+  if (options.torrentId) params.set('torrentId', options.torrentId);
+  if (options.fileIndex !== undefined) params.set('fileIndex', String(options.fileIndex));
+  if (options.lang && options.lang.length > 0) params.set('lang', options.lang.join(','));
   const response = await deduplicatedFetch(
     buildUrl(`/torrents/subtitles/search?${params}`),
   );

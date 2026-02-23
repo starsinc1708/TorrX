@@ -6,10 +6,13 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"torrentstream/internal/app"
+	"torrentstream/internal/domain"
 	"torrentstream/internal/services/subtitles/opensubtitles"
 )
 
@@ -88,6 +91,33 @@ func (s *Server) handleSubtitleSearch(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("query"))
 	hash := strings.TrimSpace(r.URL.Query().Get("hash"))
 	langParam := strings.TrimSpace(r.URL.Query().Get("lang"))
+	torrentID := strings.TrimSpace(r.URL.Query().Get("torrentId"))
+	fileIndexParam := strings.TrimSpace(r.URL.Query().Get("fileIndex"))
+
+	// When torrentId + fileIndex are provided and hash is empty, compute moviehash
+	// from the file on disk and optionally derive a query from the filename.
+	if torrentID != "" && fileIndexParam != "" && hash == "" {
+		fileIndex, parseErr := strconv.Atoi(fileIndexParam)
+		if parseErr == nil {
+			state, stateErr := s.engine.GetSessionState(r.Context(), domain.TorrentID(torrentID))
+			if stateErr == nil && fileIndex >= 0 && fileIndex < len(state.Files) {
+				filePath, pathErr := resolveDataFilePath(s.mediaDataDir, state.Files[fileIndex].Path)
+				if pathErr == nil {
+					computed, hashErr := opensubtitles.ComputeMovieHash(filePath)
+					if hashErr == nil {
+						hash = computed
+						slog.Debug("computed moviehash for subtitle search", "torrentId", torrentID, "fileIndex", fileIndex, "hash", hash)
+					} else {
+						slog.Warn("failed to compute moviehash", "error", hashErr)
+					}
+				}
+				// If query is still empty, derive from filename.
+				if query == "" {
+					query = cleanFilenameForQuery(state.Files[fileIndex].Path)
+				}
+			}
+		}
+	}
 
 	if query == "" && hash == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "query or hash required")
@@ -131,6 +161,18 @@ func (s *Server) handleSubtitleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, subtitleSearchResponse{Results: results})
+}
+
+// cleanFilenameForQuery extracts a search query from a file path by taking
+// the base name, stripping the extension, and replacing dots and underscores
+// with spaces.
+func cleanFilenameForQuery(filePath string) string {
+	base := filepath.Base(filePath)
+	ext := filepath.Ext(base)
+	name := strings.TrimSuffix(base, ext)
+	name = strings.ReplaceAll(name, ".", " ")
+	name = strings.ReplaceAll(name, "_", " ")
+	return strings.TrimSpace(name)
 }
 
 type subtitleDownloadRequest struct {
