@@ -4,11 +4,21 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"torrentstream/internal/domain"
 )
+
+var seriesHintPattern = regexp.MustCompile(`(?i)(S\d{1,3}E\d{1,3}|season\s*\d|episode\s*\d|\b\d{1,2}x\d{2}\b)`)
+
+func detectContentType(filePath string) string {
+	if seriesHintPattern.MatchString(filePath) {
+		return "series"
+	}
+	return "movie"
+}
 
 func (s *Server) handleWatchHistory(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -88,6 +98,7 @@ func (s *Server) handleWatchHistoryByID(w http.ResponseWriter, r *http.Request) 
 			FileIndex:   fileIndex,
 			Position:    body.Position,
 			Duration:    body.Duration,
+			ContentType: detectContentType(body.FilePath),
 			TorrentName: body.TorrentName,
 			FilePath:    body.FilePath,
 		}

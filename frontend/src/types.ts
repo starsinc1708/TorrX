@@ -178,6 +178,8 @@ export interface WatchPosition {
   fileIndex: number;
   position: number;
   duration: number;
+  progress: number;
+  contentType: string;
   torrentName: string;
   filePath: string;
   updatedAt: string;

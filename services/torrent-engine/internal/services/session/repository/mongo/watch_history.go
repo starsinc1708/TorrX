@@ -19,6 +19,7 @@ type watchPositionDoc struct {
 	FileIndex   int     `bson:"fileIndex"`
 	Position    float64 `bson:"position"`
 	Duration    float64 `bson:"duration"`
+	ContentType string  `bson:"contentType,omitempty"`
 	TorrentName string  `bson:"torrentName"`
 	FilePath    string  `bson:"filePath"`
 	UpdatedAt   int64   `bson:"updatedAt"`
@@ -43,6 +44,7 @@ func (r *WatchHistoryRepository) Upsert(ctx context.Context, wp domain.WatchPosi
 			"fileIndex":   wp.FileIndex,
 			"position":    wp.Position,
 			"duration":    wp.Duration,
+			"contentType": wp.ContentType,
 			"torrentName": wp.TorrentName,
 			"filePath":    wp.FilePath,
 			"updatedAt":   time.Now().Unix(),
@@ -97,11 +99,23 @@ func (r *WatchHistoryRepository) ListRecent(ctx context.Context, limit int) ([]d
 }
 
 func watchDocToPosition(doc watchPositionDoc) domain.WatchPosition {
+	var progress float64
+	if doc.Duration > 0 {
+		progress = doc.Position / doc.Duration
+		if progress > 1 {
+			progress = 1
+		}
+		if progress < 0 {
+			progress = 0
+		}
+	}
 	return domain.WatchPosition{
 		TorrentID:   domain.TorrentID(doc.TorrentID),
 		FileIndex:   doc.FileIndex,
 		Position:    doc.Position,
 		Duration:    doc.Duration,
+		Progress:    progress,
+		ContentType: doc.ContentType,
 		TorrentName: doc.TorrentName,
 		FilePath:    doc.FilePath,
 		UpdatedAt:   time.Unix(doc.UpdatedAt, 0).UTC(),
