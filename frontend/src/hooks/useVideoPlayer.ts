@@ -54,6 +54,7 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
   const [selectedFileIndex, setSelectedFileIndex] = useState<number | null>(null);
   const [audioTrack, setAudioTrack] = useState<number | null>(null);
   const [subtitleTrack, setSubtitleTrack] = useState<number | null>(null);
+  const [externalSubtitleUrl, setExternalSubtitleUrl] = useState('');
   const [mediaInfo, setMediaInfo] = useState<MediaInfo | null>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
   const [seekOffset, setSeekOffset] = useState(0);
@@ -152,9 +153,10 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
   }, [selectedTorrent, selectedFileIndex, audioTrack, mediaInfo, seekToken, streamRetryToken, appendToken]);
 
   const subtitleTrackUrl = useMemo(() => {
+    if (externalSubtitleUrl) return externalSubtitleUrl;
     if (!selectedTorrent || selectedFileIndex === null || subtitleTrack === null || subtitleTrack < 0) return '';
     return buildSubtitleTrackUrl(selectedTorrent.id, selectedFileIndex, subtitleTrack);
-  }, [selectedTorrent, selectedFileIndex, subtitleTrack]);
+  }, [selectedTorrent, selectedFileIndex, subtitleTrack, externalSubtitleUrl]);
 
   // The URL that VideoPlayer actually uses — switches with activeMode.
   const streamUrl = useHls ? hlsStreamUrl : directStreamUrl;
@@ -419,6 +421,7 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
     setSelectedFileIndex(null);
     setAudioTrack(null);
     setSubtitleTrack(null);
+    setExternalSubtitleUrl('');
     setMediaInfo(null);
     setVideoError(null);
     setSeekOffset(0);
@@ -508,6 +511,7 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
 
   const selectFile = useCallback((index: number) => {
     setSelectedFileIndex(index);
+    setExternalSubtitleUrl('');
     setVideoError(null);
   }, []);
 
@@ -693,6 +697,8 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
     audioTrack,
     subtitleTrack,
     subtitleTrackUrl,
+    externalSubtitleUrl,
+    setExternalSubtitleUrl,
     seekOffset,
     hlsSeekTo,
     retryStreamInitialization,

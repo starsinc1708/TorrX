@@ -7,7 +7,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
 } from 'lucide-react';
-import type { FileRef, MediaTrack, PlayerHealth, SessionState } from '../types';
+import type { FileRef, MediaTrack, PlayerHealth, SessionState, SubtitleResult } from '../types';
 import type { HlsSeekResult, PrebufferPhase } from '../hooks/useVideoPlayer';
 import { formatBytes, formatTime } from '../utils';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -66,6 +66,10 @@ interface VideoPlayerProps {
   onFallbackToHls?: () => void;
   trackSwitchInProgress?: boolean;
   hlsDestroyRef?: React.MutableRefObject<(() => void) | null>;
+  onSearchSubtitles?: () => void;
+  subtitleSearchResults?: SubtitleResult[];
+  subtitleSearchLoading?: boolean;
+  onSelectExternalSubtitle?: (fileId: number) => void;
 }
 
 const trackLabel = (track: MediaTrack): string => {
@@ -156,6 +160,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onFallbackToHls: _onFallbackToHls,
   trackSwitchInProgress = false,
   hlsDestroyRef,
+  onSearchSubtitles,
+  subtitleSearchResults,
+  subtitleSearchLoading,
+  onSelectExternalSubtitle,
 }) => {
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -1616,6 +1624,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       subtitleTracks={subtitleTracks}
                       selectedSubtitleTrack={selectedSubtitleTrack}
                       onSelectSubtitleTrack={onSelectSubtitleTrack}
+                      onSearchSubtitles={onSearchSubtitles}
+                      subtitleSearchResults={subtitleSearchResults}
+                      subtitleSearchLoading={subtitleSearchLoading}
+                      onSelectExternalSubtitle={onSelectExternalSubtitle}
                       speedMenuOpen={speedMenuOpen}
                       setSpeedMenuOpen={setSpeedMenuOpen}
                       playbackRate={playbackRate}

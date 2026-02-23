@@ -14,10 +14,12 @@ import {
   Maximize2,
   Minimize2,
   BarChart2,
+  Search,
+  Loader2,
 } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { formatTime } from '../utils';
-import type { MediaTrack } from '../types';
+import type { MediaTrack, SubtitleResult } from '../types';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,6 +55,10 @@ interface VideoControlsProps {
   subtitleTracks: MediaTrack[];
   selectedSubtitleTrack: number | null;
   onSelectSubtitleTrack: (index: number | null) => void;
+  onSearchSubtitles?: () => void;
+  subtitleSearchResults?: SubtitleResult[];
+  subtitleSearchLoading?: boolean;
+  onSelectExternalSubtitle?: (fileId: number) => void;
   speedMenuOpen: boolean;
   setSpeedMenuOpen: (open: boolean) => void;
   playbackRate: number;
@@ -103,6 +109,10 @@ export const VideoControls: React.FC<VideoControlsProps> = React.memo(({
   subtitleTracks,
   selectedSubtitleTrack,
   onSelectSubtitleTrack,
+  onSearchSubtitles,
+  subtitleSearchResults,
+  subtitleSearchLoading,
+  onSelectExternalSubtitle,
   speedMenuOpen,
   setSpeedMenuOpen,
   playbackRate,
@@ -265,6 +275,51 @@ export const VideoControls: React.FC<VideoControlsProps> = React.memo(({
                 ))
               )}
             </DropdownMenuGroup>
+
+            {onSearchSubtitles ? (
+              <>
+                <DropdownMenuSeparator />
+                <div className="px-2.5 py-1.5">
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-center gap-1.5 rounded-md border border-border/70 bg-muted/30 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/60 disabled:opacity-50"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onSearchSubtitles();
+                    }}
+                    disabled={subtitleSearchLoading}
+                  >
+                    {subtitleSearchLoading ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <Search size={13} />
+                    )}
+                    {subtitleSearchLoading ? 'Searching...' : 'Search OpenSubtitles'}
+                  </button>
+                </div>
+                {subtitleSearchResults && subtitleSearchResults.length > 0 ? (
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>Search Results</DropdownMenuLabel>
+                    {subtitleSearchResults.map((result, idx) => (
+                      <DropdownMenuItem
+                        key={`ext-sub-${result.fileID}-${idx}`}
+                        onSelect={() => onSelectExternalSubtitle?.(result.fileID)}
+                      >
+                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <span className="truncate text-xs">{result.release || result.fileName}</span>
+                          <span className="text-[10px] text-muted-foreground">
+                            {result.language.toUpperCase()}
+                            {result.rating > 0 ? ` · ${result.rating.toFixed(1)}★` : ''}
+                            {result.downloadCount > 0 ? ` · ${result.downloadCount} DL` : ''}
+                          </span>
+                        </div>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuGroup>
+                ) : null}
+              </>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
 
