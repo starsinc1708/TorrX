@@ -20,6 +20,8 @@ import {
   updateIntegrationSettings,
   updatePlayerSettings,
   updateStorageSettings,
+  getSubtitleSettings,
+  updateSubtitleSettings,
 } from '../api';
 import type { IntegrationSettings } from '../api';
 import { useToast } from '../app/providers/ToastProvider';
@@ -39,6 +41,7 @@ import type {
   SearchProviderInfo,
   SearchProviderRuntimeConfig,
   StorageSettings,
+  SubtitleSettings,
 } from '../types';
 import { resolveEnabledSearchProviders, saveEnabledSearchProviders } from '../searchProviderSettings';
 
@@ -140,6 +143,13 @@ const SettingsPage: React.FC = () => {
   const [integrationSaving, setIntegrationSaving] = useState(false);
   const [jellyfinTestStatus, setJellyfinTestStatus] = useState<string | null>(null);
   const [embyTestStatus, setEmbyTestStatus] = useState<string | null>(null);
+
+  // Subtitles
+  const [subtitleSettings, setSubtitleSettings] = useState<SubtitleSettings | null>(null);
+  const [subtitleLoading, setSubtitleLoading] = useState(false);
+  const [subtitleSaving, setSubtitleSaving] = useState(false);
+  const [subtitleError, setSubtitleError] = useState<string | null>(null);
+  const [subtitleLanguagesInput, setSubtitleLanguagesInput] = useState('');
 
   const loadEncoding = useCallback(async () => {
     setEncodingLoading(true);
@@ -287,6 +297,21 @@ const SettingsPage: React.FC = () => {
     }
   }, []);
 
+  const loadSubtitleSettings = useCallback(async () => {
+    setSubtitleLoading(true);
+    try {
+      const settings = await getSubtitleSettings();
+      setSubtitleSettings(settings);
+      setSubtitleLanguagesInput(settings.languages.join(', '));
+      setSubtitleError(null);
+    } catch (error) {
+      if (isApiError(error)) setSubtitleError(`${error.code ?? 'error'}: ${error.message}`);
+      else if (error instanceof Error) setSubtitleError(error.message);
+    } finally {
+      setSubtitleLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadEncoding();
     loadHLSSettings();
@@ -295,7 +320,8 @@ const SettingsPage: React.FC = () => {
     loadSearchProviders();
     loadRuntimeConfigs();
     loadFlareSolverrSettings();
-  }, [loadEncoding, loadHLSSettings, loadPlayerSettings, loadStorage, loadSearchProviders, loadRuntimeConfigs, loadFlareSolverrSettings]);
+    loadSubtitleSettings();
+  }, [loadEncoding, loadHLSSettings, loadPlayerSettings, loadStorage, loadSearchProviders, loadRuntimeConfigs, loadFlareSolverrSettings, loadSubtitleSettings]);
 
   useEffect(() => {
     void loadIntegrationSettings();
@@ -600,6 +626,21 @@ const SettingsPage: React.FC = () => {
       setEmbyTestStatus('Request failed');
     }
   };
+
+  const handleUpdateSubtitleSettings = useCallback(async (patch: Partial<SubtitleSettings>) => {
+    setSubtitleSaving(true);
+    try {
+      const updated = await updateSubtitleSettings(patch);
+      setSubtitleSettings(updated);
+      setSubtitleLanguagesInput(updated.languages.join(', '));
+      setSubtitleError(null);
+    } catch (error) {
+      if (isApiError(error)) setSubtitleError(`${error.code ?? 'error'}: ${error.message}`);
+      else if (error instanceof Error) setSubtitleError(error.message);
+    } finally {
+      setSubtitleSaving(false);
+    }
+  }, []);
 
   return (
     <div className="grid w-full grid-cols-1 items-start gap-4 lg:grid-cols-2 lg:grid-rows-[auto_1fr]">
@@ -1246,6 +1287,122 @@ const SettingsPage: React.FC = () => {
               ) : null}
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Subtitles */}
+      <Card className="order-4 lg:col-start-1">
+        <CardHeader className="gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1">
+            <CardTitle>Subtitles</CardTitle>
+            <CardDescription>OpenSubtitles integration for automatic subtitle search.</CardDescription>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => void loadSubtitleSettings()} disabled={subtitleLoading}>
+            <RefreshCw className={cn('h-4 w-4', subtitleLoading ? 'animate-spin' : '')} />
+            Reload
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {subtitleLoading ? <div className="text-sm text-muted-foreground">Loading...</div> : null}
+
+          {!subtitleLoading && subtitleSettings ? (
+            <>
+              <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-3">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <div className="text-sm font-medium">Enabled</div>
+                    <div className="text-xs text-muted-foreground">
+                      Enable OpenSubtitles integration for subtitle search and download.
+                    </div>
+                  </div>
+                  <Switch
+                    checked={subtitleSettings.enabled}
+                    onCheckedChange={(checked) => {
+                      void handleUpdateSubtitleSettings({ enabled: checked });
+                    }}
+                    disabled={subtitleSaving}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-sm font-medium">API Key</div>
+                <div className="flex gap-2">
+                  <Input
+                    type="password"
+                    value={subtitleSettings.apiKey}
+                    onChange={(e) =>
+                      setSubtitleSettings((prev) => prev ? { ...prev, apiKey: e.target.value } : prev)
+                    }
+                    onBlur={() => {
+                      if (subtitleSettings.apiKey !== undefined) {
+                        void handleUpdateSubtitleSettings({ apiKey: subtitleSettings.apiKey });
+                      }
+                    }}
+                    placeholder="Enter OpenSubtitles API key"
+                    disabled={subtitleSaving}
+                    autoComplete="off"
+                    className="flex-1"
+                  />
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Get your API key from{' '}
+                  <a
+                    href="https://www.opensubtitles.com/consumers"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary underline"
+                  >
+                    opensubtitles.com
+                  </a>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-3">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <div className="text-sm font-medium">Auto-search</div>
+                    <div className="text-xs text-muted-foreground">
+                      Automatically search for subtitles when no embedded subtitles are found.
+                    </div>
+                  </div>
+                  <Switch
+                    checked={subtitleSettings.autoSearch}
+                    onCheckedChange={(checked) => {
+                      void handleUpdateSubtitleSettings({ autoSearch: checked });
+                    }}
+                    disabled={subtitleSaving}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-sm font-medium">Languages</div>
+                <Input
+                  value={subtitleLanguagesInput}
+                  onChange={(e) => setSubtitleLanguagesInput(e.target.value)}
+                  onBlur={() => {
+                    const languages = subtitleLanguagesInput
+                      .split(',')
+                      .map((s) => s.trim())
+                      .filter(Boolean);
+                    void handleUpdateSubtitleSettings({ languages });
+                  }}
+                  placeholder="en, ru, es"
+                  disabled={subtitleSaving}
+                />
+                <div className="text-xs text-muted-foreground">
+                  Comma-separated language codes. Common: en, ru, es, fr, de, pt, it, zh, ja, ko
+                </div>
+              </div>
+            </>
+          ) : null}
+
+          {subtitleError ? (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
+              {subtitleError}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
