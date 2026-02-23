@@ -106,7 +106,7 @@ func (c *Client) Search(ctx context.Context, params SearchParams) ([]SubtitleRes
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
 		return nil, fmt.Errorf("opensubtitles search: status %d: %s", resp.StatusCode, body)
 	}
 
@@ -163,7 +163,7 @@ func (c *Client) DownloadLink(ctx context.Context, fileID int) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
 		return "", fmt.Errorf("opensubtitles download: status %d: %s", resp.StatusCode, respBody)
 	}
 

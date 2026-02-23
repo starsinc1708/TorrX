@@ -421,7 +421,10 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
     setSelectedFileIndex(null);
     setAudioTrack(null);
     setSubtitleTrack(null);
-    setExternalSubtitleUrl('');
+    setExternalSubtitleUrl((prev) => {
+      if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return '';
+    });
     setMediaInfo(null);
     setVideoError(null);
     setSeekOffset(0);
@@ -511,7 +514,10 @@ export function useVideoPlayer(selectedTorrent: TorrentRecord | null, sessionSta
 
   const selectFile = useCallback((index: number) => {
     setSelectedFileIndex(index);
-    setExternalSubtitleUrl('');
+    setExternalSubtitleUrl((prev) => {
+      if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return '';
+    });
     setVideoError(null);
   }, []);
 

@@ -302,12 +302,16 @@ const PlayerPage: React.FC = () => {
   const handleSelectExternalSubtitle = useCallback(async (fileId: number) => {
     try {
       const blobUrl = await downloadSubtitle(fileId);
+      // Revoke previous blob URL to free memory before setting the new one.
+      if (_externalSubtitleUrl && _externalSubtitleUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(_externalSubtitleUrl);
+      }
       setExternalSubtitleUrl(blobUrl);
       setSubtitleSearchResults([]);
     } catch (e) {
       console.error('Failed to download subtitle:', e);
     }
-  }, [setExternalSubtitleUrl]);
+  }, [setExternalSubtitleUrl, _externalSubtitleUrl]);
 
   const appliedPreferencesRef = React.useRef<string | null>(null);
   useEffect(() => {

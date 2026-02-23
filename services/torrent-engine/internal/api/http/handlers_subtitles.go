@@ -1,13 +1,23 @@
 package apihttp
 
 import (
+	"bufio"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"torrentstream/internal/app"
 	"torrentstream/internal/services/subtitles/opensubtitles"
 )
+
+// srtTimestampRe matches SRT-style timestamps with comma millisecond separator.
+var srtTimestampRe = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}),(\d{3})`)
+
+// srtSequenceRe matches lines that are purely numeric (SRT sequence numbers).
+var srtSequenceRe = regexp.MustCompile(`^\d+$`)
 
 func (s *Server) handleSubtitleSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -102,7 +112,8 @@ func (s *Server) handleSubtitleSearch(w http.ResponseWriter, r *http.Request) {
 			Languages: langs,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "search_failed", err.Error())
+			slog.Error("subtitle search failed", "error", err)
+			writeError(w, http.StatusBadGateway, "search_failed", "subtitle search failed")
 			return
 		}
 	}
@@ -113,7 +124,8 @@ func (s *Server) handleSubtitleSearch(w http.ResponseWriter, r *http.Request) {
 			Languages: langs,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "search_failed", err.Error())
+			slog.Error("subtitle search failed", "error", err)
+			writeError(w, http.StatusBadGateway, "search_failed", "subtitle search failed")
 			return
 		}
 	}
@@ -150,31 +162,44 @@ func (s *Server) handleSubtitleDownload(w http.ResponseWriter, r *http.Request) 
 	client := opensubtitles.NewClient(settings.APIKey)
 	link, err := client.DownloadLink(r.Context(), body.FileID)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "download_failed", err.Error())
+		slog.Error("subtitle download link failed", "error", err)
+		writeError(w, http.StatusBadGateway, "download_failed", "subtitle download failed")
 		return
 	}
 
 	// Fetch the actual subtitle file and proxy it as VTT.
-	resp, err := http.Get(link)
+	dlReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, link, nil)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "fetch_failed", err.Error())
+		slog.Error("subtitle fetch request creation failed", "error", err)
+		writeError(w, http.StatusBadGateway, "fetch_failed", "subtitle fetch failed")
+		return
+	}
+	resp, err := http.DefaultClient.Do(dlReq)
+	if err != nil {
+		slog.Error("subtitle fetch failed", "error", err)
+		writeError(w, http.StatusBadGateway, "fetch_failed", "subtitle fetch failed")
 		return
 	}
 	defer resp.Body.Close()
+
+	// Limit body to 5MB to prevent memory issues.
+	limited := io.LimitReader(resp.Body, 5<<20)
 
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.WriteHeader(http.StatusOK)
 
+	// Convert SRT to VTT: write header, fix timestamps, strip sequence numbers.
 	w.Write([]byte("WEBVTT\n\n"))
-	buf := make([]byte, 32*1024)
-	for {
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			w.Write(buf[:n])
+	scanner := bufio.NewScanner(limited)
+	for scanner.Scan() {
+		line := scanner.Text()
+		// Skip SRT numeric sequence numbers.
+		if srtSequenceRe.MatchString(strings.TrimSpace(line)) {
+			continue
 		}
-		if readErr != nil {
-			break
-		}
+		// Replace SRT timestamp commas with VTT periods.
+		line = srtTimestampRe.ReplaceAllString(line, "${1}.${2}")
+		w.Write([]byte(line + "\n"))
 	}
 }
