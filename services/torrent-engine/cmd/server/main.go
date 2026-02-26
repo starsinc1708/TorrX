@@ -78,7 +78,6 @@ func main() {
 	encodingSettingsRepo := mongorepo.NewEncodingSettingsRepository(mongoClient, cfg.MongoDatabase)
 	hlsSettingsRepo := mongorepo.NewHLSSettingsRepository(mongoClient, cfg.MongoDatabase)
 	storageSettingsRepo := mongorepo.NewStorageSettingsRepository(mongoClient, cfg.MongoDatabase)
-	subtitleSettingsRepo := mongorepo.NewSubtitleSettingsRepository(mongoClient, cfg.MongoDatabase)
 	playerSettingsRepo := sessionmongo.NewPlayerSettingsRepository(mongoClient, cfg.MongoDatabase)
 
 	if err := repo.EnsureIndexes(ctx); err != nil {
@@ -239,7 +238,6 @@ func main() {
 			},
 		)),
 		apihttp.WithAllowedOrigins(cfg.CORSAllowedOrigins),
-		apihttp.WithSubtitleSettings(app.NewSubtitleSettingsManager(subtitleSettingsRepo)),
 	}
 	if cfg.OpenAPIPath != "" {
 		options = append(options, apihttp.WithOpenAPIPath(cfg.OpenAPIPath))

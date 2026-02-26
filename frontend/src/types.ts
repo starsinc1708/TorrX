@@ -148,26 +148,6 @@ export interface StorageSettings {
   usage: StorageUsage;
 }
 
-export interface SubtitleSettings {
-  enabled: boolean;
-  apiKey: string;
-  languages: string[];
-  autoSearch: boolean;
-}
-
-export interface SubtitleResult {
-  fileID: number;
-  language: string;
-  release: string;
-  rating: number;
-  downloadCount: number;
-  fileName: string;
-}
-
-export interface SubtitleSearchResponse {
-  results: SubtitleResult[];
-}
-
 export interface PlayerSettings {
   currentTorrentId?: string;
   prioritizeActiveFileOnly?: boolean;

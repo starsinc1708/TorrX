@@ -29,31 +29,7 @@ import type {
   SearchSortBy,
   SearchSortOrder,
   StorageSettings,
-  SubtitleSettings,
-  SubtitleSearchResponse,
 } from './types';
-
-export interface MediaServerConfig {
-  enabled: boolean;
-  url: string;
-  apiKey: string;
-}
-
-export interface QBTConfig {
-  enabled: boolean;
-}
-
-export interface IntegrationSettings {
-  jellyfin: MediaServerConfig;
-  emby: MediaServerConfig;
-  qbt: QBTConfig;
-  updatedAt?: number;
-}
-
-export interface TestConnectionResult {
-  ok: boolean;
-  error?: string;
-}
 
 const rawBase = (import.meta as any).env?.VITE_API_BASE_URL ?? '';
 const API_BASE = typeof rawBase === 'string' ? rawBase.replace(/\/$/, '') : '';
@@ -722,54 +698,6 @@ export const updateStorageSettings = async (
   return handleResponse(response);
 };
 
-export const getSubtitleSettings = async (): Promise<SubtitleSettings> => {
-  const response = await deduplicatedFetch(buildUrl('/settings/subtitles'));
-  return handleResponse(response);
-};
-
-export const updateSubtitleSettings = async (
-  settings: Partial<SubtitleSettings>,
-): Promise<SubtitleSettings> => {
-  const response = await fetch(buildUrl('/settings/subtitles'), {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(settings),
-  });
-  return handleResponse(response);
-};
-
-export const searchSubtitles = async (
-  options: {
-    query?: string;
-    torrentId?: string;
-    fileIndex?: number;
-    lang?: string[];
-  },
-): Promise<SubtitleSearchResponse> => {
-  const params = new URLSearchParams();
-  if (options.query) params.set('query', options.query);
-  if (options.torrentId) params.set('torrentId', options.torrentId);
-  if (options.fileIndex !== undefined) params.set('fileIndex', String(options.fileIndex));
-  if (options.lang && options.lang.length > 0) params.set('lang', options.lang.join(','));
-  const response = await deduplicatedFetch(
-    buildUrl(`/torrents/subtitles/search?${params}`),
-  );
-  return handleResponse(response);
-};
-
-export const downloadSubtitle = async (
-  fileId: number,
-): Promise<string> => {
-  const response = await fetch(buildUrl('/torrents/subtitles/download'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fileId }),
-  });
-  if (!response.ok) throw new Error('Failed to download subtitle');
-  const blob = await response.blob();
-  return URL.createObjectURL(blob);
-};
-
 export const hlsSeek = async (
   id: string,
   fileIndex: number,
@@ -798,44 +726,6 @@ export const focusTorrent = async (id: string): Promise<void> => {
 
 export const unfocusTorrents = async (): Promise<void> => {
   const response = await fetch(buildUrl('/torrents/unfocus'), { method: 'POST' });
-  return handleResponse(response);
-};
-
-export const getIntegrationSettings = async (): Promise<IntegrationSettings> => {
-  const response = await fetch(buildUrl('/settings/integrations'));
-  return handleResponse(response);
-};
-
-export const updateIntegrationSettings = async (
-  settings: IntegrationSettings,
-): Promise<IntegrationSettings> => {
-  const response = await fetch(buildUrl('/settings/integrations'), {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(settings),
-  });
-  return handleResponse(response);
-};
-
-export const testJellyfinConnection = async (
-  settings: IntegrationSettings,
-): Promise<TestConnectionResult> => {
-  const response = await fetch(buildUrl('/settings/integrations/test-jellyfin'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(settings),
-  });
-  return handleResponse(response);
-};
-
-export const testEmbyConnection = async (
-  settings: IntegrationSettings,
-): Promise<TestConnectionResult> => {
-  const response = await fetch(buildUrl('/settings/integrations/test-emby'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(settings),
-  });
   return handleResponse(response);
 };
 

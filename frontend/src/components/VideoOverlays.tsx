@@ -16,6 +16,8 @@ interface VideoOverlaysProps {
   indicatorTitle: string;
   indicatorText: string;
   indicatorCanContinue: boolean;
+  canSeekToDownloaded?: boolean;
+  onSeekToDownloaded?: () => void;
   playing: boolean;
   togglePlay: () => void;
 }
@@ -31,6 +33,8 @@ export const VideoOverlays: React.FC<VideoOverlaysProps> = React.memo(({
   indicatorTitle,
   indicatorText,
   indicatorCanContinue,
+  canSeekToDownloaded,
+  onSeekToDownloaded,
   playing,
   togglePlay,
 }) => {
@@ -103,14 +107,27 @@ export const VideoOverlays: React.FC<VideoOverlaysProps> = React.memo(({
             <strong className="text-[12px] font-semibold leading-tight">{indicatorTitle}</strong>
             <span className="text-[11px] leading-snug opacity-90">{indicatorText}</span>
           </div>
-          {indicatorCanContinue && (
-            <button
-              type="button"
-              className="ml-auto inline-flex h-7 items-center rounded-full border border-white/15 bg-white/5 px-3 text-[11px] font-semibold text-white/90 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25"
-              onClick={togglePlay}
-            >
-              {playing ? 'Pause' : 'Continue'}
-            </button>
+          {(indicatorCanContinue || canSeekToDownloaded) && (
+            <div className="ml-auto flex items-center gap-1.5">
+              {canSeekToDownloaded && onSeekToDownloaded && (
+                <button
+                  type="button"
+                  className="inline-flex h-7 items-center rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 text-[11px] font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/25"
+                  onClick={onSeekToDownloaded}
+                >
+                  Go to downloaded
+                </button>
+              )}
+              {indicatorCanContinue && (
+                <button
+                  type="button"
+                  className="inline-flex h-7 items-center rounded-full border border-white/15 bg-white/5 px-3 text-[11px] font-semibold text-white/90 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25"
+                  onClick={togglePlay}
+                >
+                  {playing ? 'Pause' : 'Continue'}
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}

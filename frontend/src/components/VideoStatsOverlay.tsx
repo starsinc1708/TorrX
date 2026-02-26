@@ -78,6 +78,7 @@ export const VideoStatsOverlay: React.FC<VideoStatsOverlayProps> = ({
   const [stats, setStats] = useState<StatsSnapshot>(() => emptyStats(maxBufferSec));
   const lastFragBandwidthRef = useRef(0);
   const lastFragMsRef = useRef(0);
+  const detectedCodecRef = useRef('');
 
   useEffect(() => {
     if (!visible) return;
@@ -89,6 +90,7 @@ export const VideoStatsOverlay: React.FC<VideoStatsOverlayProps> = ({
 
       const quality = v.getVideoPlaybackQuality?.() ?? null;
       const resolution = v.videoWidth > 0 ? `${v.videoWidth}×${v.videoHeight}` : '—';
+      const videoHeight = v.videoHeight;
 
       let codec = '—';
       let currentLevel = -1;
@@ -98,10 +100,19 @@ export const VideoStatsOverlay: React.FC<VideoStatsOverlayProps> = ({
       if (h) {
         currentLevel = h.currentLevel;
         bandwidthEstMbps = h.bandwidthEstimate / 1e6;
-        levels = h.levels.map((l, i) => ({ index: i, height: l.height, bitrate: l.bitrate }));
+        // Use videoElement height as fallback when manifest lacks RESOLUTION
+        levels = h.levels.map((l, i) => ({
+          index: i,
+          height: l.height || videoHeight,
+          bitrate: l.bitrate,
+        }));
         const lvlIndex = currentLevel >= 0 ? currentLevel : h.loadLevel;
         const lvl = h.levels[lvlIndex];
-        if (lvl?.videoCodec) codec = lvl.videoCodec;
+        if (lvl?.videoCodec) {
+          codec = lvl.videoCodec;
+        } else if (detectedCodecRef.current) {
+          codec = detectedCodecRef.current;
+        }
       }
 
       setStats({
@@ -122,8 +133,6 @@ export const VideoStatsOverlay: React.FC<VideoStatsOverlayProps> = ({
     const interval = setInterval(readStats, 1000);
     readStats();
 
-    // HLS.js FRAG_BUFFERED gives us actual fragment download stats.
-    // Using any because HLS.js event payloads aren't perfectly typed for all versions.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const onFragBuffered = (_: string, data: any) => {
       const loading = data?.stats?.loading;
@@ -137,10 +146,20 @@ export const VideoStatsOverlay: React.FC<VideoStatsOverlayProps> = ({
       }
     };
 
+    // BUFFER_CODECS fires when HLS.js detects actual codecs from media data,
+    // useful when the manifest lacks CODECS attribute (e.g. live FFmpeg HLS).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const onBufferCodecs = (_: string, data: any) => {
+      const videoCodec: string = data?.video?.codec ?? '';
+      if (videoCodec) detectedCodecRef.current = videoCodec;
+    };
+
     const hls = hlsRef.current;
     if (hls) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       hls.on(Hls.Events.FRAG_BUFFERED, onFragBuffered as any);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      hls.on(Hls.Events.BUFFER_CODECS, onBufferCodecs as any);
     }
 
     return () => {
@@ -149,6 +168,8 @@ export const VideoStatsOverlay: React.FC<VideoStatsOverlayProps> = ({
       if (h) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         h.off(Hls.Events.FRAG_BUFFERED, onFragBuffered as any);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        h.off(Hls.Events.BUFFER_CODECS, onBufferCodecs as any);
       }
     };
   }, [visible, hlsRef, videoRef]);

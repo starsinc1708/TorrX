@@ -7,7 +7,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
 } from 'lucide-react';
-import type { FileRef, MediaTrack, PlayerHealth, SessionState, SubtitleResult } from '../types';
+import type { FileRef, MediaTrack, PlayerHealth, SessionState } from '../types';
 import type { HlsSeekResult, PrebufferPhase } from '../hooks/useVideoPlayer';
 import { formatBytes, formatTime } from '../utils';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -66,10 +66,6 @@ interface VideoPlayerProps {
   onFallbackToHls?: () => void;
   trackSwitchInProgress?: boolean;
   hlsDestroyRef?: React.MutableRefObject<(() => void) | null>;
-  onSearchSubtitles?: () => void;
-  subtitleSearchResults?: SubtitleResult[];
-  subtitleSearchLoading?: boolean;
-  onSelectExternalSubtitle?: (fileId: number) => void;
 }
 
 const trackLabel = (track: MediaTrack): string => {
@@ -160,10 +156,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onFallbackToHls: _onFallbackToHls,
   trackSwitchInProgress = false,
   hlsDestroyRef,
-  onSearchSubtitles,
-  subtitleSearchResults,
-  subtitleSearchLoading,
-  onSelectExternalSubtitle,
 }) => {
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -1406,6 +1398,14 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const done = selectedFile?.bytesCompleted ?? 0;
     return Math.min(1, done / total);
   }, [selectedFile?.length, selectedFile?.bytesCompleted]);
+
+  const seekToDownloaded = useCallback(() => {
+    if (!downloadPercent || downloadPercent <= 0 || mediaDuration <= 0) return;
+    // Seek to ~90% of the downloaded range for safety margin.
+    const safeTime = Math.max(0, downloadPercent * mediaDuration * 0.9);
+    void requestServerSeek(safeTime, true);
+  }, [downloadPercent, mediaDuration, requestServerSeek]);
+
   const indicatorStatus: RuntimePlaybackStatus | 'seeking' =
     seekStatus !== 'idle' ? seekStatus : runtimeStatus;
   const showStatusIndicator = indicatorStatus !== 'idle' && Boolean(streamUrl);
@@ -1423,6 +1423,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
               : '';
   const indicatorText = seekStatus !== 'idle' ? seekStatusText : runtimeStatusText;
   const indicatorCanContinue = seekStatus === 'buffering' || seekStatus === 'error' || runtimeStatus === 'buffering';
+  const canSeekToDownloaded = (seekStatus === 'error' || seekStatus === 'buffering') && downloadPercent !== undefined && downloadPercent > 0 && downloadPercent < 1;
 
   const currentFilePosition = useMemo(() => {
     if (selectedFileIndex === null) return -1;
@@ -1568,6 +1569,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       indicatorTitle={indicatorTitle}
                       indicatorText={indicatorText}
                       indicatorCanContinue={indicatorCanContinue}
+                      canSeekToDownloaded={canSeekToDownloaded}
+                      onSeekToDownloaded={seekToDownloaded}
                       playing={playing}
                       togglePlay={togglePlay}
                     />
@@ -1624,10 +1627,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       subtitleTracks={subtitleTracks}
                       selectedSubtitleTrack={selectedSubtitleTrack}
                       onSelectSubtitleTrack={onSelectSubtitleTrack}
-                      onSearchSubtitles={onSearchSubtitles}
-                      subtitleSearchResults={subtitleSearchResults}
-                      subtitleSearchLoading={subtitleSearchLoading}
-                      onSelectExternalSubtitle={onSelectExternalSubtitle}
                       speedMenuOpen={speedMenuOpen}
                       setSpeedMenuOpen={setSpeedMenuOpen}
                       playbackRate={playbackRate}

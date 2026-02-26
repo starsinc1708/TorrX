@@ -1,29 +1,22 @@
 ﻿import React, { useCallback, useEffect, useState } from 'react';
-import { Check, KeyRound, Link2, Palette, RefreshCw } from 'lucide-react';
+import { Check, KeyRound, Palette, RefreshCw } from 'lucide-react';
 import {
   autodetectSearchProviderRuntimeConfig,
   applyFlareSolverrSettings,
   getFlareSolverrSettings,
   getEncodingSettings,
   getHLSSettings,
-  getIntegrationSettings,
   getPlayerSettings,
   getStorageSettings,
   getSearchProviderRuntimeConfigs,
   isApiError,
   listSearchProviders,
-  testEmbyConnection,
-  testJellyfinConnection,
   updateSearchProviderRuntimeConfig,
   updateEncodingSettings,
   updateHLSSettings,
-  updateIntegrationSettings,
   updatePlayerSettings,
   updateStorageSettings,
-  getSubtitleSettings,
-  updateSubtitleSettings,
 } from '../api';
-import type { IntegrationSettings } from '../api';
 import { useToast } from '../app/providers/ToastProvider';
 import { useThemeAccent } from '../app/providers/ThemeAccentProvider';
 import { ACCENT_PRESETS } from '../lib/design-system';
@@ -33,7 +26,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Input } from '../components/ui/input';
 import { Select } from '../components/ui/select';
 import { Switch } from '../components/ui/switch';
-import { SortableLanguageList } from '../components/SortableLanguageList';
 import type {
   EncodingSettings,
   HLSSettings,
@@ -42,7 +34,6 @@ import type {
   SearchProviderInfo,
   SearchProviderRuntimeConfig,
   StorageSettings,
-  SubtitleSettings,
 } from '../types';
 import { resolveEnabledSearchProviders, saveEnabledSearchProviders } from '../searchProviderSettings';
 
@@ -135,22 +126,6 @@ const SettingsPage: React.FC = () => {
   const [flareSolverrApplyingTarget, setFlareSolverrApplyingTarget] = useState<FlareApplyTarget | null>(null);
   const [flareSolverrError, setFlareSolverrError] = useState<string | null>(null);
 
-  // Integrations
-  const [integrationSettings, setIntegrationSettings] = useState<IntegrationSettings>({
-    jellyfin: { enabled: false, url: '', apiKey: '' },
-    emby: { enabled: false, url: '', apiKey: '' },
-    qbt: { enabled: true },
-  });
-  const [integrationLoading, setIntegrationLoading] = useState(false);
-  const [integrationSaving, setIntegrationSaving] = useState(false);
-  const [jellyfinTestStatus, setJellyfinTestStatus] = useState<string | null>(null);
-  const [embyTestStatus, setEmbyTestStatus] = useState<string | null>(null);
-
-  // Subtitles
-  const [subtitleSettings, setSubtitleSettings] = useState<SubtitleSettings | null>(null);
-  const [subtitleLoading, setSubtitleLoading] = useState(false);
-  const [subtitleSaving, setSubtitleSaving] = useState(false);
-  const [subtitleError, setSubtitleError] = useState<string | null>(null);
 
 
   const loadEncoding = useCallback(async () => {
@@ -288,31 +263,6 @@ const SettingsPage: React.FC = () => {
     }
   }, []);
 
-  const loadIntegrationSettings = useCallback(async () => {
-    setIntegrationLoading(true);
-    try {
-      const settings = await getIntegrationSettings();
-      setIntegrationSettings(settings);
-    } catch {
-      // silently ignore — notifier service may not be running yet
-    } finally {
-      setIntegrationLoading(false);
-    }
-  }, []);
-
-  const loadSubtitleSettings = useCallback(async () => {
-    setSubtitleLoading(true);
-    try {
-      const settings = await getSubtitleSettings();
-      setSubtitleSettings(settings);
-      setSubtitleError(null);
-    } catch (error) {
-      if (isApiError(error)) setSubtitleError(`${error.code ?? 'error'}: ${error.message}`);
-      else if (error instanceof Error) setSubtitleError(error.message);
-    } finally {
-      setSubtitleLoading(false);
-    }
-  }, []);
 
   useEffect(() => {
     loadEncoding();
@@ -322,12 +272,7 @@ const SettingsPage: React.FC = () => {
     loadSearchProviders();
     loadRuntimeConfigs();
     loadFlareSolverrSettings();
-    loadSubtitleSettings();
-  }, [loadEncoding, loadHLSSettings, loadPlayerSettings, loadStorage, loadSearchProviders, loadRuntimeConfigs, loadFlareSolverrSettings, loadSubtitleSettings]);
-
-  useEffect(() => {
-    void loadIntegrationSettings();
-  }, [loadIntegrationSettings]);
+  }, [loadEncoding, loadHLSSettings, loadPlayerSettings, loadStorage, loadSearchProviders, loadRuntimeConfigs, loadFlareSolverrSettings]);
 
   const flareConfiguredCount = flareSolverrProviders.filter((item) => item.configured).length;
 
@@ -591,57 +536,6 @@ const SettingsPage: React.FC = () => {
       setFlareSolverrApplyingTarget(null);
     }
   };
-
-  const handleSaveIntegrations = async () => {
-    setIntegrationSaving(true);
-    try {
-      const saved = await updateIntegrationSettings(integrationSettings);
-      setIntegrationSettings(saved);
-      toast({ title: 'Integration settings saved', variant: 'success' });
-    } catch (error) {
-      toast({
-        title: 'Failed to save integration settings',
-        description: error instanceof Error ? error.message : 'Unknown error',
-        variant: 'danger',
-      });
-    } finally {
-      setIntegrationSaving(false);
-    }
-  };
-
-  const handleTestJellyfin = async () => {
-    setJellyfinTestStatus(null);
-    try {
-      const result = await testJellyfinConnection(integrationSettings);
-      setJellyfinTestStatus(result.ok ? 'Connected' : (result.error ?? 'Failed'));
-    } catch {
-      setJellyfinTestStatus('Request failed');
-    }
-  };
-
-  const handleTestEmby = async () => {
-    setEmbyTestStatus(null);
-    try {
-      const result = await testEmbyConnection(integrationSettings);
-      setEmbyTestStatus(result.ok ? 'Connected' : (result.error ?? 'Failed'));
-    } catch {
-      setEmbyTestStatus('Request failed');
-    }
-  };
-
-  const handleUpdateSubtitleSettings = useCallback(async (patch: Partial<SubtitleSettings>) => {
-    setSubtitleSaving(true);
-    try {
-      const updated = await updateSubtitleSettings(patch);
-      setSubtitleSettings(updated);
-      setSubtitleError(null);
-    } catch (error) {
-      if (isApiError(error)) setSubtitleError(`${error.code ?? 'error'}: ${error.message}`);
-      else if (error instanceof Error) setSubtitleError(error.message);
-    } finally {
-      setSubtitleSaving(false);
-    }
-  }, []);
 
   return (
     <div className="grid w-full grid-cols-1 items-start gap-4 lg:grid-cols-2 lg:grid-rows-[auto_1fr]">
@@ -1304,290 +1198,6 @@ const SettingsPage: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Subtitles */}
-      <Card className="order-4 lg:col-start-1">
-        <CardHeader className="gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-1">
-            <CardTitle>Subtitles</CardTitle>
-            <CardDescription>OpenSubtitles integration for automatic subtitle search.</CardDescription>
-          </div>
-          <Button variant="outline" size="sm" onClick={() => void loadSubtitleSettings()} disabled={subtitleLoading}>
-            <RefreshCw className={cn('h-4 w-4', subtitleLoading ? 'animate-spin' : '')} />
-            Reload
-          </Button>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          {subtitleLoading ? <div className="text-sm text-muted-foreground">Loading...</div> : null}
-
-          {!subtitleLoading && subtitleSettings ? (
-            <>
-              <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-3">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <div className="text-sm font-medium">Enabled</div>
-                    <div className="text-xs text-muted-foreground">
-                      Enable OpenSubtitles integration for subtitle search and download.
-                    </div>
-                  </div>
-                  <Switch
-                    checked={subtitleSettings.enabled}
-                    onCheckedChange={(checked) => {
-                      void handleUpdateSubtitleSettings({ enabled: checked });
-                    }}
-                    disabled={subtitleSaving}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <div className="text-sm font-medium">API Key</div>
-                <div className="flex gap-2">
-                  <Input
-                    type="password"
-                    value={subtitleSettings.apiKey}
-                    onChange={(e) =>
-                      setSubtitleSettings((prev) => prev ? { ...prev, apiKey: e.target.value } : prev)
-                    }
-                    onBlur={() => {
-                      if (subtitleSettings.apiKey !== undefined) {
-                        void handleUpdateSubtitleSettings({ apiKey: subtitleSettings.apiKey });
-                      }
-                    }}
-                    placeholder="Enter OpenSubtitles API key"
-                    disabled={subtitleSaving}
-                    autoComplete="off"
-                    className="flex-1"
-                  />
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  Get your API key from{' '}
-                  <a
-                    href="https://www.opensubtitles.com/consumers"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary underline"
-                  >
-                    opensubtitles.com
-                  </a>
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-3">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <div className="text-sm font-medium">Auto-search</div>
-                    <div className="text-xs text-muted-foreground">
-                      Automatically search for subtitles when no embedded subtitles are found.
-                    </div>
-                  </div>
-                  <Switch
-                    checked={subtitleSettings.autoSearch}
-                    onCheckedChange={(checked) => {
-                      void handleUpdateSubtitleSettings({ autoSearch: checked });
-                    }}
-                    disabled={subtitleSaving}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <div className="text-sm font-medium">Languages</div>
-                <SortableLanguageList
-                  languages={subtitleSettings?.languages ?? []}
-                  onChange={(languages) => void handleUpdateSubtitleSettings({ languages })}
-                  disabled={subtitleSaving}
-                />
-                <div className="text-xs text-muted-foreground">
-                  Drag to reorder priority. First language is preferred.
-                </div>
-              </div>
-            </>
-          ) : null}
-
-          {subtitleError ? (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
-              {subtitleError}
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      {/* Integrations */}
-      <Card className="order-last lg:col-span-2">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Link2 className="h-4 w-4 text-primary" />
-            Integrations
-          </CardTitle>
-          <CardDescription>
-            Notify Jellyfin/Emby on download completion. Connect Sonarr/Radarr via qBittorrent API.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {integrationLoading ? (
-            <div className="text-sm text-muted-foreground">Loading…</div>
-          ) : (
-            <>
-              {/* Jellyfin */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold">Jellyfin</div>
-                  <Switch
-                    checked={integrationSettings.jellyfin.enabled}
-                    onCheckedChange={(checked) =>
-                      setIntegrationSettings((s) => ({
-                        ...s,
-                        jellyfin: { ...s.jellyfin, enabled: checked },
-                      }))
-                    }
-                  />
-                </div>
-                {integrationSettings.jellyfin.enabled && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-1">
-                      <div className="text-xs text-muted-foreground">Server URL</div>
-                      <Input
-                        type="url"
-                        placeholder="http://jellyfin:8096"
-                        value={integrationSettings.jellyfin.url}
-                        onChange={(e) =>
-                          setIntegrationSettings((s) => ({
-                            ...s,
-                            jellyfin: { ...s.jellyfin, url: e.target.value },
-                          }))
-                        }
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <div className="text-xs text-muted-foreground">API Key</div>
-                      <Input
-                        type="password"
-                        placeholder="Jellyfin API key"
-                        value={integrationSettings.jellyfin.apiKey}
-                        onChange={(e) =>
-                          setIntegrationSettings((s) => ({
-                            ...s,
-                            jellyfin: { ...s.jellyfin, apiKey: e.target.value },
-                          }))
-                        }
-                      />
-                    </div>
-                    <div className="flex items-center gap-3 sm:col-span-2">
-                      <Button variant="outline" size="sm" onClick={() => void handleTestJellyfin()}>
-                        Test connection
-                      </Button>
-                      {jellyfinTestStatus !== null && (
-                        <span className={cn(
-                          'text-xs',
-                          jellyfinTestStatus === 'Connected' ? 'text-green-600 dark:text-green-400' : 'text-destructive',
-                        )}>
-                          {jellyfinTestStatus === 'Connected' ? '✓ ' : '✗ '}
-                          {jellyfinTestStatus}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="border-t border-border/70" />
-
-              {/* Emby */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold">Emby</div>
-                  <Switch
-                    checked={integrationSettings.emby.enabled}
-                    onCheckedChange={(checked) =>
-                      setIntegrationSettings((s) => ({
-                        ...s,
-                        emby: { ...s.emby, enabled: checked },
-                      }))
-                    }
-                  />
-                </div>
-                {integrationSettings.emby.enabled && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-1">
-                      <div className="text-xs text-muted-foreground">Server URL</div>
-                      <Input
-                        type="url"
-                        placeholder="http://emby:8096"
-                        value={integrationSettings.emby.url}
-                        onChange={(e) =>
-                          setIntegrationSettings((s) => ({
-                            ...s,
-                            emby: { ...s.emby, url: e.target.value },
-                          }))
-                        }
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <div className="text-xs text-muted-foreground">API Key</div>
-                      <Input
-                        type="password"
-                        placeholder="Emby API key"
-                        value={integrationSettings.emby.apiKey}
-                        onChange={(e) =>
-                          setIntegrationSettings((s) => ({
-                            ...s,
-                            emby: { ...s.emby, apiKey: e.target.value },
-                          }))
-                        }
-                      />
-                    </div>
-                    <div className="flex items-center gap-3 sm:col-span-2">
-                      <Button variant="outline" size="sm" onClick={() => void handleTestEmby()}>
-                        Test connection
-                      </Button>
-                      {embyTestStatus !== null && (
-                        <span className={cn(
-                          'text-xs',
-                          embyTestStatus === 'Connected' ? 'text-green-600 dark:text-green-400' : 'text-destructive',
-                        )}>
-                          {embyTestStatus === 'Connected' ? '✓ ' : '✗ '}
-                          {embyTestStatus}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="border-t border-border/70" />
-
-              {/* Sonarr / Radarr */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold">Download Client (Sonarr / Radarr)</div>
-                  <Switch
-                    checked={integrationSettings.qbt.enabled}
-                    onCheckedChange={(checked) =>
-                      setIntegrationSettings((s) => ({ ...s, qbt: { enabled: checked } }))
-                    }
-                  />
-                </div>
-                {integrationSettings.qbt.enabled && (
-                  <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-3 text-sm space-y-1">
-                    <div>Connect Sonarr or Radarr using the <span className="font-semibold">qBittorrent</span> download client type:</div>
-                    <ul className="list-disc list-inside text-muted-foreground space-y-0.5">
-                      <li>Host: <code className="font-mono text-foreground">{window.location.hostname}</code></li>
-                      <li>Port: <code className="font-mono text-foreground">8070</code></li>
-                      <li>Password: <em>leave empty</em></li>
-                    </ul>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex justify-end pt-2">
-                <Button onClick={() => void handleSaveIntegrations()} disabled={integrationSaving}>
-                  {integrationSaving ? 'Saving…' : 'Save'}
-                </Button>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 };

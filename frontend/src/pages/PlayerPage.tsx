@@ -7,12 +7,12 @@ import PlayerFilesPanel from '../components/PlayerFilesPanel';
 import { Alert } from '../components/ui/alert';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
-import { downloadSubtitle, focusTorrent, getHLSSettings, getPlayerHealth, getSubtitleSettings, getTorrent, getWatchHistory, isApiError, searchSubtitles, startTorrent } from '../api';
+import { focusTorrent, getHLSSettings, getPlayerHealth, getTorrent, getWatchHistory, isApiError, startTorrent } from '../api';
 import { useSessionState } from '../hooks/useSessionState';
 import { useWS } from '../app/providers/WebSocketProvider';
 import { useVideoPlayer } from '../hooks/useVideoPlayer';
 import { getTorrentPlayerPreferences, patchTorrentPlayerPreferences } from '../playerPreferences';
-import type { HLSSettings, PlayerHealth, SubtitleResult, TorrentRecord, WatchPosition } from '../types';
+import type { HLSSettings, PlayerHealth, TorrentRecord, WatchPosition } from '../types';
 import { formatTime, isVideoFile } from '../utils';
 import { cn } from '../lib/cn';
 import { getTorrentWatchState, upsertTorrentWatchState, type TorrentWatchState } from '../watchState';
@@ -52,8 +52,6 @@ const PlayerPage: React.FC = () => {
     currentTime: 0,
     ranges: [],
   });
-  const [subtitleSearchResults, setSubtitleSearchResults] = useState<SubtitleResult[]>([]);
-  const [subtitleSearchLoading, setSubtitleSearchLoading] = useState(false);
   const { toast } = useToast();
 
   const lastWatchKey = 'lastWatch';
@@ -143,8 +141,6 @@ const PlayerPage: React.FC = () => {
     audioTrack,
     subtitleTrack,
     subtitleTrackUrl,
-    externalSubtitleUrl: _externalSubtitleUrl,
-    setExternalSubtitleUrl,
     seekOffset,
     hlsSeekTo,
     retryStreamInitialization,
@@ -284,38 +280,6 @@ const PlayerPage: React.FC = () => {
     },
     [torrentId],
   );
-
-  const handleSearchSubtitles = useCallback(async () => {
-    if (!torrent) return;
-    setSubtitleSearchLoading(true);
-    try {
-      const settings = await getSubtitleSettings();
-      const response = await searchSubtitles({
-        torrentId,
-        fileIndex: selectedFileIndex ?? undefined,
-        lang: settings.languages,
-      });
-      setSubtitleSearchResults(response.results);
-    } catch {
-      setSubtitleSearchResults([]);
-    } finally {
-      setSubtitleSearchLoading(false);
-    }
-  }, [torrent, torrentId, selectedFileIndex]);
-
-  const handleSelectExternalSubtitle = useCallback(async (fileId: number) => {
-    try {
-      const blobUrl = await downloadSubtitle(fileId);
-      // Revoke previous blob URL to free memory before setting the new one.
-      if (_externalSubtitleUrl && _externalSubtitleUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(_externalSubtitleUrl);
-      }
-      setExternalSubtitleUrl(blobUrl);
-      setSubtitleSearchResults([]);
-    } catch (e) {
-      console.error('Failed to download subtitle:', e);
-    }
-  }, [setExternalSubtitleUrl, _externalSubtitleUrl]);
 
   const appliedPreferencesRef = React.useRef<string | null>(null);
   useEffect(() => {
@@ -531,17 +495,6 @@ const PlayerPage: React.FC = () => {
     };
   }, [wsHealth]);
 
-  // Auto-search for subtitles when no embedded subtitle tracks are found.
-  useEffect(() => {
-    if (mediaInfo && subtitleTracks.length === 0 && torrent) {
-      getSubtitleSettings().then(settings => {
-        if (settings.enabled && settings.autoSearch) {
-          handleSearchSubtitles();
-        }
-      }).catch(() => {});
-    }
-  }, [mediaInfo, subtitleTracks.length, torrent, handleSearchSubtitles]);
-
   const isResumeHintVisible = useMemo(() => {
     if (resumeHintDismissed) return false;
     if (!isValidResumePoint(resumeHint)) return false;
@@ -705,10 +658,6 @@ const PlayerPage: React.FC = () => {
             onFallbackToHls={triggerFallbackToHls}
             trackSwitchInProgress={trackSwitchInProgress}
             hlsDestroyRef={hlsDestroyRef}
-            onSearchSubtitles={handleSearchSubtitles}
-            subtitleSearchResults={subtitleSearchResults}
-            subtitleSearchLoading={subtitleSearchLoading}
-            onSelectExternalSubtitle={handleSelectExternalSubtitle}
           />
 
           <div className="absolute right-3 top-3 z-20 flex items-start gap-2 sm:right-4 sm:top-4">

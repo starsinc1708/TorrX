@@ -78,11 +78,6 @@ type StorageSettingsController interface {
 	Update(settings app.StorageSettings) error
 }
 
-type SubtitleSettingsController interface {
-	Get() app.SubtitleSettings
-	Update(settings app.SubtitleSettings) error
-}
-
 type MediaProbe interface {
 	Probe(ctx context.Context, filePath string) (domain.MediaInfo, error)
 	ProbeReader(ctx context.Context, reader io.Reader) (domain.MediaInfo, error)
@@ -121,7 +116,6 @@ type Server struct {
 	hlsSettingsCtrl HLSSettingsController
 	player          PlayerSettingsController
 	storage         StorageSettingsController
-	subtitles       SubtitleSettingsController
 	engine          domainports.Engine
 	allowedOrigins  []string
 	logger          *slog.Logger
@@ -226,10 +220,6 @@ func WithStorageSettings(ctrl StorageSettingsController) ServerOption {
 	}
 }
 
-func WithSubtitleSettings(ctrl SubtitleSettingsController) ServerOption {
-	return func(s *Server) { s.subtitles = ctrl }
-}
-
 func WithEngine(engine domainports.Engine) ServerOption {
 	return func(s *Server) {
 		s.engine = engine
@@ -275,11 +265,6 @@ func (s *Server) SetHLSSettings(ctrl HLSSettingsController) {
 // SetStorageSettings sets the storage settings controller after construction.
 func (s *Server) SetStorageSettings(ctrl StorageSettingsController) {
 	s.storage = ctrl
-}
-
-// SetSubtitleSettings sets the subtitle settings controller after construction.
-func (s *Server) SetSubtitleSettings(ctrl SubtitleSettingsController) {
-	s.subtitles = ctrl
 }
 
 // HLSCacheTotalSize returns the current total size of the HLS segment cache in bytes.
@@ -405,9 +390,6 @@ func NewServer(create CreateTorrentUseCase, opts ...ServerOption) *Server {
 	mux.HandleFunc("/settings/hls", s.handleHLSSettings)
 	mux.HandleFunc("/settings/player", s.handlePlayerSettings)
 	mux.HandleFunc("/settings/storage", s.handleStorageSettings)
-	mux.HandleFunc("/settings/subtitles", s.handleSubtitleSettings)
-	mux.HandleFunc("/torrents/subtitles/search", s.handleSubtitleSearch)
-	mux.HandleFunc("/torrents/subtitles/download", s.handleSubtitleDownload)
 	mux.HandleFunc("/watch-history", s.handleWatchHistory)
 	mux.HandleFunc("/watch-history/", s.handleWatchHistoryByID)
 	mux.HandleFunc("/internal/health/player", s.handlePlayerHealth)
